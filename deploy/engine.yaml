@@ -1,0 +1,81 @@
+# L3 correlation engine (P4). Pulls the aggregator's /window + /events, runs the
+# deterministic engine, serves the CausalGraph at /graph. Image skn/correlation-engine:v0.1.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: engine-memory-pvc
+  namespace: aiops
+  annotations:
+    helm.sh/resource-policy: keep
+  labels: { app: correlation-engine, tier: aiops }
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources: { requests: { storage: 1Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: correlation-engine
+  namespace: aiops
+  labels: { app: correlation-engine, tier: aiops }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: correlation-engine } }
+  template:
+    metadata:
+      labels: { app: correlation-engine, tier: aiops }
+    spec:
+      securityContext:
+        fsGroup: 65534
+      containers:
+        - name: engine
+          image: skn/correlation-engine:v0.1
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 9100 }]
+          env:
+            - { name: WINDOW_URL, value: "http://aggregator.aiops.svc.cluster.local.:9000/window" }   # FQDN (trailing dot) skips the DNS search list -> immune to a Tailscale MagicDNS leak
+            - { name: EVENTS_URL, value: "http://aggregator.aiops.svc.cluster.local.:9000/events" }
+            # 2C' (LOG-033): plant victim families join the fan-out WITH the domain-witness patch
+            # (never before it — without declared domains they'd be findings-only anyway, but the
+            # rule is: enable together). psi_io stays primary (first).
+            - { name: ENGINE_SIGNALS, value: "psi_io,psi_cpu,psi_mem,bus_voltage,coolant_temp" }
+            - { name: PLANT_FAMILIES, value: "bus_voltage:rail,coolant_temp:loop" }
+            - { name: PLANT_SOURCES,  value: "bus_voltage:current_draw,coolant_temp:heat_load" }
+            - { name: PLANT_INVERT,   value: "bus_voltage:400" }   # sag = 400 - V: higher = worse, engine-wide
+            - name: PLANT_DOMAINS     # the LOG-021/022 registry, now primary: declared shared media
+              value: "rail:psu-a=press-1,press-2,cnc-1,qa-scanner-1,psu-a;rail:psu-b=conveyor-1,compressor-1,furnace-1,chiller-1,psu-b;loop:cool-1=press-1,press-2,cnc-1,furnace-1,cool-1"
+            - { name: FORECAST_PAIRS, value: "mem:mem_limit:leak,coolant_temp:temp_limit:trip" }   # OOM card + PS5 trip card
+            - { name: MEMORY_DB, value: "/var/lib/skn/memory/l3-memory.db" }
+            - { name: EDGE_ALPHA, value: "0.4" }
+            - { name: EDGE_DECAY, value: "0.1" }
+            - { name: EDGE_SHOW, value: "0.6" }
+            - { name: EDGE_HIDE, value: "0.25" }
+            - { name: DEV_K,     value: "3.5" }               # deviation-gate sensitivity (lowered from 4 for slightly faster confirm); raise toward 4-5 if idle flickers
+            - { name: RESET_WINDOW, value: "24" }             # samples (~2min): the verdict clears this long after a storm ends (faster reset), not when it leaves the 15-min ring
+            - { name: FORECAST_HORIZON_S, value: "900" }      # OOM early-warning: only warn when a pod's working_set will hit its memory limit within this window (lower if a slow climber false-fires)
+            - { name: FORECAST_MIN_FRAC, value: "0.5" }       # OOM early-warning: only warn once working_set is past this fraction of the limit (S5-verified earlier card, LOG-093; do NOT go below 0.5 -> re-admits cooling-monitor-under-fio / safety-interlock false cards). Mirrors the baked service.py default.
+            - { name: TZ,        value: "Asia/Kolkata" }
+          volumeMounts:
+            - { name: memory, mountPath: /var/lib/skn/memory }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 9100 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 250m, memory: 384Mi }
+            limits:   { cpu: "1",  memory: 512Mi }
+      volumes:
+        - name: memory
+          persistentVolumeClaim: { claimName: engine-memory-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: correlation-engine
+  namespace: aiops
+  labels: { app: correlation-engine }
+spec:
+  selector: { app: correlation-engine }
+  ports: [{ name: http, port: 9100, targetPort: 9100 }]

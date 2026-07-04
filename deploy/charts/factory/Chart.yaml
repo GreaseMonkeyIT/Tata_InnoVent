@@ -1,0 +1,5 @@
+apiVersion: v2
+name: factory
+description: SiliconKnights L0 factory workloads (15 pods, 3 namespaces, honest pathologies)
+version: 0.1.0
+appVersion: "0.1"

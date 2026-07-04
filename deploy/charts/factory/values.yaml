@@ -1,0 +1,56 @@
+# Component switches (D-006). skctl flips these; profiles do not exist (LOG-013).
+groups:
+  core: true
+  storage: true
+  compute: true
+  edge: true
+
+registry: "skn"   # local image prefix; k3s ctr images import for air-gap
+tag: "v0.1"
+
+pvcs:
+  - { name: shared-logs-pvc, namespace: factory-data, size: 5Gi, storageClass: slowdisk }   # slowdisk = /dev/sdb HDD (D-014); use local-path on a single-disk box
+  - { name: tsdb-pvc,        namespace: factory-data, size: 64Gi, storageClass: slowdisk }  # slowdisk = /dev/sdb HDD (D-014). 14-day raw window (D-013/LOG-029): compression+retention in timescaledb/init.sql. local-path can't resize -> kubectl delete pvc tsdb-pvc then skctl up to grow.
+
+# Pod roster - MASTER_PLAN 2.2. affinityGroup pins physics-coupled pods to each other (D-005 rule).
+pods:
+  - { name: plc-gateway,            group: core,    ns: factory-core, image: plc-gateway,
+      cpu: {req: 50m,  lim: 200m},  mem: {req: 64Mi,  lim: 128Mi},
+      env: {PLC_PERIOD_MS: "1000"} }   # 1 Hz x200ch = ~200 rows/s: timescaledb idles quiet on the HDD so S1 contention is a clean delta (LOG-055)
+  - { name: mqtt-broker,            group: core,    ns: factory-core, image: mqtt-broker, port: 1883,
+      cpu: {req: 100m, lim: 500m},  mem: {req: 128Mi, lim: 256Mi} }
+  - { name: critical-control-relay, group: core,    ns: factory-core, image: critical-control-relay, port: 8080, httpProbe: true,
+      cpu: {req: 100m, lim: 300m},  mem: {req: 64Mi,  lim: 128Mi} }
+  - { name: safety-interlock,       group: core,    ns: factory-core, image: safety-interlock, port: 8080, httpProbe: true,
+      cpu: {req: 25m,  lim: 100m},  mem: {req: 32Mi,  lim: 64Mi} }
+  - { name: timescaledb,            group: storage, ns: factory-data, image: timescaledb, port: 5432,
+      cpu: {req: 500m, lim: 1000m}, mem: {req: 1Gi,   lim: 1536Mi},
+      env: {POSTGRES_USER: factory, POSTGRES_PASSWORD: factory, POSTGRES_DB: telemetry, PGDATA: /var/lib/postgresql/data/pgdata},
+      mounts: [{pvc: tsdb-pvc, path: /var/lib/postgresql/data}], affinityGroup: storage-domain }
+  - { name: telemetry-ingest,       group: compute, ns: factory-data, image: telemetry-ingest, port: 8080,
+      cpu: {req: 150m, lim: 500m},  mem: {req: 128Mi, lim: 256Mi} }
+  - { name: cooling-monitor,        group: storage, ns: factory-data, image: cooling-monitor, port: 8080,
+      cpu: {req: 100m, lim: 300m},  mem: {req: 128Mi, lim: 256Mi},
+      env: {DATA_DIR: /shared/cooling, FIO_SIZE: 512m, FIO_JOBS: "6", FIO_RUNTIME: "120", FIO_FSYNC: "1", FIO_DIRECT: "1"},  # S1-verified (LOG-093): 120s storm outlasts the read window so cooling-monitor stays the live write-source -> roots correctly; FSYNC=1 = writer+victim both stall; JOBS=6 louder. Mirrors the baked main.py defaults.
+      mounts: [{pvc: shared-logs-pvc, path: /shared}], affinityGroup: storage-domain }
+  - { name: dcim-bridge,            group: storage, ns: factory-data, image: dcim-bridge, port: 8080, httpProbe: true,
+      cpu: {req: 50m,  lim: 150m},  mem: {req: 64Mi,  lim: 128Mi},
+      env: {DATA_DIR: /shared/dcim},
+      mounts: [{pvc: shared-logs-pvc, path: /shared}], affinityGroup: storage-domain }
+  - { name: log-archiver,           group: storage, ns: factory-data, image: log-archiver, kind: CronJob, schedule: "0 2 * * *", suspend: true,
+      cpu: {req: 100m, lim: 500m},  mem: {req: 128Mi, lim: 256Mi},
+      env: {DATA_DIR: /shared, S2_SEED_MB: "2048"},  # S2 fio storm: TOTAL on-disk footprint (MB), split across S2_JOBS (must fit the 5Gi PVC). DURATION = S2_RUNTIME (default 120s); concurrency = S2_JOBS, fsync = S2_FSYNC -- all env-tunable, no rebuild (LOG-091). To lengthen the storm raise S2_RUNTIME, not S2_SEED_MB.
+      mounts: [{pvc: shared-logs-pvc, path: /shared}], affinityGroup: storage-domain }
+  - { name: analytics-batch,        group: compute, ns: factory-data, image: analytics-batch, kind: CronJob, schedule: "*/5 * * * *", suspend: true,
+      cpu: {req: 250m, lim: 500m},  mem: {req: 256Mi, lim: 512Mi} }
+  - { name: vision-qc,              group: compute, ns: factory-edge, image: vision-qc, port: 8080,
+      cpu: {req: 200m, lim: 750m},  mem: {req: 256Mi, lim: 512Mi},
+      env: {LEAK_ENABLED: "false"} }
+  - { name: alert-dispatcher,       group: compute, ns: factory-edge, image: alert-dispatcher, port: 8080,
+      cpu: {req: 100m, lim: 300m},  mem: {req: 128Mi, lim: 256Mi} }
+  - { name: notify-gateway,         group: edge,    ns: factory-edge, image: notify-gateway, port: 8080, httpProbe: true,
+      cpu: {req: 50m,  lim: 150m},  mem: {req: 64Mi,  lim: 128Mi} }
+  - { name: edge-ui,                group: edge,    ns: factory-edge, image: edge-ui, port: 80,
+      cpu: {req: 25m,  lim: 100m},  mem: {req: 32Mi,  lim: 64Mi} }
+  - { name: firmware-cache,         group: edge,    ns: factory-edge, image: firmware-cache, port: 80,
+      cpu: {req: 50m,  lim: 100m},  mem: {req: 256Mi, lim: 768Mi}, tmpfs: 512Mi }

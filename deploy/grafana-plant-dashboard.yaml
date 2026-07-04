@@ -1,0 +1,96 @@
+# SKN Plant dashboard, provisioned as code (same sidecar pattern as grafana-psi-dashboard.yaml).
+# Fixed uid (skn-plant) + panel ids that the VISR Machines section embeds as d-solo iframes:
+#   panelId 1 = bus voltage per rail · 2 = current draw per machine · 3 = coolant temps vs trip.
+# No "min: 0" on purpose: auto-scale keeps an 8V rail sag or a 3C temp climb visible.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skn-plant-dashboard
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  skn-plant.json: |-
+    {
+      "uid": "skn-plant",
+      "title": "SKN Plant",
+      "schemaVersion": 39,
+      "version": 1,
+      "editable": true,
+      "refresh": "5s",
+      "timezone": "Asia/Kolkata",
+      "time": { "from": "now-30m", "to": "now" },
+      "templating": {
+        "list": [
+          { "name": "datasource", "type": "datasource", "query": "prometheus", "hide": 0, "current": {} }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "Bus voltage (V) — per rail",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "unit": "volt", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "plant_bus_voltage_volts{pod=~\"psu-.*\"}",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Current draw (A) — per machine",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+          "fieldConfig": {
+            "defaults": { "unit": "amp", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "plant_current_draw_amps",
+              "legendFormat": "{{pod}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Coolant temps (C) — vs trip",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 18 },
+          "fieldConfig": {
+            "defaults": { "unit": "celsius", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "plant_temp_celsius",
+              "legendFormat": "{{pod}}"
+            },
+            {
+              "refId": "B",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "plant_trip_threshold_celsius",
+              "legendFormat": "trip"
+            }
+          ]
+        }
+      ]
+    }

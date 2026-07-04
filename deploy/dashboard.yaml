@@ -1,0 +1,40 @@
+# L4 dashboard (P6) — static Next.js export served by nginx, which also proxies /api/ to the api
+# gateway. Exposed via NodePort so it is reachable from a peer at the node IP (incl. the Tailscale
+# address) over the tailnet, with no public ingress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: aiops
+  labels: { app: dashboard, tier: aiops }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: dashboard } }
+  template:
+    metadata:
+      labels: { app: dashboard, tier: aiops }
+    spec:
+      containers:
+        - name: dashboard
+          image: skn/dashboard:v0.1
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 80 }]
+          env:
+            - { name: TZ, value: "Asia/Kolkata" }
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 3
+          resources:
+            requests: { cpu: 25m,  memory: 32Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: aiops
+  labels: { app: dashboard }
+spec:
+  type: NodePort
+  selector: { app: dashboard }
+  ports: [{ name: http, port: 80, targetPort: 80, nodePort: 30080 }]

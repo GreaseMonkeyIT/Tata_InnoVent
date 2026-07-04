@@ -1,0 +1,33 @@
+# L2 query pack - PIVOT edition (LOG-029). ConfigMap-mounted in-cluster.
+# TWO PLANES, one window:
+#   Plane 1 (software, REAL kernel signals): the edge box watches ITSELF - the
+#     engine/SCADA/plant-sim pods in aiops|observability|plant. Old factory-.*
+#     namespaces are gone (torn down at pivot).
+#   Plane 2 (physical, SIMULATED physics): plant_* series from plant-sim, labeled
+#     namespace="plant", pod="<asset>" by the exporter (honorLabels on the scrape),
+#     so they ride the same ns/pod/signal window keys with zero aggregator changes.
+interval_s: 5
+window_min: 15
+queries:
+  # ---- plane 1: kernel/cgroup (real) -------------------------------------------------
+  cpu:          sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~"aiops|observability|plant",container!=""}[30s]))
+  mem:          sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"aiops|observability|plant",container!=""})
+  mem_limit:    sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~"aiops|observability|plant",resource="memory"})
+  psi_cpu:      sum by (namespace, pod) (rate(container_pressure_cpu_stalled_seconds_total{namespace=~"aiops|observability|plant"}[30s]))
+  psi_mem:      sum by (namespace, pod) (rate(container_pressure_memory_stalled_seconds_total{namespace=~"aiops|observability|plant"}[30s]))
+  psi_io:       sum by (namespace, pod) (rate(container_pressure_io_stalled_seconds_total{namespace=~"aiops|observability|plant"}[30s]))
+  io_write:     sum by (namespace, pod) (rate(container_fs_writes_bytes_total{namespace=~"aiops|observability|plant"}[30s]))
+  restarts:     rate(kube_pod_container_status_restarts_total{namespace=~"aiops|observability|plant"}[5m])
+  # latency_p95 (OBI RED on critical-control-relay) RETIRED with the factory teardown.
+  # ---- plane 2: plant physics (simulated substrate, real inference) ------------------
+  # The exporter already labels series with the ASSET as pod= - pass through as-is.
+  bus_voltage:  plant_bus_voltage_volts
+  current_draw: plant_current_draw_amps
+  coolant_temp: plant_temp_celsius
+  coolant_flow: plant_coolant_flow_lpm
+  heat_load:    plant_heat_load_watts
+  throughput:   plant_throughput_pct
+  temp_limit:   plant_trip_threshold_celsius
+thresholds:
+  cpu_util: 0.80
+  psi_some_avg: 0.15

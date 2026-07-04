@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pod Resources — allocated vs live</title>
+<style>
+  /* Grafana-dark palette (mirrors dashboard/app/globals.css). Self-contained, no external libs. */
+  :root{
+    --bg:#111217; --panel:#181b1f; --panel2:#1f2127; --border:rgba(204,204,220,0.12);
+    --text:#ccccdc; --weak:rgba(204,204,220,0.65); --faint:rgba(204,204,220,0.4);
+    --blue:#6e9fff; --green:#73bf69; --red:#f2495c; --orange:#ff9830; --purple:#b877d9;
+    --track:#2a2d34;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{background:var(--bg);color:var(--text);font-family:Inter,Roboto,-apple-system,"Segoe UI",sans-serif;font-size:13px;}
+  a{color:var(--blue);}
+
+  .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;background:var(--panel);
+    border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;}
+  .topbar .title{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px;margin-right:6px;}
+  .topbar label{color:var(--weak);font-size:11px;display:flex;flex-direction:column;gap:3px;}
+  .topbar input,.topbar select{background:#0e0f13;color:var(--text);border:1px solid var(--border);
+    border-radius:3px;padding:5px 7px;font-size:12px;font-family:inherit;}
+  .topbar input.url{width:340px;}
+  .topbar input.ns{width:120px;}
+  .btn{background:#22252b;color:var(--text);border:1px solid var(--border);border-radius:3px;padding:6px 12px;
+    font-size:12px;cursor:pointer;}
+  .btn:hover{background:var(--panel2);}
+  .status{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--weak);font-size:12px;}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;background:var(--faint);}
+  .dot.ok{background:var(--green);box-shadow:0 0 6px var(--green);}
+  .dot.err{background:var(--red);box-shadow:0 0 6px var(--red);}
+  .dot.wait{background:var(--orange);}
+
+  .note{background:var(--panel);border:1px solid var(--border);border-radius:3px;margin:12px 16px 0;padding:10px 12px;color:var(--weak);}
+  .note summary{cursor:pointer;color:var(--text);font-weight:600;}
+  .note code{background:#0e0f13;border:1px solid var(--border);border-radius:3px;padding:1px 5px;color:var(--blue);}
+  .note pre{background:#0e0f13;border:1px solid var(--border);border-radius:3px;padding:10px;overflow:auto;color:var(--text);}
+
+  .banner{display:none;margin:12px 16px 0;padding:10px 12px;border-radius:3px;
+    background:rgba(242,73,92,0.12);border:1px solid rgba(242,73,92,0.4);color:#ffb3bd;}
+  .banner.show{display:block;}
+
+  .grid{display:grid;gap:10px;padding:12px 16px;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:10px 12px;}
+  .card .hd{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;}
+  .card .name{font-weight:600;font-size:13px;}
+  .card .hash{color:var(--faint);font-size:11px;font-family:ui-monospace,Menlo,Consolas,monospace;}
+  .chip{padding:2px 8px;border-radius:10px;font-size:10px;background:rgba(110,159,255,0.15);color:var(--blue);
+    border:1px solid rgba(110,159,255,0.3);margin-left:auto;}
+
+  .metric{margin-top:9px;}
+  .metric .top{display:flex;align-items:baseline;gap:6px;font-size:11px;color:var(--weak);margin-bottom:3px;}
+  .metric .top .k{color:var(--text);font-weight:600;width:34px;}
+  .metric .top .v{color:var(--text);font-variant-numeric:tabular-nums;}
+  .metric .top .lim{margin-left:auto;color:var(--faint);font-variant-numeric:tabular-nums;}
+  .metric .row{display:flex;align-items:center;gap:8px;}
+
+  .bar{position:relative;flex:1;height:14px;background:var(--track);border-radius:3px;overflow:hidden;}
+  .bar .fill{position:absolute;left:0;top:0;bottom:0;border-radius:3px 0 0 3px;transition:width .4s ease,background .4s;}
+  .bar .req{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--purple);}
+  .bar .reqcap{position:absolute;top:-7px;font-size:9px;color:var(--purple);transform:translateX(-50%);white-space:nowrap;}
+
+  .spark{width:118px;height:30px;flex:none;}
+  .spark .area{opacity:.18;}
+  .pct{width:42px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;color:var(--weak);flex:none;}
+
+  .empty{padding:40px 16px;color:var(--weak);text-align:center;}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;padding:0 16px 16px;color:var(--faint);font-size:11px;}
+  .legend span{display:inline-flex;align-items:center;gap:5px;}
+  .sw{width:10px;height:10px;border-radius:2px;display:inline-block;}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="title">Pod Resources <span style="color:var(--weak);font-weight:400;font-size:12px;">allocated vs live</span></div>
+    <label>Prometheus base URL<input id="base" class="url" spellcheck="false"></label>
+    <label>Namespace regex<input id="ns" class="ns" spellcheck="false"></label>
+    <label>Refresh<select id="ivl">
+      <option value="2000">2s</option><option value="3000" selected>3s</option>
+      <option value="5000">5s</option><option value="10000">10s</option>
+    </select></label>
+    <label>Window<select id="win">
+      <option value="120">2 min</option><option value="180" selected>3 min</option>
+      <option value="300">5 min</option><option value="600">10 min</option>
+    </select></label>
+    <label>Sort<select id="sort">
+      <option value="name">name</option><option value="cpu">CPU %</option><option value="mem">MEM %</option>
+    </select></label>
+    <button id="pause" class="btn">⏸ Pause</button>
+    <div class="status"><span id="dot" class="dot wait"></span><span id="stat">connecting…</span></div>
+  </div>
+
+  <details class="note">
+    <summary>How to connect (run on the box)</summary>
+    <p>This page reads live metrics straight from Prometheus — no changes to the running system. Pick either path, then set the field above to match.</p>
+    <p><b>A · port-forward</b> (simplest; relies on Prometheus' default CORS):</p>
+    <pre>kubectl port-forward -n observability svc/prom-kube-prometheus-stack-prometheus 9090:9090
+# then open this file and leave the base URL as  http://localhost:9090</pre>
+    <p><b>B · kubectl proxy</b> (zero-CORS; serves this page and Prometheus from one origin):</p>
+    <pre>kubectl proxy --www=tools --www-prefix=/ui/ --port=8001
+# browse to  http://localhost:8001/ui/pod-resources.html
+# and set the base URL to (relative, no host):
+#   /api/v1/namespaces/observability/services/prom-kube-prometheus-stack-prometheus:9090/proxy</pre>
+    <p>If the dot turns red with a network/CORS error, use path B (same-origin) — it sidesteps CORS entirely.</p>
+  </details>
+
+  <div id="banner" class="banner"></div>
+  <div id="grid" class="grid"></div>
+  <div class="legend">
+    <span><span class="sw" style="background:var(--green)"></span>&lt;70% of limit</span>
+    <span><span class="sw" style="background:var(--orange)"></span>70–90%</span>
+    <span><span class="sw" style="background:var(--red)"></span>&ge;90%</span>
+    <span><span class="sw" style="background:var(--purple)"></span>request marker</span>
+    <span><span class="sw" style="background:var(--track)"></span>= limit (full bar)</span>
+  </div>
+
+<script>
+"use strict";
+(function(){
+  const $ = s => document.querySelector(s);
+  const LS = "podres.cfg";
+  const cfg = Object.assign(
+    {base:"http://localhost:9090", ns:"factory-.*", ivl:3000, win:180, sort:"name"},
+    JSON.parse(localStorage.getItem(LS) || "{}")
+  );
+
+  const elBase=$("#base"), elNs=$("#ns"), elIvl=$("#ivl"), elWin=$("#win"), elSort=$("#sort"),
+        elPause=$("#pause"), elDot=$("#dot"), elStat=$("#stat"), elGrid=$("#grid"), elBanner=$("#banner");
+  elBase.value=cfg.base; elNs.value=cfg.ns; elIvl.value=String(cfg.ivl);
+  elWin.value=String(cfg.win); elSort.value=cfg.sort;
+
+  let paused=false, timer=null, inflight=false;
+  const pods = new Map();   // key "ns/pod" -> {ns,pod,wl,hash,cpu:{req,lim,use,hist},mem:{...}}
+
+  function saveCfg(){
+    localStorage.setItem(LS, JSON.stringify({
+      base:elBase.value.trim(), ns:elNs.value.trim(),
+      ivl:+elIvl.value, win:+elWin.value, sort:elSort.value
+    }));
+  }
+
+  // ---- formatting -----------------------------------------------------------
+  function fmtCpu(c){
+    if(c==null) return "—";
+    return c<1 ? Math.round(c*1000)+"m" : (Math.round(c*100)/100)+" CPU";
+  }
+  function fmtMem(b){
+    if(b==null) return "—";
+    const u=["B","Ki","Mi","Gi","Ti"]; let i=0,v=Math.abs(b);
+    while(v>=1024 && i<u.length-1){v/=1024;i++;}
+    return (v>=100?Math.round(v):Math.round(v*10)/10)+" "+u[i];
+  }
+  const fmt = {cpu:fmtCpu, mem:fmtMem};
+
+  // workload name = drop "-<replicaset>-<hash>" (mirrors api workload()), keep hash for subtitle
+  function split(pod){
+    const p=pod.split("-");
+    if(p.length>2) return {wl:p.slice(0,-2).join("-"), hash:p.slice(-2).join("-")};
+    return {wl:pod, hash:""};
+  }
+
+  // ---- prometheus -----------------------------------------------------------
+  function promURL(expr){
+    let b=elBase.value.trim().replace(/\/+$/,"");
+    return b + "/api/v1/query?query=" + encodeURIComponent(expr);
+  }
+  async function q(expr){
+    const r = await fetch(promURL(expr), {headers:{Accept:"application/json"}});
+    if(!r.ok) throw new Error("HTTP "+r.status+" for query");
+    const j = await r.json();
+    if(j.status!=="success") throw new Error(j.error||"prometheus error");
+    return j.data.result || [];
+  }
+  // result[] -> Map "ns/pod" -> float
+  function toMap(result){
+    const m=new Map();
+    for(const s of result){
+      const ns=s.metric.namespace, pod=s.metric.pod;
+      if(!ns||!pod) continue;
+      const v=parseFloat(s.value[1]);
+      if(!isFinite(v)) continue;
+      m.set(ns+"/"+pod, (m.get(ns+"/"+pod)||0)+v);
+    }
+    return m;
+  }
+
+  function queries(){
+    const ns = elNs.value.trim() || ".*";
+    const sel = `namespace=~"${ns}"`;
+    const c = `,container!=""`;
+    return {
+      cpu_req:`sum by(namespace,pod)(kube_pod_container_resource_requests{${sel},resource="cpu"})`,
+      cpu_lim:`sum by(namespace,pod)(kube_pod_container_resource_limits{${sel},resource="cpu"})`,
+      cpu_use:`sum by(namespace,pod)(rate(container_cpu_usage_seconds_total{${sel}${c}}[1m]))`,
+      mem_req:`sum by(namespace,pod)(kube_pod_container_resource_requests{${sel},resource="memory"})`,
+      mem_lim:`sum by(namespace,pod)(kube_pod_container_resource_limits{${sel},resource="memory"})`,
+      mem_use:`sum by(namespace,pod)(container_memory_working_set_bytes{${sel}${c}})`,
+    };
+  }
+
+  async function tick(){
+    if(inflight) return; inflight=true;
+    setStatus("wait","fetching…");
+    const Q=queries();
+    try{
+      const [cr,cl,cu,mr,ml,mu] = await Promise.all(
+        [Q.cpu_req,Q.cpu_lim,Q.cpu_use,Q.mem_req,Q.mem_lim,Q.mem_use].map(q)
+      );
+      const maps={cpu_req:toMap(cr),cpu_lim:toMap(cl),cpu_use:toMap(cu),
+                  mem_req:toMap(mr),mem_lim:toMap(ml),mem_use:toMap(mu)};
+      mergeAndRender(maps);
+      elBanner.classList.remove("show");
+      setStatus("ok","updated "+new Date().toLocaleTimeString());
+    }catch(e){
+      setStatus("err", String(e.message||e));
+      elBanner.textContent = "Cannot reach Prometheus at "+elBase.value.trim()+
+        " — "+(e.message||e)+". If this is a CORS/network error, use connection path B (kubectl proxy, same-origin). See “How to connect” above.";
+      elBanner.classList.add("show");
+    }finally{ inflight=false; }
+  }
+
+  function mergeAndRender(maps){
+    const cap = Math.max(2, Math.round((+elWin.value*1000)/(+elIvl.value)));
+    const keys = new Set();
+    for(const k of ["cpu_req","cpu_lim","cpu_use","mem_req","mem_lim","mem_use"])
+      for(const kk of maps[k].keys()) keys.add(kk);
+
+    // drop pods that vanished
+    for(const k of [...pods.keys()]) if(!keys.has(k)) pods.delete(k);
+
+    const now=Date.now();
+    for(const k of keys){
+      const [ns,pod]=k.split("/");
+      let p=pods.get(k);
+      if(!p){ const s=split(pod); p={ns,pod,wl:s.wl,hash:s.hash,
+        cpu:{req:null,lim:null,use:null,hist:[]}, mem:{req:null,lim:null,use:null,hist:[]}}; pods.set(k,p); }
+      p.cpu.req=maps.cpu_req.get(k) ?? null;
+      p.cpu.lim=maps.cpu_lim.get(k) ?? null;
+      p.cpu.use=maps.cpu_use.get(k) ?? 0;
+      p.mem.req=maps.mem_req.get(k) ?? null;
+      p.mem.lim=maps.mem_lim.get(k) ?? null;
+      p.mem.use=maps.mem_use.get(k) ?? 0;
+      p.cpu.hist.push({t:now,v:p.cpu.use}); if(p.cpu.hist.length>cap) p.cpu.hist.splice(0,p.cpu.hist.length-cap);
+      p.mem.hist.push({t:now,v:p.mem.use}); if(p.mem.hist.length>cap) p.mem.hist.splice(0,p.mem.hist.length-cap);
+    }
+    render();
+  }
+
+  // scale-max for a bar: limit if set, else max(request, peak usage)*1.15
+  function scaleMax(m){
+    if(m.lim) return m.lim;
+    const peak=Math.max(m.req||0, ...m.hist.map(h=>h.v), m.use||0);
+    return peak>0 ? peak*1.15 : 1;
+  }
+  function ratioColor(r){
+    if(r>=0.9) return "var(--red)";
+    if(r>=0.7) return "var(--orange)";
+    return "var(--green)";
+  }
+
+  function sparkSVG(hist, max, color){
+    const W=118,H=30,n=hist.length;
+    if(n<2) return `<svg class="spark" viewBox="0 0 ${W} ${H}"></svg>`;
+    const mx = max>0?max:Math.max(...hist.map(h=>h.v),1);
+    const xs = i => (i/(n-1))*(W-2)+1;
+    const ys = v => H-2 - Math.min(1, v/mx)*(H-4);
+    let d="", area="";
+    hist.forEach((h,i)=>{ const x=xs(i).toFixed(1), y=ys(h.v).toFixed(1);
+      d += (i?"L":"M")+x+" "+y+" "; });
+    area = `M${xs(0).toFixed(1)} ${H} ` + hist.map((h,i)=>"L"+xs(i).toFixed(1)+" "+ys(h.v).toFixed(1)).join(" ")
+         + ` L${xs(n-1).toFixed(1)} ${H} Z`;
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <path class="area" d="${area}" fill="${color}"/>
+      <path d="${d}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
+  }
+
+  function metricRow(kind, label, m){
+    const f=fmt[kind];
+    const max=scaleMax(m), use=m.use||0;
+    const denom = m.lim || max;
+    const ratio = denom>0 ? use/denom : 0;
+    const color = ratioColor(ratio);
+    const usePct = Math.min(100, (use/max)*100);
+    const reqPct = m.req!=null ? Math.min(100,(m.req/max)*100) : null;
+    const pctTxt = m.lim ? Math.round((use/m.lim)*100)+"%" : (m.req? Math.round((use/m.req)*100)+"%":"—");
+    return `<div class="metric">
+      <div class="top"><span class="k">${label}</span>
+        <span class="v">${f(use)}</span>
+        <span style="color:var(--faint)">used</span>
+        <span class="lim">req ${f(m.req)} · lim ${f(m.lim)}</span></div>
+      <div class="row">
+        <div class="bar">
+          <div class="fill" style="width:${usePct.toFixed(1)}%;background:${color}"></div>
+          ${reqPct!=null?`<div class="req" style="left:${reqPct.toFixed(1)}%"></div>`:""}
+        </div>
+        <div class="pct">${pctTxt}</div>
+        ${sparkSVG(m.hist, m.lim||max, color)}
+      </div>
+    </div>`;
+  }
+
+  function pctOf(m){ const d=m.lim||scaleMax(m); return d>0?(m.use||0)/d:0; }
+
+  function render(){
+    const arr=[...pods.values()];
+    const s=elSort.value;
+    arr.sort((a,b)=>{
+      if(s==="cpu") return pctOf(b.cpu)-pctOf(a.cpu);
+      if(s==="mem") return pctOf(b.mem)-pctOf(a.mem);
+      return (a.ns+a.wl+a.hash).localeCompare(b.ns+b.wl+b.hash);
+    });
+    if(!arr.length){ elGrid.innerHTML=`<div class="empty">No pods matched <code>${elNs.value.trim()||".*"}</code>. Check the namespace regex and that Prometheus is reachable.</div>`; return; }
+    elGrid.innerHTML = arr.map(p=>`<div class="card">
+      <div class="hd"><span class="name">${p.wl}</span>
+        ${p.hash?`<span class="hash">${p.hash}</span>`:""}
+        <span class="chip">${p.ns}</span></div>
+      ${metricRow("cpu","CPU",p.cpu)}
+      ${metricRow("mem","MEM",p.mem)}
+    </div>`).join("");
+  }
+
+  function setStatus(cls,txt){ elDot.className="dot "+cls; elStat.textContent=txt; }
+
+  function restart(){
+    if(timer) clearInterval(timer);
+    saveCfg();
+    if(!paused){ tick(); timer=setInterval(tick, +elIvl.value); }
+  }
+
+  // ---- wiring ---------------------------------------------------------------
+  elPause.addEventListener("click",()=>{
+    paused=!paused; elPause.textContent = paused?"▶ Resume":"⏸ Pause";
+    if(paused){ if(timer)clearInterval(timer); timer=null; setStatus("wait","paused"); }
+    else restart();
+  });
+  [elBase,elNs].forEach(el=>el.addEventListener("change",()=>{ pods.clear(); restart(); }));
+  [elIvl,elWin].forEach(el=>el.addEventListener("change",restart));
+  elSort.addEventListener("change",()=>{ saveCfg(); render(); });
+
+  restart();
+})();
+</script>
+</body>
+</html>

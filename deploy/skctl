@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# skctl - SiliconKnights bootstrap. Solo: everything on this box. Fleet: flip groups per box.
+#   ./skctl up [--mode solo|fleet] [--components core,storage,compute,edge,telemetry,engine,language,dashboard,chaos]
+#   ./skctl down | status
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+MODE="solo"; COMPONENTS="all"
+CMD="${1:-status}"; shift || true
+while [[ $# -gt 0 ]]; do case "$1" in
+  --mode) MODE="$2"; shift 2;;
+  --components) COMPONENTS="$2"; shift 2;;
+  *) echo "unknown arg $1"; exit 1;;
+esac; done
+
+has() { [[ "$COMPONENTS" == "all" || ",$COMPONENTS," == *",$1,"* ]]; }
+# The L0 factory is retired in the pivot (LOG-029). Only touch it when a factory group
+# is explicitly asked for; `up` with no --components (=all) still brings it back for
+# Codex-style rollback, but the pivot runbook's telemetry/engine/dashboard bring-up won't.
+wants_factory() { has core || has storage || has compute || has edge; }
+NS_LIST=(observability aiops dashboard chaos)
+
+up() {
+  for ns in "${NS_LIST[@]}"; do kubectl get ns "$ns" >/dev/null 2>&1 || kubectl create ns "$ns"; done
+  # L0 factory workloads (groups map to chart switches) - gated so a teardown followed by
+  # `skctl up --components telemetry,engine,dashboard` cannot re-create the retired factory
+  # namespaces or leave an empty `factory` helm release behind (which would also abort under set -e).
+  if wants_factory; then
+    for ns in factory-core factory-data factory-edge; do kubectl get ns "$ns" >/dev/null 2>&1 || kubectl create ns "$ns"; done
+    helm upgrade --install factory "$HERE/charts/factory" \
+      --set groups.core=$(has core && echo true || echo false) \
+      --set groups.storage=$(has storage && echo true || echo false) \
+      --set groups.compute=$(has compute && echo true || echo false) \
+      --set groups.edge=$(has edge && echo true || echo false)
+  fi
+  if has telemetry; then
+    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+    helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
+    helm repo update >/dev/null
+    helm upgrade --install prom prometheus-community/kube-prometheus-stack \
+      -n observability -f "$HERE/values/prometheus.yaml"
+    helm upgrade --install loki grafana/loki-stack -n observability -f "$HERE/values/loki.yaml"
+    helm upgrade --install alloy grafana/alloy -n observability -f "$HERE/values/alloy.yaml" || echo "  (alloy install issue - logs deferred)"   # logs -> Loki (P2 step 2)
+    # eBPF collectors are deferred/flaky (kernel-7.0, chart coords) - NON-FATAL so they can never block engine/dashboard deploys (LOG-039)
+    helm repo add groundcover https://helm.groundcover.com/ >/dev/null 2>&1 || true
+    helm repo update groundcover >/dev/null 2>&1 || true
+    helm upgrade --install caretta groundcover/caretta -n caretta --create-namespace -f "$HERE/values/caretta.yaml" || echo "  (caretta install skipped - CO-RE/kernel-7.0 or chart issue, deferred eBPF item)"   # P2 step 3 (repo groundcover @ helm.groundcover.com, chart groundcover/caretta - confirmed README)
+    helm upgrade --install beyla grafana/beyla -n observability -f "$HERE/values/beyla.yaml" || echo "  (beyla install skipped - chart unresolved, deferred eBPF item)"   # P2 step 4
+    echo "P2 eBPF: watch Caretta/OBI load CO-RE on kernel 7.0 (Otterize fallback if not), then: bash appendix/verify_taps.sh --strict"
+  fi
+  if has engine; then
+    kubectl get ns aiops >/dev/null 2>&1 || kubectl create ns aiops
+    kubectl -n aiops create configmap aggregator-queries \
+      --from-file=queries.yaml="$HERE/../aggregator/queries.yaml" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    kubectl apply -f "$HERE/aggregator.yaml"
+    kubectl apply -f "$HERE/engine.yaml"
+    kubectl apply -f "$HERE/api.yaml"
+    echo "L2 aggregator + L3 correlation engine + L4 API deployed to aiops (P3/P4/P6)"
+  fi
+  has language  && echo "P5 narrator: api gateway /api/narrative calls Ollama (model + OLLAMA_HOST baked in api.yaml: gemma4:e4b-it-qat @ the host); deterministic template fallback if Ollama is unreachable"
+  if has dashboard; then
+    kubectl get ns aiops >/dev/null 2>&1 || kubectl create ns aiops
+    kubectl apply -f "$HERE/dashboard.yaml"
+    echo "L4 dashboard deployed to aiops (P6) - NodePort 30080 (reach via the node IP, incl. Tailscale)"
+  fi
+  has chaos     && echo "TODO P7: helm install chaos-mesh (containerd socket: /run/k3s/containerd/containerd.sock)"
+  echo "skctl up done (mode=$MODE components=$COMPONENTS)"
+}
+
+down() { helm uninstall factory 2>/dev/null || true; echo "factory removed (observability left in place)"; }
+pause() {  # idle the factory to spare the box (LOG-032); PVCs + observability untouched
+  for ns in factory-core factory-data factory-edge; do
+    kubectl scale deploy --all -n "$ns" --replicas=0 >/dev/null 2>&1 || true
+    kubectl patch cronjob --all -n "$ns" -p '{"spec":{"suspend":true}}' >/dev/null 2>&1 || true
+  done
+  echo "factory paused (deployments -> 0, cronjobs suspended). resume: $0 resume"
+}
+resume() {
+  for ns in factory-core factory-data factory-edge; do
+    kubectl scale deploy --all -n "$ns" --replicas=1 >/dev/null 2>&1 || true
+    kubectl patch cronjob --all -n "$ns" -p '{"spec":{"suspend":false}}' >/dev/null 2>&1 || true
+  done
+  echo "factory resumed (deployments -> 1, cronjobs active)"
+}
+status() { kubectl get pods -A -l 'tier' 2>/dev/null || kubectl get pods -A | head -40; }
+case "$CMD" in up) up;; down) down;; pause) pause;; resume) resume;; status) status;; *) echo "usage: skctl up|down|pause|resume|status"; exit 1;; esac

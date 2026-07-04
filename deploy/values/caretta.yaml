@@ -1,0 +1,23 @@
+# Caretta - eBPF service-flow map. Emits caretta_links_observed (Gauge; labels client_name/
+# client_namespace/server_name/server_namespace/server_port/role) = who-talks-to-whom, redrawing
+# plane-1 of the pod mesh with zero config. Repo: helm.groundcover.com, chart groundcover/caretta.
+# Bundled VictoriaMetrics + Grafana OFF; we scrape the agent via the prometheus.io/scrape annotation
+# -> job 'ebpf-exporters'. CONFIRM AT INSTALL: (a) the eBPF CO-RE program loads on kernel 7.0 (LOG-020
+# watch; Otterize network-mapper / beyla-network are fallbacks); (b) the agent actually exposes a
+# Prometheus /metrics endpoint on the annotated port -- the README routes metrics through the bundled
+# VM, so if caretta_links_observed is empty in our Prometheus, either set prometheus.io/port to the
+# agent's real metrics port, or re-enable victoria-metrics-single and query Caretta's VM instead.
+victoria-metrics-single:
+  enabled: false
+grafana:
+  enabled: false
+tolerations:
+  - operator: Exists            # run the eBPF agent on every node
+config:
+  pollIntervalSeconds: 5
+resources:                       # chart default mem limit 500Mi OOMKills on this node (kernel 7.0; the
+  requests: { cpu: 50m,  memory: 256Mi }   # conn-tracking eBPF maps + userspace aggregation need more).
+  limits:   { cpu: 300m, memory: 1Gi }     # if it STILL OOMs at 1Gi -> leak/churn -> fall back to beyla-network for the map.
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "7117"    # Caretta metrics port - verify vs the chart's default and adjust if scrape is empty

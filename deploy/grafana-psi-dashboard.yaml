@@ -1,0 +1,90 @@
+# SKN PSI dashboard, provisioned as code (no hand-building in the Grafana UI). The kube-prometheus
+# grafana sidecar watches ConfigMaps labeled grafana_dashboard and loads this automatically (~30s),
+# so the dashboard appears with a FIXED uid (skn-psi) + panel ids that the embeds point at:
+#   panelId 1 = PSI I/O · 2 = PSI CPU · 3 = PSI memory  (per-workload, the engine's 3 signals).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: skn-psi-dashboard
+  namespace: observability
+  labels:
+    grafana_dashboard: "1"
+data:
+  skn-psi.json: |-
+    {
+      "uid": "skn-psi",
+      "title": "SKN PSI",
+      "schemaVersion": 39,
+      "version": 3,
+      "editable": true,
+      "refresh": "5s",
+      "timezone": "Asia/Kolkata",
+      "time": { "from": "now-30m", "to": "now" },
+      "templating": {
+        "list": [
+          { "name": "datasource", "type": "datasource", "query": "prometheus", "hide": 0, "current": {} }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "PSI I/O pressure (per workload)",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": { "min": 0, "unit": "none", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "sum by (workload) (label_replace(rate(container_pressure_io_stalled_seconds_total{namespace=~\"aiops|observability|plant\"}[1m]), \"workload\", \"$1\", \"pod\", \"^(.*)-[^-]+-[^-]+$\"))",
+              "legendFormat": "{{workload}}"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "PSI CPU pressure (per workload)",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+          "fieldConfig": {
+            "defaults": { "min": 0, "unit": "none", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "sum by (workload) (label_replace(rate(container_pressure_cpu_stalled_seconds_total{namespace=~\"aiops|observability|plant\"}[1m]), \"workload\", \"$1\", \"pod\", \"^(.*)-[^-]+-[^-]+$\"))",
+              "legendFormat": "{{workload}}"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "PSI memory pressure (per workload)",
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 18 },
+          "fieldConfig": {
+            "defaults": { "min": 0, "unit": "none", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "sum by (workload) (label_replace(rate(container_pressure_memory_stalled_seconds_total{namespace=~\"aiops|observability|plant\"}[1m]), \"workload\", \"$1\", \"pod\", \"^(.*)-[^-]+-[^-]+$\"))",
+              "legendFormat": "{{workload}}"
+            }
+          ]
+        }
+      ]
+    }

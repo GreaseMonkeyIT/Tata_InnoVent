@@ -1,0 +1,70 @@
+# kube-prometheus-stack values - 12h retention, 5s scrape on L0 namespaces (D-001, MASTER_PLAN 1.2)
+grafana:
+  enabled: true                  # re-enabled (reverses LOG-024); pinned to v11 to avoid the v12 apiserver crashloop
+  image:
+    tag: "11.3.0"
+  service:
+    type: NodePort
+    nodePort: 30030              # direct at <node-ip>:30030 — each component is tested individually before any embed
+  sidecar:
+    datasources:
+      label: grafana_datasource_skn   # load ONLY this stack's datasources; ignores loki-stack's default-Loki configmap (the two-defaults crashloop). Provision Loki here as non-default when we wire the logs panel.
+  grafana.ini:
+    security:
+      allow_embedding: true      # let the dashboard page iframe Grafana panels (d-solo)
+    users:
+      default_timezone: Asia/Kolkata
+    auth.anonymous:
+      enabled: true
+      org_role: Viewer           # no login for the demo; the Prometheus datasource is auto-provisioned by the stack
+alertmanager: { enabled: true }
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30090             # direct PromQL + scrape targets at <node-ip>:30090
+  prometheusSpec:
+    retention: 12h
+    scrapeInterval: 15s
+    additionalScrapeConfigs:
+      - job_name: l0-fast
+        scrape_interval: 5s
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: { names: [factory-core, factory-data, factory-edge] }
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - target_label: channel        # D-004 (LOG-026/027): l0-fast = app /metrics = ground-truth channel; stamp it so L2/engine can exclude it
+            replacement: truth
+      - job_name: cadvisor-fast
+        scrape_interval: 5s
+        scheme: https
+        tls_config: { insecure_skip_verify: true }
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs: [{ role: node }]
+        metrics_path: /metrics/cadvisor
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+      - job_name: ebpf-exporters       # scrape any pod annotated prometheus.io/scrape=true (Caretta, OBI/Beyla) - P2 steps 3-4
+        scrape_interval: 5s
+        kubernetes_sd_configs: [{ role: pod }]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: 'true'
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: '(.+)'
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port, __meta_kubernetes_pod_ip]
+            action: replace
+            regex: '(\d+);(.+)'
+            replacement: '$2:$1'
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod

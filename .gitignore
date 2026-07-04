@@ -1,0 +1,36 @@
+# Tata InnoVent umbrella repo — what stays local (LOG-039)
+
+# --- machine-local config / sync infrastructure ---
+.claude/
+.obsidian/
+.stfolder/
+.stversions/
+*.sync-conflict-*
+
+# --- node / next.js (dashboard) — rebuilt from source, never committed ---
+node_modules/
+.next/
+out/
+npm-debug.log*
+*.tsbuildinfo
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# --- OS noise ---
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- local scratch artifacts ---
+output.txt
+
+# NOTE — dashboard/app/fonts/IndustryTest-*.otf are Fontfabric TRIAL weights. They are
+# COMMITTED so a fresh clone can build the dashboard image (next/font/local needs the
+# files), on the assumption this repo stays PRIVATE to the team. If the repo ever goes
+# public, uncomment the line below and swap to licensed files first (LOG-014).
+# dashboard/app/fonts/*.otf

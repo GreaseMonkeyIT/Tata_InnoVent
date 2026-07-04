@@ -1,0 +1,20 @@
+# Beyla / OBI (OpenTelemetry eBPF Instrumentation) - zero-code RED metrics (HTTP/gRPC request rate,
+# errors, p95 latency) per factory service. Prometheus export; scraped via the prometheus.io/scrape
+# annotation -> job 'ebpf-exporters'. Runs as a privileged eBPF DaemonSet.
+# CONFIRM AT INSTALL: Beyla 2.x config schema (discovery / prometheus_export key names move between
+# versions), the chart coordinates (grafana/beyla vs an OCI/OBI chart), and CO-RE load on kernel 7.0.
+# This supplies latency_p95 for the L2 query pack (D-004: eBPF RED, NOT the CCR app histogram).
+config:
+  data:
+    discovery:
+      services:
+        - k8s_namespace: "factory-.*"
+    prometheus_export:
+      port: 9400
+      path: /metrics
+tolerations:
+  - operator: Exists
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9400"
+  prometheus.io/path: "/metrics"

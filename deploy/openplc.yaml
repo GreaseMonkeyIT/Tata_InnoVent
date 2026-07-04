@@ -1,0 +1,55 @@
+# OpenPLC (2F, LOG-033): real IEC 61131-3 runtime in the plant namespace.
+# Modbus TCP slave :502 (the sim's field wiring) + web UI :8080 (NodePort 30081 — show the
+# judges the live program). The sim tolerates this pod's absence (open-loop), so this deploy
+# can land/fail independently of everything else.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openplc
+  namespace: plant
+  labels: { app: openplc }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: openplc } }
+  template:
+    metadata:
+      labels: { app: openplc }
+    spec:
+      containers:
+      - name: openplc
+        image: skn/openplc:v0.1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - { containerPort: 502,  name: modbus }
+        - { containerPort: 8080, name: web }
+        readinessProbe:
+          httpGet: { path: /login, port: 8080 }
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests: { cpu: 100m, memory: 128Mi }
+          limits:   { cpu: 500m, memory: 384Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openplc
+  namespace: plant
+  labels: { app: openplc }
+spec:
+  selector: { app: openplc }
+  ports:
+  - { name: modbus, port: 502,  targetPort: 502 }
+  - { name: web,    port: 8080, targetPort: 8080 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openplc-web
+  namespace: plant
+  labels: { app: openplc }
+spec:
+  type: NodePort
+  selector: { app: openplc }
+  ports:
+  - { name: web, port: 8080, targetPort: 8080, nodePort: 30081 }

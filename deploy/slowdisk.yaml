@@ -1,0 +1,58 @@
+# Static local PVs on the dedicated /dev/sdb HDD - PIVOT edition (LOG-029).
+# claimRef is BAKED (the LOG-008 lesson): each PV is pre-bound to its exact PVC
+# (namespace + name), so the 5Gi claim can never grab the 64Gi volume again.
+# The PVC names/namespace must match plant/deploy.yaml EXACTLY.
+#
+# Node prereq (disk already formatted/mounted on the box; dirs recreated by the
+# wipe step in PIVOT_SETUP.md):
+#   /dev/sdb mounted at /mnt/slowdisk; /mnt/slowdisk/{historian,plant-shared} exist
+# Apply (fills the node name in):
+#   NODE=$(kubectl get node -o jsonpath='{.items[0].metadata.labels.kubernetes\.io/hostname}')
+#   sed "s/<NODE_NAME>/$NODE/g" deploy/slowdisk.yaml | kubectl apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: slowdisk
+provisioner: kubernetes.io/no-provisioner   # static binding only; no dynamic provisioning
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: historian-pv-slowdisk
+spec:
+  capacity: { storage: 64Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: slowdisk
+  claimRef:                       # <- the stickiness: pre-bound, cross-bind impossible
+    namespace: plant
+    name: historian-data
+  local:
+    path: /mnt/slowdisk/historian
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: ["<NODE_NAME>"] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: plant-shared-pv-slowdisk
+spec:
+  capacity: { storage: 5Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: slowdisk
+  claimRef:
+    namespace: plant
+    name: plant-shared
+  local:
+    path: /mnt/slowdisk/plant-shared
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: ["<NODE_NAME>"] }

@@ -1,0 +1,3 @@
+loki: { enabled: true }
+promtail: { enabled: false }   # Promtail EOL - Alloy ships logs (BUILD_GUIDE P2 step 2)
+grafana: { enabled: false }

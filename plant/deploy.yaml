@@ -1,0 +1,127 @@
+# plant namespace: the physics-simulated plant + its storage claims.
+# PVCs here are claimRef-TARGETS of deploy/slowdisk.yaml - names must match exactly.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: plant
+---
+# 64Gi slowdisk -> the plant historian (real TimescaleDB storing device signals).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: historian-data
+  namespace: plant
+spec:
+  storageClassName: slowdisk
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 64Gi } }
+---
+# 5Gi slowdisk -> shared plant artifacts (recorder output, soak/audit exports).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: plant-shared
+  namespace: plant
+spec:
+  storageClassName: slowdisk
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plant-sim
+  namespace: plant
+  labels: { app: plant-sim }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: plant-sim } }
+  template:
+    metadata:
+      labels: { app: plant-sim }
+    spec:
+      containers:
+      - name: plant-sim
+        image: skn/plant-sim:v0.1
+        imagePullPolicy: IfNotPresent
+        env:
+          # 2F field wiring: sensors -> OpenPLC %MW words, trip coils -> contactors. The sim
+          # runs OPEN-LOOP (identical to pre-2F) while this host is unreachable, so the plant
+          # never depends on the PLC pod existing.
+          - { name: PLC_HOST, value: "openplc.plant.svc" }
+        ports: [{ containerPort: 9200, name: metrics }]
+        resources:
+          requests: { cpu: 50m,  memory: 64Mi }
+          limits:   { cpu: 200m, memory: 128Mi }
+        readinessProbe: { httpGet: { path: /healthz, port: 9200 } }
+        livenessProbe:  { httpGet: { path: /healthz, port: 9200 } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plant-sim
+  namespace: plant
+  labels: { app: plant-sim }
+spec:
+  selector: { app: plant-sim }
+  ports: [{ name: metrics, port: 9200, targetPort: 9200 }]
+---
+# Scrape via the kube-prometheus-stack operator (release label "prom" - matches
+# the skctl helm release so the ServiceMonitor is picked up automatically).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: plant-sim
+  namespace: plant
+  labels: { release: prom }
+spec:
+  selector: { matchLabels: { app: plant-sim } }
+  namespaceSelector: { matchNames: [plant] }
+  endpoints:
+  - port: metrics
+    interval: 5s
+    # keep the sim's OWN namespace/pod labels (they name plant ASSETS, not the
+    # scraping pod) - without honorLabels Prometheus would overwrite them.
+    honorLabels: true
+---
+# Historian: a real TimescaleDB storing plant signals on the 64Gi slowdisk.
+# (Wiring the SCADA/ingest path into it is a 2B'-follow-up; the claim binds now
+# so the PV allocation is settled and cross-bind-proof from day one.)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: historian-db
+  namespace: plant
+  labels: { app: historian-db }
+spec:
+  serviceName: historian-db
+  replicas: 1
+  selector: { matchLabels: { app: historian-db } }
+  template:
+    metadata:
+      labels: { app: historian-db }
+    spec:
+      containers:
+      - name: timescaledb
+        image: timescale/timescaledb:latest-pg16
+        env:
+        - { name: POSTGRES_PASSWORD, value: plant-historian }
+        - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+        ports: [{ containerPort: 5432 }]
+        resources:
+          requests: { cpu: 100m, memory: 256Mi }
+          limits:   { cpu: 500m, memory: 512Mi }
+        volumeMounts:
+        - { name: historian-data, mountPath: /var/lib/postgresql/data }
+      volumes:
+      - name: historian-data
+        persistentVolumeClaim: { claimName: historian-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: historian-db
+  namespace: plant
+spec:
+  selector: { app: historian-db }
+  ports: [{ port: 5432 }]

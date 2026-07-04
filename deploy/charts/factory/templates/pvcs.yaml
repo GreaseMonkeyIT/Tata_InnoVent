@@ -1,0 +1,16 @@
+{{- if .Values.groups.storage }}
+{{- range .Values.pvcs }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+  annotations:
+    helm.sh/resource-policy: keep   # D-012 (LOG-025): never delete data on a workload toggle
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .storageClass | default "local-path" }}
+  resources: { requests: { storage: {{ .size }} } }
+---
+{{- end }}
+{{- end }}

@@ -1,0 +1,15 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: s4-notify-latency
+  namespace: chaos
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces: [factory-edge]
+    labelSelectors: { app: notify-gateway }
+  delay:
+    latency: 200ms
+    jitter: 50ms
+  duration: 3m

@@ -1,0 +1,90 @@
+{{- range .Values.pods }}
+{{- if index $.Values.groups .group }}
+{{- if eq (default "Deployment" .kind) "CronJob" }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .name }}
+  namespace: {{ .ns }}
+  labels: { app: {{ .name }}, tier: {{ .group }} }
+spec:
+  schedule: {{ .schedule | quote }}
+  concurrencyPolicy: Forbid
+  suspend: {{ .suspend | default false }}   # on-demand by default (LOG-034): fire via scenarios/S{2,3}/trigger.sh
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{ .name }}
+            tier: {{ .group }}
+            {{- if .affinityGroup }}
+            affinity-group: {{ .affinityGroup }}
+            {{- end }}
+        spec:
+          restartPolicy: Never
+          {{- include "factory.affinity" . | nindent 10 }}
+          containers:
+            - name: {{ .name }}
+              image: {{ $.Values.registry }}/{{ .image }}:{{ $.Values.tag }}
+              imagePullPolicy: IfNotPresent
+              {{- include "factory.env" . | nindent 14 }}
+              {{- include "factory.resources" . | nindent 14 }}
+              {{- include "factory.mounts" . | nindent 14 }}
+          {{- include "factory.volumes" . | nindent 10 }}
+{{- else }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .name }}
+  namespace: {{ .ns }}
+  labels: { app: {{ .name }}, tier: {{ .group }} }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: {{ .name }} } }
+  template:
+    metadata:
+      labels:
+        app: {{ .name }}
+        tier: {{ .group }}
+        {{- if .affinityGroup }}
+        affinity-group: {{ .affinityGroup }}
+        {{- end }}
+    spec:
+      {{- include "factory.affinity" . | nindent 6 }}
+      containers:
+        - name: {{ .name }}
+          image: {{ $.Values.registry }}/{{ .image }}:{{ $.Values.tag }}
+          imagePullPolicy: IfNotPresent
+          {{- if .port }}
+          ports: [{ containerPort: {{ .port }} }]
+          {{- end }}
+          {{- if .httpProbe }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: {{ .port }} }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /healthz, port: {{ .port }} }
+            periodSeconds: 10
+          {{- end }}
+          {{- include "factory.env" . | nindent 10 }}
+          {{- include "factory.resources" . | nindent 10 }}
+          {{- include "factory.mounts" . | nindent 10 }}
+      {{- include "factory.volumes" . | nindent 6 }}
+{{- end }}
+---
+{{- if .port }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .name }}
+  namespace: {{ .ns }}
+spec:
+  selector: { app: {{ .name }} }
+  ports: [{ port: {{ .port }}, targetPort: {{ .port }} }]
+---
+{{- end }}
+{{- end }}
+{{- end }}

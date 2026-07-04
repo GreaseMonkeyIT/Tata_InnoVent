@@ -1,0 +1,25 @@
+# Grafana Alloy - ship pod logs to the in-cluster Loki (BUILD_GUIDE P2 step 2; Promtail is EOL).
+# loki.source.kubernetes reads logs via the K8s API, so a single Deployment works (no hostPath).
+# If logs don't appear, switch to a file-based DaemonSet (controller.type=daemonset + /var/log mounts)
+# or grant pods/log RBAC. Verify: appendix/verify_taps.sh shows Loki factory-core streams.
+controller:
+  type: deployment
+alloy:
+  configMap:
+    content: |-
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule { source_labels = ["__meta_kubernetes_namespace"];         target_label = "namespace" }
+        rule { source_labels = ["__meta_kubernetes_pod_name"];           target_label = "pod" }
+        rule { source_labels = ["__meta_kubernetes_pod_container_name"]; target_label = "container" }
+      }
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.write.default.receiver]
+      }
+      loki.write "default" {
+        endpoint { url = "http://loki.observability.svc.cluster.local:3100/loki/api/v1/push" }
+      }

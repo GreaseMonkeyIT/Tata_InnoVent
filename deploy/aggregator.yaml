@@ -1,0 +1,45 @@
+# L2 aggregator (P3). Image skn/aggregator:v0.1. queries.yaml comes from the
+# aggregator-queries ConfigMap, which skctl builds from aggregator/queries.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator
+  namespace: aiops
+  labels: { app: aggregator, tier: aiops }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: aggregator } }
+  template:
+    metadata:
+      labels: { app: aggregator, tier: aiops }
+    spec:
+      containers:
+        - name: aggregator
+          image: skn/aggregator:v0.1
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 9000 }]
+          env:
+            - { name: PROM_URL,     value: "http://prom-kube-prometheus-stack-prometheus.observability.svc:9090" }
+            - { name: QUERIES_FILE, value: "/etc/aggregator/queries.yaml" }
+          volumeMounts:
+            - { name: queries, mountPath: /etc/aggregator, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 9000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 300m, memory: 384Mi }   # pivot window is fatter (aiops|observability|plant + plant_* passthrough); 150Mi had the engine forecasting the aggregator's own OOM
+      volumes:
+        - name: queries
+          configMap: { name: aggregator-queries }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aggregator
+  namespace: aiops
+  labels: { app: aggregator }
+spec:
+  selector: { app: aggregator }
+  ports: [{ name: http, port: 9000, targetPort: 9000 }]

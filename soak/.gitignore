@@ -1,0 +1,4 @@
+# soak run outputs (samples, reports) and python cache — generated, not source
+runs/
+__pycache__/
+*.pyc

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skn/event/v1",
+  "title": "Event v1 - FROZEN (MASTER_PLAN 1.3.3; changes require a BUILD_LOG DECISION)",
+  "type": "object",
+  "required": ["v", "ts", "kind", "namespace", "pod", "signal", "value"],
+  "properties": {
+    "v":         { "const": 1 },
+    "ts":        { "type": "string", "format": "date-time" },
+    "kind":      { "enum": ["anomaly_candidate", "threshold_breach", "restart", "oom", "probe_fail"] },
+    "namespace": { "type": "string" },
+    "pod":       { "type": "string" },
+    "signal":    { "enum": ["cpu", "mem", "net_rx", "net_tx", "pvc_io_util", "pvc_capacity", "psi_cpu", "psi_mem", "psi_io", "restarts", "latency_p95", "log_error_rate"] },
+    "value":     { "type": "number" },
+    "zscore":    { "type": "number" },
+    "threshold": { "type": "number" },
+    "window_s":  { "type": "integer" },
+    "context":   { "type": "object" }
+  }
+}
