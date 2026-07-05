@@ -271,16 +271,23 @@ def _template_narrative(g) -> str:
     eta_txt = f", with impact on {victim} expected in ~{int(eta)}s" if eta else ""
     reg = meta.get("case_register")
     reg_txt = f" (recognised as a {reg} of a known case)" if reg in ("recurrence", "variant") else ""
-    return (f"{cause} is the likely root cause of {signal} contention: its activity correlates with "
-            f"{victim} over {ev}{eta_txt}{reg_txt}.")
+    return (f"{cause} is the likely root cause of {SIGNAL_RESOURCE.get(signal, signal)} contention: "
+            f"its activity correlates with {victim} over {ev}{eta_txt}{reg_txt}.")
 
 
 def _incipient_text(incip) -> str:
-    """Deterministic OOM early-warning line (pods already workload-normalized by graph())."""
+    """Deterministic early-warning line, phrased per forecast family (2C'): the plant coolant thermal
+    TRIP (coolant_temp -> temp_limit, °C) or the memory OOM leak (mem -> mem_limit, bytes). The
+    finding's class/signal pick the wording — a coolant trip must NOT read as a memory OOM in bytes.
+    Pods already workload-normalized by graph()."""
     f = min(incip, key=lambda x: x.get("eta_s") if x.get("eta_s") is not None else 1e9)
-    return (f"Early warning: {f['pod']} is trending toward its memory limit "
-            f"({_fmt_mem(f.get('value') or 0)} of {_fmt_mem(f.get('limit') or 0)}) — "
-            f"projected OOM in ~{int(f.get('eta_s') or 0)}s.")
+    pod, eta = f["pod"], int(f.get("eta_s") or 0)
+    val, lim = f.get("value") or 0, f.get("limit") or 0
+    if f.get("class") == "trip" or f.get("signal") == "coolant_temp":
+        return (f"Early warning: {pod} coolant temperature is climbing toward the {lim:.0f} °C trip "
+                f"({val:.0f} °C now) — projected trip in ~{eta}s.")
+    return (f"Early warning: {pod} is trending toward its memory limit "
+            f"({_fmt_mem(val)} of {_fmt_mem(lim)}) — projected OOM in ~{eta}s.")
 
 
 _PLANT_ENTITIES: set = set()
@@ -419,13 +426,20 @@ def narrative():
                        if e.get("src") == root_pod and e.get("signal")), None) \
         or (g.get("meta") or {}).get("signal", SIGNAL)
     resource = SIGNAL_RESOURCE.get(active_sig, "resource")
+    # Plane-aware framing: the plant floor (rail voltage / coolant temp) speaks in machines/assets;
+    # the edge node (psi_*) in pods. Keeps the narrator on the NEW physics-plant vocabulary instead
+    # of defaulting to "Kubernetes pods / memory / OOM".
+    plant = active_sig in ("bus_voltage", "coolant_temp")
+    domain = "an industrial plant floor" if plant else "a Kubernetes edge node"
+    entity = "machine" if plant else "pod"
     prompt = (
-        "You are an SRE assistant. Given this causal verdict JSON from a Kubernetes resource-"
-        f"contention engine, write ONE or TWO plain sentences for an on-call operator. The contended "
-        f"resource is {resource}; call it {resource} contention and do NOT name any other resource "
-        "type (not memory, not CPU). The root-cause pod is the SOURCE; the blast-radius pods are the "
-        "affected VICTIMS. Cite only the evidence types and ETAs present in the JSON; do not invent "
-        "metrics, numbers, or causes. If there is no root cause, say the system is steady.\n\n"
+        f"You are a controls and SRE assistant for {domain}. Given this causal verdict JSON from an "
+        f"edge causal-AIOps engine, write ONE or TWO plain sentences for an on-call operator. The "
+        f"contended resource is {resource}; call it {resource} contention and do NOT name any other "
+        f"resource type (not memory, not CPU, not I/O). The root-cause {entity} is the SOURCE; the "
+        f"blast-radius {entity}s are the affected VICTIMS. Cite only the evidence types and ETAs "
+        f"present in the JSON; do not invent metrics, numbers, or causes. If there is no root cause, "
+        f"say the system is steady.\n\n"
         "VERDICT:\n" + json.dumps({k: g.get(k) for k in ("root", "edges", "blast_radius", "meta")})
     )
     text = _ollama(prompt)

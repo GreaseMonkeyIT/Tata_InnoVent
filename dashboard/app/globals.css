@@ -31,6 +31,9 @@ button { font-family: inherit; }
 .btn:hover { background: var(--panel-hover); }
 .btn.cyan { background: transparent; border-color: rgba(54,197,224,0.5); color: var(--accent); }
 .btn.cyan:hover { background: rgba(54,197,224,0.1); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.resetall { background: transparent; border-color: rgba(255,152,48,0.5); color: var(--orange); padding: 5px 12px; }
+.btn.resetall:hover:not(:disabled) { background: rgba(255,152,48,0.1); }
 
 /* ── VISR section system ── */
 .app { max-width: 1080px; margin: 0 auto; padding: 22px 16px 8px; display: flex; flex-direction: column; gap: 18px; }

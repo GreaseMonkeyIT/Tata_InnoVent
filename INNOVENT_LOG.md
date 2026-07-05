@@ -508,3 +508,132 @@ even instantiate until approached — first paint fast, scroll uncontended). Ver
 scroll round-trip, WebGL context intact, 6/6 iframes lazy, zero console errors) + `next build` ✓ 4/4. Known
 capture quirk stands: continuous pulse animation starves the screenshot tool's stable-frame heuristic — cosmetic,
 tool-side only. Deploy = dashboard rebuild + import + restart.
+
+**LOG-041 · 2026-07-05 · Scenario console: "Reset plant" button + button state wired to the sim's real
+faults; plant `/reset` now restores a record-ready baseline.** The console error path left no recovery: firing
+a scenario set the row `live` optimistically (client-only), so after a trigger errored and the page reloaded, an
+active fault showed "idle / Fire" with no Reset button while the sim still held it. Fix (dashboard/app/page.jsx):
+drop optimistic `live`; derive each row's live/idle + Reset/Fire from `/api/plant`'s `active_faults` (survives
+reload) plus a `pending` map for in-flight busy state; add an always-available **Reset plant** header button
+(`resetAll()` → the sim's global `/reset`, clears every fault + pulses the PLC trip reset) for stuck/unknown
+states; re-pull `/api/plant` immediately after any action so buttons flip without the 5s tick; honest latency
+copy (floor ~5s, verdict ~10–15s — the stale "~50s" removed). globals.css: `.resetall` + `.btn:disabled`.
+**Plant latch fix (plant/sim/main.py):** `/reset` now also sets every device `throughput=100.0, tripped=False`.
+Why: press-1/press-2 are not `v_sensitive`, so their throughput is set only at init and climbs only in the
+healthy-voltage branch (`v ≥ 0.92·400 = 368 V`); steady rail-A sits ~361 V (r_src 0.35), so once a trip knocks
+throughput down it is latched forever — clearing friction restored draw but not throughput. Verified in dev
+preview. Deploy = dashboard rebuild + import + restart; plant-sim rebuild (`docker build -t skn/plant-sim:v0.1
+plant`) + `k3s ctr images import` + `kubectl -n plant rollout restart deploy/plant-sim`.
+
+**LOG-042 · 2026-07-05 · Narrator (gemma4) made plane-aware; coolant-trip forecast no longer renders as a
+memory OOM.** api/main.py: (1) `_incipient_text` is now class/signal-aware — a `trip`/`coolant_temp` finding
+reads "coolant temperature climbing toward the 78 °C trip (… °C now) — projected trip in ~Ns" instead of the
+hardcoded "…B of 78 B — OOM" (the memory/bytes template was mislabeling the PS5 thermal forecast, since both
+families share `incipient_findings`); the `leak`/`mem` path is unchanged. (2) The gemma4 prompt is plane-aware:
+plant signals (`bus_voltage`/`coolant_temp`) frame the domain as an industrial plant floor with machines as
+SOURCE/VICTIMS and forbid naming memory/CPU/I/O; `psi_*` keep the Kubernetes-node/pods framing. (3)
+`_template_narrative` now emits the resource word (`bus_voltage` → "rail voltage") instead of leaking the raw
+engine signal name. Deterministic paths (template + forecast line) are correct regardless of the model. Verified:
+syntax + trip-vs-leak phrasing test. Deploy = api rebuild + import + restart (also clears `_NARR_CACHE`). Note:
+the Jan-demo recording predates this — its on-screen forecast still reads "OOM"; the burned subtitles narrate it
+correctly as a coolant trip.
+
+**LOG-043 · 2026-07-05 · Repo flattened + root commit rewritten; two-working-copy workflow adopted.** The
+umbrella repo (LOG-039) shipped one commit with `ABB_Accelerator_Proto/` nested, plus `RULES/`, the SiliconKnights
+deck/pdf, and several ABB docs. Restructured to a flat layout: `ABB_Accelerator_Proto/*` hoisted to the repo root;
+dropped `RULES/`, `SiliconKnights_Final.*`, and the redundant ABB docs (BOOK/MASTER_PLAN/BUILD_LOG/etc.); fixed the
+now-stale ignore path (`ABB_Accelerator_Proto/output.txt` → `output.txt`) so the scratch file stays untracked;
+de-nested the README run-it paths. Root commit `53d5776` → `6670af2` (`git commit --amend`), force-pushed to
+`origin/main` (solo repo). **Workflow going forward (operator instruction):** edit in `…/Tata InnoVent` (the live
+copy — `next dev` + `make images` build from here, nested `ABB_Accelerator_Proto/` layout), then mirror touched
+files into `…/Tata_InnoVent_Commit` (the canonical flat git repo; strip the `ABB_Accelerator_Proto/` prefix) and
+commit from there.
+
+**LOG-044 · 2026-07-05 · Registration assets: demo video subtitled + reframed 16:9; deck re-themed red→blue.**
+**Video:** `SiliconKnights_Tata_Final.mp4` (1892×944 ≈ 2:1, 3:43, post-factory-fixes / pre-gemma-fix) → parked at
+the top of a 1920×1080 canvas so the 2:1 slack becomes a bottom subtitle bar; 25 narration cues (steady tour →
+fire PS1 → cascade → root press-1 → coolant-trip forecast → trip) burned into the bar via a PlayResY-1080 `.ass`,
+audio dropped → `SiliconKnights_Tata_Subtitled_16x9.mp4`. Spot-checked at fire/root/trip beats. **Deck:**
+`SiliconKnights_PPT.pptx` (16 slides) re-themed Red+Black+White → Blue+Black+White: `theme` accent1/hlink
+`CC0000`→`1D4ED8`, accent2/folHlink `8B0000`→`1E3A8A` (cascades to every `schemeClr`), and ~30 hardcoded red
+shades collapsed to a consistent blue scale (`1D4ED8`/`2563EB`/`3B82F6`/`60A5FA`/`93C5FD`, light tints
+`EFF6FF`/`DBEAFE`/`BFDBFE`, darks `1E3A8A`/`172554`) across all slides + presProps; green (healthy) / amber
+(warning) status semantics and black/white structure preserved. Verified: zero red-family `srgbClr` remain; pack
+validations passed → `SiliconKnights_PPT_blue.pptx` (original preserved). No LibreOffice locally → visual QA on
+operator's PowerPoint.
+
+**LOG-045 · 2026-07-05 · Deck: fuller palette (green→sky/cyan, warm→canary yellow) + content adaptation begun.**
+After the red→blue pass (LOG-044) the surviving green (healthy) and amber (warning) semantics clashed with the new
+blue; per operator, remapped the whole deck to one cohesive system: **royal-blue = root/danger** (was red),
+**sky+cyan = healthy** (greens `1A6B3C`/`16A34A`/`009900`/`00FF00`… → `0369A1`/`0EA5E9`/`38BDF8`/`22D3EE`… by
+luminance), **canary yellow = warning** (ambers/browns `7B3F00`/`CC4400`/`D29922`/`F0A800`/`FF6B35`… →
+`854D0E`/`CA8A04`/`EAB308`/`FACC15`/`FDE047`); grays/black/white kept. 199 replacements; verified zero green/warm
+`srgbClr` remain. **Content pass started** (adapt, not rewrite — reuse every box/font/size): formal problem
+statement drafted in ABB-theme style ("Beyond Monitoring: On-Edge Causal AI for Industrial Systems", §3.2.2.5).
+Slide 1 rewritten — "Theme 2:" → "Tata InnoVent 2026 · 3.2.2.5", theme line → "Beyond monitoring — on-edge causal
+AI for connected, secure & intelligent industrial systems" (Poppins/sizes untouched); team block kept. Workflow:
+preview each slide's copy → operator approves → write. **Resume point (morning):** slide 3 = "(Our Solution)" →
+"VISR (ours)" (comparison table otherwise intact), then slides 4–16 (architecture L0–L3, PS0/1/2 scenarios, risk,
+close); slide 2 is a text-free hero (skip). Engine-capture commands handed over (fire PS via api `:30088` →
+`/api/graph` + `/api/narrative` + `/api/plant` JSON) to generate the scenario-slide visuals — needs api
+redeployed first. Deck = `SiliconKnights_PPT_blue.pptx`; visual QA pending on operator's PowerPoint.
+
+**LOG-046 · 2026-07-05 · Deck REBUILT — VISR dark theme + 13-slide restructure (`SiliconKnights_Tata_VISR.pptx`;
+supersedes the LOG-044/045 blue deck as the working copy; originals preserved).** Morning box session first:
+3 stale images deployed (api/dashboard/plant-sim — LOG-035/036/038/040/041/042 debt cleared), PS1 re-verified on
+the engine side via `kubectl get --raw` service-proxy reads (run #1 root=compressor-1 0.36 = young-baseline + ON-window
++ warm-up transient, honest artifacts; run #2 after settle+OFF-window = **PASS: root=press-1 0.33, confidence 1.00,
+[write,rail,temporal], zero pvc, qa-scanner-1 unmangled**) — operator captured screenshots. Then the deck: operator
+approved the slide-05 VISR-dark prototype and ordered full propagation with a NEW structure (problem statement
+invented from §3.2.2.5; ONE scenario only; simplified text, technical detail preserved). **Method answer recorded:**
+the deck is a Google-Slides export (zero theme inheritance, per-shape hardcoded colors) — regex surgery replaced by
+**python-pptx + a single token module (`visr_kit.py`, mirrors dashboard globals.css) + generated slides**; context-aware
+XML transform (`retheme2.py`, TEXT/LINE/FILL 3-way maps) only for the 5 keepers. **Final 13:** title · 02 research
+(4 tool families, where each stops) · 03 core insight ("everyone detects, nobody explains" + USP band) · 04 contentions
+TABLE (rail/coolant/air/fieldbus/edge-box = the §3.2.2.5 problem statement) · 05 architecture (kept, tech stack
+retexted pivot-truthful: plant physics L0, kernel PSI L1, why-cards → simulate-the-plant / watch-the-watcher /
+normalization / deterministic-inference / declared-coupling) · 06 L0 physics (Ohm's-law sag, thermal lags, model-only
+faults, 10-test suite + machines-by-task colored tiles per operator) · 07 L0 edge runtime (K3s reduced-scope + two-plane
+honesty band) · 08 L1+L2 (kept; Loki column → Kernel truth PSI; "one window, two planes") · 09 L3 pipeline (kept incl.
+screenshots; steps retexted to witness-gated flow; NLP quote → the LIVE 2026-07-05 press-1 verdict) · 10 L3 agents
+(kept, light touch) · 11 PS1 scenario (6-beat timeline → trip; measured verdict panel w/ evidence chips; capture
+placeholder) · 12 risk analysis (6 risks, AI-safety framed: spokesperson-only LLM, gates-never-loosen, two-plane,
+human-confirm, clock budget, 62443-aligned) · 13 Stage-2/3 outcomes (per master plan, PLANNED-labeled, VISR-OS north
+star). Footers → cyan "Tata InnoVent" chip, pages renumbered; browns/whites eliminated; contrast audit = only chip
+labels dark-on-cyan by design. **QA = programmatic only (no local LibreOffice)** — operator's PowerPoint is visual QA.
+Open: slide-11 placeholder wants today's PS1 capture; slide-9 embedded screenshots are old-factory-era (re-shoot in
+2D-era); title-slide hero image unreviewed on dark; Bahnschrift headers (Windows-shipped) + Poppins body + Consolas
+micro-labels.
+
+**LOG-047 · 2026-07-05 · Deck restructure per teammate feedback — working file now `SiliconKnights_Tata_VISR.pptx`
+(operator renamed off the `_ft. diddy` joke name; bak = `_bak.pptx`).** Two teammate notes: (1) L0 too k8s-heavy, the
+physics values + how the engine reads them aren't explained; (2) early slides beat around the bush — a cold reader
+can't tell what we solve; add lag-correlation / causal-inference explanation. Executed 3 changes via python-pptx +
+`visr_kit.py` (the token module) + `build_v2.py`, all on the operator's hand-edited canonical (read CURRENT text first
+— operator had retitled s2→"What do the floors run today?", added images to s3/s6/s11): (a) **slide 7 text-only
+revamp** (no geometry touched, per instruction) → "L0 · The plant substrate — and the honesty rule"; K3s demoted to
+"THE BACKDROP · K3S RUNTIME"; PLANE 1 now carries real physics VALUES (V=400−I·R, R=0.35Ω; loop 120 L/min, 78°C trip;
+8 machines emit bus_voltage/current/coolant_temp/throughput; faults=params, PS1 friction ×1.9); PLANE 2 = HOW the
+engine reads it (5s vectors, inverted bus_voltage, EWMA+CUSUM changepoints, declared-medium lag correlation, peak-lag
++role→direction, coolant forecast); honesty band reworded to the domain rule. Headers shortened back to safe 1-line
+lengths after a wrap-risk catch. (b) **slide 10 REBUILT** — the dense 4-agent "what it does" boxes replaced by a
+VISR-native "L3 · How a verdict is computed": 6 steps (signal vectors → changepoints → lagged correlation r(τ) →
+**the witness gate** [orange highlight: no declared domain → no edge] → direction+rank → forecast+narrate) + a band
+DEFINING causal inference ("not 'A correlates with B'…"). (c) **NEW problem-statement slide inserted at position 2**
+("The problem we're solving", §3.2.2.5, lead band + 3 cards CONNECTED/INTELLIGENT/SECURE mapped to the coupling
+problem / explanation gap / edge constraint + gap-statement band). Deck 13→**14 slides**; reordered so 10=L3 pipeline,
+11=L3 how; **whole deck renumbered** (chips 02–14 + footer pages) since the insert shifted everything. QA programmatic
+(no local LibreOffice): order/chip/page all correct, contrast audit clean (only chip labels dark-on-cyan by design),
+slide-8 header colors survived the run-rewrite. **Fit-risk to eyeball in PowerPoint** (my blind spot): slide-8 PLANE 2
+body (~7 lines in a 186px box), slide-2 card bodies, slide-11 step cards + definition band.
+
+**LOG-048 · 2026-07-05 · Two final deck fixes (`build_v3.py`; bak2 saved).** (1) **Slide 2 SECURE card** rewritten to
+name the security posture: air-gapped + **IEC 62443-aligned**, **per-device cryptographic keys gating every read/write**
+(no unauthorized access or rogue command to the floor), motivated by a live citation — **Tata Electronics' own June
+2026 breach** (World Leaks dumped 630 GB / 200k+ files incl. iPhone-18-Pro designs + Apple/Tesla data; citing Tata's own
+subsidiary in a Tata pitch is deliberate). (2) **Slide 8 REBUILT physics-majority** (operator: the k3s panel still
+dominated half the slide even as "backdrop"): now "L0 · The physics of a fault" — two big panels ELECTRICAL·THE RAIL
+SAGS (friction ×1.9, ~43→85 A, V=400−I·R sags 361→344 V) + THERMAL·THE LOOP TRIPS (120 L/min, τ=45–90 s, 78 °C latch,
+rail recovers) = the visual majority; a HOW IT REACHES THE ENGINE panel; k3s demoted to one thin note line; honesty
+band kept. Slides 7 (model + machines) and 8 (fault propagation + engine intake) now split L0 cleanly. Deck still 14;
+QA clean. Also shipped `slide11_lagcorr.png` (coolant-loop lag-correlation explainer, text baked under the graph).

@@ -307,8 +307,16 @@ class H(BaseHTTPRequestHandler):
                 for fid in list(ACTIVE):
                     FAULTS[fid]["clear"]()
                 ACTIVE.clear()
+                # Return every asset to a clean, record-ready baseline. A non-v_sensitive device
+                # (press-1/press-2) whose throughput was knocked down by a trip cannot climb back:
+                # the recovery branch only runs when its rail is >= 0.92*v_src, but steady rail-A
+                # (~361V at r_src=0.35) sits under that, so throughput stays latched. Restore it
+                # explicitly so "Reset plant" actually clears the floor, not just the fault.
+                for d in DEVICES:
+                    d.tripped = False
+                    d.throughput = 100.0
             _PLC_RESET.set()     # pulse the PLC's reset word; latched trips clear only if the
-            return self._send(200, "all faults cleared; PLC trip reset requested\n")  # condition is gone
+            return self._send(200, "all faults cleared; plant returned to baseline; PLC trip reset requested\n")  # condition is gone
         if self.path.startswith("/fault/"):
             fid = self.path.rsplit("/", 1)[-1].upper()
             if fid not in FAULTS:

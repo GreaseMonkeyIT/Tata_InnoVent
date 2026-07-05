@@ -114,7 +114,7 @@ export default function Page() {
   const [podres, setPodres] = useState(null);
   const [plant, setPlant] = useState(null);
   const [recs, setRecs] = useState(null);
-  const [live, setLive] = useState({});
+  const [pending, setPending] = useState({});   // sid -> in-flight trigger/reset (button busy state)
   const [fired, setFired] = useState(null);
   const [plane, setPlane] = useState("floor");   // Causal Monitor view: plant floor | edge stack
   const [updated, setUpdated] = useState(null);
@@ -152,16 +152,43 @@ export default function Page() {
     return () => clearInterval(t);
   }, []);
 
+  // Fire/reset a single scenario. Button state is NOT set optimistically anymore — it is derived
+  // from the sim's real active_faults (see activeFaults below), so it stays correct across reloads.
   async function scenario(sid, action) {
+    setPending((p) => ({ ...p, [sid]: true }));
     setFired(`${action === "reset" ? "resetting" : "firing"} ${sid}…`);
-    setLive((l) => ({ ...l, [sid]: action !== "reset" }));
     try {
       const r = await fetch(`/api/scenarios/${sid}/${action}`, { method: "POST" });
       const j = await r.json().catch(() => ({}));
       setFired(r.ok
-        ? `${sid} ${action === "reset" ? "reset — clears in ~2–3 min" : "fired — changes show in ~50s"} (${new Date().toLocaleTimeString()})`
-        : `error ${r.status}: ${j.detail || ""}`);
-    } catch (e) { setFired("error: " + e); }
+        ? `${sid} ${action === "reset" ? "reset — floor clears in ~5s, verdict in ~10–15s" : "fired — floor moves in ~5s, causal verdict in ~10–15s"} (${new Date().toLocaleTimeString()})`
+        : `error ${r.status}: ${j.detail || j.status || r.statusText || ""}`);
+      getJSON("/api/plant").then(setPlant).catch(() => {});   // pull truth now so buttons flip without waiting for the 5s tick
+    } catch (e) {
+      setFired("error: " + e);
+    } finally {
+      setPending((p) => ({ ...p, [sid]: false }));
+    }
+  }
+
+  // Full plant reset — always available from the panel header. The sim's /reset clears EVERY active
+  // fault and pulses the PLC reset word; the API maps any PS-series reset onto it, so this recovers
+  // a stuck/unknown state even after a reload when no per-row Reset button is showing.
+  async function resetAll() {
+    setPending((p) => ({ ...p, __all: true }));
+    setFired("resetting plant — clearing all faults…");
+    try {
+      const r = await fetch(`/api/scenarios/PS1/reset`, { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      setFired(r.ok
+        ? `plant reset — all faults cleared (${new Date().toLocaleTimeString()})`
+        : `reset error ${r.status}: ${j.detail || ""}`);
+      getJSON("/api/plant").then(setPlant).catch(() => {});
+    } catch (e) {
+      setFired("reset error: " + e);
+    } finally {
+      setPending((p) => ({ ...p, __all: false }));
+    }
   }
 
   // ── derive ──────────────────────────────────────────────────────────────
@@ -175,6 +202,7 @@ export default function Page() {
     : null;
   const resWord = RES_WORD[meta.signal] || "resource";
   const engineUp = health?.ok;
+  const activeFaults = new Set(plant?.active_faults || []);   // real fault state from the sim (survives reload)
   const statusOf = (w) => (w === root?.pod ? "hot" : blastSet.has(w) ? "strained" : null);
 
   // ── FLOOR/EDGE causal planes (LOG-036): one brain, two views. FLOOR = the static plant floor
@@ -333,9 +361,16 @@ export default function Page() {
 
         {/* ── Scenarios ── */}
         <section className="viz">
-          <Head title="Scenarios" meta="solo mode" />
+          <Head title="Scenarios" meta={
+            <><span>solo mode</span>
+              <button className="btn resetall" onClick={resetAll} disabled={pending.__all}
+                style={{ marginLeft: 12 }} title="Clear every active plant fault + reset the PLC trip">
+                {pending.__all ? "resetting…" : "Reset plant"}
+              </button></>
+          } />
           {SCN.map((s) => {
-            const on = live[s.id];
+            const on = activeFaults.has(s.id);   // live truth from the sim, not optimistic client state
+            const busy = !!pending[s.id];
             return (
               <div key={s.id} className={`scn${on ? " live" : ""}`}>
                 <span className="id">{s.id}</span>
@@ -345,8 +380,8 @@ export default function Page() {
                   <span style={{ color: on ? "var(--accent)" : "var(--text-weak)" }}>{on ? "live" : "idle"}</span>
                 </span>
                 {s.fire && (on
-                  ? <button className="btn" onClick={() => scenario(s.id, "reset")}>Reset</button>
-                  : <button className="btn cyan" onClick={() => scenario(s.id, "trigger")}>Fire</button>)}
+                  ? <button className="btn" disabled={busy} onClick={() => scenario(s.id, "reset")}>{busy ? "…" : "Reset"}</button>
+                  : <button className="btn cyan" disabled={busy} onClick={() => scenario(s.id, "trigger")}>{busy ? "…" : "Fire"}</button>)}
               </div>
             );
           })}
