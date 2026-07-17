@@ -637,3 +637,51 @@ SAGS (friction ×1.9, ~43→85 A, V=400−I·R sags 361→344 V) + THERMAL·THE 
 rail recovers) = the visual majority; a HOW IT REACHES THE ENGINE panel; k3s demoted to one thin note line; honesty
 band kept. Slides 7 (model + machines) and 8 (fault propagation + engine intake) now split L0 cleanly. Deck still 14;
 QA clean. Also shipped `slide11_lagcorr.png` (coolant-loop lag-correlation explainer, text baked under the graph).
+
+**LOG-049 · 2026-07-05 · Deck data-viz assets + registration form answers + GitHub sync (commit `000e65d`) +
+box pause/resume procedure for the Oct gap.** Working deck = `SiliconKnights_Tata_VISR.pptx` (14-slide VISR-dark;
+backups `_bak`, `_bak2`; operator places images manually — no local LibreOffice to render).
+**Deck images shipped (live-folder root, matplotlib in deck palette):** (1) `slide03_cascade.png` — the PS1 shared-
+media cascade stepped headless from `plant/sim/main.py` (press-1 draw +98% ~43→85 A, rail-A sag, cnc-1/qa-scanner
+throughput slide); real physics, not mock. (2) `slide03_carousel.png` — 4 REAL CC-licensed photos (Tesla line /
+ABB switchgear / Drax cooling towers / CCTV wall = THE FLOOR / SHARED POWER / SHARED COOLANT / ALARM FLOOD), VISR-dark
+filmstrip; **attribution required** (CC BY / BY-SA), credits in `slide03_photo_CREDITS.txt`; source jpgs `slide03_photo_*`.
+(3) `slide11_lagcorr.png` — lag-correlation teaching chart (illustrative Gaussians grounded in real thermal-τ ordering;
+explainer text under the graph). **Registration form answers drafted** (portal wants plain ASCII, no em-dashes;
+validated): problem statement (~2930 ch), solution/how-it-works (the **witness gate** = the innovation), technologies
+(K3s · Prometheus · eBPF/Caretta · Linux PSI · TimescaleDB · Go aggregator · Python+NumPy engine w/ EWMA+CUSUM+Pearson
+lagged cross-correlation · Ollama+Gemma narration · FastAPI · Next.js/three.js · OpenPLC+Modbus/pymodbus · Docker),
+impact/quantified (1 root cause vs ~a dozen alarms · 5 s cadence · ~6 GB model · 100% on-edge/offline · 50 corr
+fixtures + 10 physics tests), originality (own engine, an evolution of the team's **ABB Accelerator 2026 finalist**
+build — disclosed; witness gate unique; benchmarked vs SCADA/historians/PdM/AIOps), prior-submission (ABB Accelerator
+disclosed). **Determinism framing corrected** (operator Q): verdict = f(input, baseline STATE, config) — deterministic
+but STATEFUL; the engine is a statistical-inference-plus-rules PIPELINE, not one trained model; pitch "transparent +
+reproducible + few interpretable params + cited evidence", not just "deterministic" (a neural net is deterministic at
+inference too). SECURE (slide 2 + form) cites IEC 62443 + per-device crypto keys + the **June 2026 Tata Electronics
+breach** (World Leaks, 630 GB Apple/Tesla data — honest nuance: it was exfiltration/extortion, argues the access-
+control+audit half more than "rogue command"). **GitHub:** commit `000e65d` "VISR: api/dashboard/plant-sim fixes +
+INNOVENT_LOG through LOG-048" pushed to `origin/main` (GreaseMonkeyIT/Tata_InnoVent); repo in sync except `.gitignore`
+/`README.md` (by-design flat-vs-nested — leave them); deck + slide images are NOT tracked in the code repo (dropped
+LOG-043), live-folder only. **NB: this LOG-049 entry postdates `000e65d`, so the commit repo is one entry behind —
+next sync = `cp` live `INNOVENT_LOG.md` into `Tata_InnoVent_Commit/`, then `git add INNOVENT_LOG.md && git commit && git
+push` from that repo.** **Box pause/resume for the Oct-2026 gap** (operator won't keep the remote PC on a workload for
+months): STOP = `sudo /usr/local/bin/k3s-killall.sh` (+ `sudo systemctl disable k3s` to stop boot auto-start) — halts
+every pod, frees CPU/RAM/disk, nothing deleted, claimRef PVs persist; lighter alt = scale `plant`+`aiops` deployments to
+0. RESUME = `sudo systemctl enable --now k3s`, wait ~90 s, pods recover from the datastore. Caveats: (a) the engine
+re-learns baselines after ANY restart — bring the stack up well before the demo and run the LOG-035 procedure (wipe
+memory → long PS0 soak → fire PS1 in a compressor-OFF window); never fire cold; (b) stopping also protects the 64Gi
+disk from historian/Prometheus growth over months. Full PC power-off needs Wake-on-LAN (a LAN device on the Tailscale
+mesh) or a smart plug + BIOS restore-on-AC for remote power-on.
+
+**LOG-050 · 2026-07-17 · Registration CONFIRMED submitted (Jul 5, on time) — the gate is CLOSED; post-registration
+state pinned; commit repo resynced.** Operator confirms the Tata InnoVent registration went in on 2026-07-05: 14-slide
+VISR deck (+PDF), subtitled 16:9 demo video, drafted form answers. Next milestone = **Virtual PoC, Oct 2026.** Deck
+leftovers (slide-11 PS1 capture, slide-9 old-factory-era screenshots, hero-on-dark review) die with submission — they
+matter again only if the deck is revised for the PoC; same for the licensed Industry font swap. Sidebar for the
+record: the SASH fellowship application (separate project, `Linux_Projects\SASH\`) was NOT submitted — college
+refused the residential semester leave; STATUS.md there marked closed; no InnoVent impact. **Open items are now ALL
+box-side and deferred to Oct PoC prep:** (1) pause the stack for the gap (LOG-049 procedure — k3s-killall + disable;
+protects the 64Gi disk from historian/Prometheus growth); (2) PS5 acceptance run; (3) api-pod mem-creep watch;
+(4) re-confirm OpenPLC trip latching post-entrypoint-fix (LOG-036); (5) LOG-035 re-soak before any demo — never fire
+PS1 cold. Box untouched this session. Commit repo resync: live `INNOVENT_LOG.md` (through LOG-050) copied to
+`Tata_InnoVent_Commit/` and pushed.
