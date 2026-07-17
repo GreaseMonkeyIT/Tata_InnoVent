@@ -685,3 +685,19 @@ protects the 64Gi disk from historian/Prometheus growth); (2) PS5 acceptance run
 (4) re-confirm OpenPLC trip latching post-entrypoint-fix (LOG-036); (5) LOG-035 re-soak before any demo — never fire
 PS1 cold. Box untouched this session. Commit repo resync: live `INNOVENT_LOG.md` (through LOG-050) copied to
 `Tata_InnoVent_Commit/` and pushed.
+
+**LOG-051 · 2026-07-17 · Boot section SHIPPED (2D-1) — the last unbuilt VISR section; October prep begun (local,
+box untouched).** New `dashboard/app/Boot.jsx`: full-screen self-check overlay on every load — **5 REAL probes**
+(`/api/health` services · `/api/pod-resources` prometheus+series · `/api/pods` workloads seen · `/api/graph`
+pods+accepted edges · `/api/plant` assets+rails, labeled "physics-simulated") each showing its measured round-trip;
+**no fake progress bars** (master-plan rule — nothing renders that didn't happen). Behavior: click anywhere = skip
+(checks abort); all-pass → "all systems nominal" → auto-enter after 1.2 s; any failure → holds with an ENTER button
++ "dashboard will show the degraded state" (the dashboard already surfaces down states honestly). **`?boot=hold`**
+keeps the screen up after a clean pass — design review + pacing the PoC-recording opener (2D-4 wants the video to
+open on boot/login). Style = restrained HUD: TL/BR corner brackets, Industry-face VISR wordmark (cyan, 8px tracking),
+mono check rows, teal OK / red FAIL, tokens straight from globals.css. `getJSON` is passed in from page.jsx so the
+dev mock keeps it reviewable in `next dev`; prod = live probes only. Verified: dev preview — 5/5 OK with real
+latencies, correct details, tokens/centering confirmed via computed styles, click-dismiss + auto-enter both
+exercised (NB: the Browser pane's screenshot tool timed out ALL session, even pre-Boot — verification was
+text-based: read_page + computed-style probes) — and `next build` ✓ 4/4. Deploy = dashboard image rebuild + import
++ restart; box is paused, so this rides with the next box session (add to the resume checklist).

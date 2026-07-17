@@ -35,6 +35,27 @@ button { font-family: inherit; }
 .btn.resetall { background: transparent; border-color: rgba(255,152,48,0.5); color: var(--orange); padding: 5px 12px; }
 .btn.resetall:hover:not(:disabled) { background: rgba(255,152,48,0.1); }
 
+/* ── Boot (2D-1) — honest self-check overlay. Real probes only; no fake progress bars. ── */
+.boot { position: fixed; inset: 0; z-index: 50; background: var(--bg); display: flex; align-items: center; justify-content: center; opacity: 1; transition: opacity 0.3s; cursor: pointer; }
+.boot.out { opacity: 0; pointer-events: none; }
+.boot-panel { position: relative; width: min(620px, 92vw); padding: 30px 34px; cursor: default; }
+.boot-panel::before { content: ""; position: absolute; top: 0; left: 0; width: 16px; height: 16px; border-top: 1.5px solid var(--accent); border-left: 1.5px solid var(--accent); }
+.boot-panel::after { content: ""; position: absolute; bottom: 0; right: 0; width: 16px; height: 16px; border-bottom: 1.5px solid var(--accent); border-right: 1.5px solid var(--accent); }
+.boot-brand { display: flex; align-items: baseline; gap: 14px; margin-bottom: 24px; }
+.boot-brand b { font-family: var(--display); font-size: 34px; font-weight: 800; letter-spacing: 8px; color: var(--accent); text-transform: uppercase; }
+.boot-brand span { font-family: var(--mono); font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-weak); }
+.boot-rows { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.boot-row { display: grid; grid-template-columns: 118px 1fr 58px 44px; gap: 14px; align-items: baseline; padding: 9px 2px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12px; }
+.boot-row .k { letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-weak); }
+.boot-row .d { color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.boot-row.wait .d, .boot-row.run .d { color: var(--text-faint); }
+.boot-row .ms { color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
+.boot-row .st { text-align: right; letter-spacing: 1px; color: var(--text-faint); }
+.boot-row.ok .st { color: var(--green); }
+.boot-row.fail .st { color: var(--red); }
+.boot-row.fail .d { color: var(--red); opacity: 0.8; }
+.boot-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-faint); min-height: 32px; }
+
 /* ── VISR section system ── */
 .app { max-width: 1080px; margin: 0 auto; padding: 22px 16px 8px; display: flex; flex-direction: column; gap: 18px; }
 .statusbar { max-width: 1080px; margin: 0 auto; padding: 8px 20px 28px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); display: flex; gap: 18px; justify-content: flex-end; }

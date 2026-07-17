@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 const Graph = dynamic(() => import("./Graph"), { ssr: false });
 import Machines from "./Machines";
 import Floor from "./Floor";
+import Boot from "./Boot";
 
 // Dev-only sample data so `next dev` renders populated for design review. NEVER used in the
 // production static export (NODE_ENV==='production' there) — the deployed dashboard shows live
@@ -119,6 +120,7 @@ export default function Page() {
   const [plane, setPlane] = useState("floor");   // Causal Monitor view: plant floor | edge stack
   const [updated, setUpdated] = useState(null);
   const [host, setHost] = useState("");
+  const [booting, setBooting] = useState(true);   // Boot overlay (2D-1): real self-check on every full load
 
   useEffect(() => { setHost(window.location.hostname); }, []);
 
@@ -261,6 +263,7 @@ export default function Page() {
 
   return (
     <>
+      {booting && <Boot getJSON={getJSON} onDone={() => setBooting(false)} />}
       <main className="app">
         {/* ── Causal Monitor ── */}
         <section className="viz">
