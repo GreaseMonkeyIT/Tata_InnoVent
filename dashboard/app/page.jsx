@@ -23,31 +23,31 @@ const MOCK = {
       { src: "press-1", dst: "qa-scanner-1", r: 0.61, evidence: ["stat", "rail"], signal: "bus_voltage", confidence: 0.66, state: "active", render_weight: 0.66 },
       { src: "press-1", dst: "cnc-1", r: 0.58, evidence: ["stat", "loop"], signal: "coolant_temp", confidence: 0.6, state: "active", render_weight: 0.6 },
       // edge plane: one pod-plane edge so the EDGE toggle stays reviewable
-      { src: "cooling-monitor", dst: "timescaledb", r: 0.81, evidence: ["write", "pvc", "temporal"], signal: "psi_io", confidence: 0.92, state: "active" },
+      { src: "tag-server", dst: "historian-db", r: 0.81, evidence: ["write", "ebpf", "temporal"], signal: "psi_io", confidence: 0.92, state: "active" },
     ],
-    blast_radius: [{ pod: "cnc-1", impact: 0.7, eta_s: 30 }, { pod: "qa-scanner-1", impact: 0.55, eta_s: 60 }, { pod: "psu-a", impact: 0.7, eta_s: 0 }, { pod: "timescaledb", impact: 0.3, eta_s: 90 }],
+    blast_radius: [{ pod: "cnc-1", impact: 0.7, eta_s: 30 }, { pod: "qa-scanner-1", impact: 0.55, eta_s: 60 }, { pod: "psu-a", impact: 0.7, eta_s: 0 }, { pod: "historian-db", impact: 0.3, eta_s: 90 }],
     findings: [{ pod: "press-1", class: "leak", onset_s: 30, severity: 0.8 }],
     incipient: [],
     meta: { pods: 16, active: 1, accepted_edges: 5, signal: "bus_voltage" },
   },
   "/api/narrative": { text: "press-1 is the likely root of the rail-A voltage sag; cnc-1 and qa-scanner-1 degrade with it. Recommend derating press-1.", source: "llm" },
-  "/api/topology": { edges: [{ src: "cooling-monitor", dst: "timescaledb", port: 5432 }], source: "caretta" },
+  "/api/topology": { edges: [{ src: "tag-server", dst: "historian-db", port: 5432 }], source: "caretta" },
   "/api/pods": [
-    { workload: "cooling-monitor", namespace: "factory-data", signal: "psi_io", value: 0.94, anomalous: true },
-    { workload: "timescaledb", namespace: "factory-data", signal: "psi_io", value: 0.61, anomalous: true },
-    { workload: "dcim-bridge", namespace: "factory-data", signal: "psi_io", value: 0.20, anomalous: false },
-    { workload: "plc-gateway", namespace: "factory-core", signal: "psi_io", value: 0.05, anomalous: false },
-    { workload: "mqtt-broker", namespace: "factory-core", signal: "psi_io", value: 0.03, anomalous: false },
-    { workload: "vision-qc", namespace: "factory-edge", signal: "psi_io", value: 0.07, anomalous: false },
+    { workload: "tag-server", namespace: "plant", signal: "psi_io", value: 0.94, anomalous: true },
+    { workload: "historian-db", namespace: "plant", signal: "psi_io", value: 0.61, anomalous: true },
+    { workload: "plant-sim", namespace: "plant", signal: "psi_io", value: 0.20, anomalous: false },
+    { workload: "openplc", namespace: "plant", signal: "psi_io", value: 0.05, anomalous: false },
+    { workload: "correlation-engine", namespace: "aiops", signal: "psi_io", value: 0.03, anomalous: false },
+    { workload: "api", namespace: "aiops", signal: "psi_io", value: 0.07, anomalous: false },
   ],
   "/api/pod-resources": {
     source: "prometheus", pods: [
-      { namespace: "factory-data", pod: "cooling-monitor-x", workload: "cooling-monitor", cpu: { usage: 0.42, request: 0.5, limit: 1.0 }, mem: { usage: 640e6, request: 512e6, limit: 768e6 } },
-      { namespace: "factory-data", pod: "timescaledb-0", workload: "timescaledb", cpu: { usage: 0.18, request: 0.25, limit: 0.5 }, mem: { usage: 537e6, request: 512e6, limit: 640e6 } },
-      { namespace: "factory-data", pod: "dcim-bridge-x", workload: "dcim-bridge", cpu: { usage: 0.11, request: 0.1, limit: 0.25 }, mem: { usage: 252e6, request: 256e6, limit: 320e6 } },
-      { namespace: "factory-core", pod: "plc-gateway-x", workload: "plc-gateway", cpu: { usage: 0.26, request: 0.25, limit: 0.5 }, mem: { usage: 126e6, request: 128e6, limit: 192e6 } },
-      { namespace: "factory-core", pod: "mqtt-broker-x", workload: "mqtt-broker", cpu: { usage: 0.08, request: 0.1, limit: 0.25 }, mem: { usage: 115e6, request: 128e6, limit: 192e6 } },
-      { namespace: "factory-edge", pod: "vision-qc-x", workload: "vision-qc", cpu: { usage: 0.51, request: 0.5, limit: 1.0 }, mem: { usage: 252e6, request: 256e6, limit: 512e6 } },
+      { namespace: "plant", pod: "tag-server-x", workload: "tag-server", cpu: { usage: 0.42, request: 0.5, limit: 1.0 }, mem: { usage: 640e6, request: 512e6, limit: 768e6 } },
+      { namespace: "plant", pod: "historian-db-0", workload: "historian-db", cpu: { usage: 0.18, request: 0.25, limit: 0.5 }, mem: { usage: 537e6, request: 512e6, limit: 640e6 } },
+      { namespace: "plant", pod: "plant-sim-x", workload: "plant-sim", cpu: { usage: 0.11, request: 0.1, limit: 0.25 }, mem: { usage: 252e6, request: 256e6, limit: 320e6 } },
+      { namespace: "plant", pod: "openplc-x", workload: "openplc", cpu: { usage: 0.26, request: 0.25, limit: 0.5 }, mem: { usage: 126e6, request: 128e6, limit: 192e6 } },
+      { namespace: "aiops", pod: "correlation-engine-x", workload: "correlation-engine", cpu: { usage: 0.08, request: 0.1, limit: 0.25 }, mem: { usage: 115e6, request: 128e6, limit: 192e6 } },
+      { namespace: "aiops", pod: "api-x", workload: "api", cpu: { usage: 0.51, request: 0.5, limit: 1.0 }, mem: { usage: 252e6, request: 256e6, limit: 512e6 } },
     ],
   },
   "/api/plant": {
@@ -106,10 +106,10 @@ const MOCK = {
   "/api/recommendations": {
     source: "prometheus",
     right_sizing: [
-      { verb: "resize", workload: "timescaledb", resource: "memory", detail: "Working-set at 0.86 of limit under load — raise the memory limit.", p95: 0.86 },
-      { verb: "reclaim", workload: "vision-qc", resource: "cpu", detail: "p95 CPU 0.12 ≪ request 0.50 — over-provisioned, give it back.", p95: 0.12 },
+      { verb: "resize", workload: "historian-db", resource: "memory", detail: "Working-set at 0.86 of limit under load — raise the memory limit.", p95: 0.86 },
+      { verb: "reclaim", workload: "api", resource: "cpu", detail: "p95 CPU 0.12 ≪ request 0.50 — over-provisioned, give it back.", p95: 0.12 },
     ],
-    fairness: [{ namespace: "factory-core", gini: 0.12 }, { namespace: "factory-data", gini: 0.22 }, { namespace: "factory-edge", gini: 0.10 }],
+    fairness: [{ namespace: "aiops", gini: 0.12 }, { namespace: "plant", gini: 0.22 }, { namespace: "observability", gini: 0.10 }],
   },
 };
 
@@ -133,8 +133,7 @@ const meterColor = (v) => (v == null ? "var(--text-faint)" : v >= 0.9 ? "var(--r
 
 const GRAFANA = { port: 30030, uid: "skn-psi", slug: "skn-psi", panels: [{ id: 1, cap: "PSI · I/O" }, { id: 2, cap: "PSI · CPU" }, { id: 3, cap: "PSI · memory" }] };
 
-// PS-series: plant-physics faults (perturb the model; symptoms EMERGE). The S-series kernel
-// motifs are retired to the regression bench — the frozen Codex build remains their home.
+// PS-series: plant-physics faults. Faults perturb the model, and the symptoms EMERGE.
 const SCN = [
   { id: "PS0", name: "Steady plant", desc: "No faults; baselines mature and the engine stays silent.", fire: false },
   { id: "PS1", name: "Rail-sag cascade", desc: "press-1 bearing friction → amps up → rail A sags → cnc-1 / qa-scanner degrade.", fire: true },

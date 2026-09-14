@@ -1,4 +1,4 @@
-"""Unit suite for the correlation engine core — BUILD_GUIDE P4 step 1-3 fixtures.
+"""Unit suite for the correlation engine core.
 
 Every test plants a known truth and asserts the engine rediscovers it blind.
 """
@@ -318,7 +318,7 @@ def test_recent_window_clears_a_stale_storm():
 
 
 def test_same_node_cpu_source_edge_has_no_network_path():
-    # ROAD Stage 2 / D-015: a CPU hog leads two co-residents' stall on the SAME NODE (no disk, no
+    # A CPU hog leads two co-residents' stall on the SAME NODE (no disk, no
     # network). The source edge forms over same-node coupling; evidence carries `node`, never pvc/ebpf.
     shape = np.zeros(N); shape[70:110] += 1.0
     psi = {"v1": np.roll(shape, 1) + noise(0.2),     # victims stall on cpu

@@ -1,1 +1,0 @@
-{ "name": "alert-dispatcher", "private": true, "dependencies": { "pg": "^8.11.5" } }

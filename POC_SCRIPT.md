@@ -22,8 +22,8 @@ shows forecasting; everything state-changing is authenticated and audit-logged.
 
 1. Resume the stack: `sudo systemctl enable --now k3s`, wait ~90 s, all pods Ready
    (`kubectl get pods -A`). The box was paused for the gap — see LOG-049.
-2. Deploy any images still pending from the local work (LOG-051/052/053 deploy blocks:
-   dashboard + api + correlation-engine + log-archiver; 2E Secrets FIRST — LOG-053 block).
+2. Deploy the images still pending from the local work (LOG-051 to LOG-055): dashboard, api,
+   correlation-engine, plant-sim, tag-server, openplc. Create the 2E Secrets FIRST (`PIVOT_SETUP.md` step 5.0).
 3. **Baseline soak (LOG-035, non-negotiable):** wipe engine memory → long PS0 soak (hours;
    overnight is best) → baselines matured, PS0 silent. **Never fire PS1 cold after a restart.**
 4. Verify the demo set once end-to-end (this is the rehearsal): PS0 silent · PS1 roots press-1
@@ -83,8 +83,7 @@ explain → forecast is live today; the audited act loop is Stage 3." Cut.
 - **PS1 verdict roots compressor-1 with low confidence** → young-baseline / ON-window artifact
   (LOG-046): reset, wait for a compressor-OFF window, fire again. If it repeats, the soak was too
   short — go back to step 0.3; do not record.
-- **Plant plane misbehaves entirely** → the banked S-series bench on the frozen Codex build is the
-  rollback demo (S1 PVC cascade); the story degrades gracefully but the recording should be VISR.
+- **Plant plane misbehaves entirely** → do not record. Diagnose off-camera, then repeat from step 0.3.
 - **Recording quality**: capture beats 3.2–3.5 in one unbroken take; everything else can be cut together.
 
 ## Timing budget

@@ -1,4 +1,4 @@
-# L2 aggregator (P3). Image skn/aggregator:v0.1. queries.yaml comes from the
+# L2 aggregator. Image skn/aggregator:v0.1. queries.yaml comes from the
 # aggregator-queries ConfigMap, which skctl builds from aggregator/queries.yaml.
 apiVersion: apps/v1
 kind: Deployment

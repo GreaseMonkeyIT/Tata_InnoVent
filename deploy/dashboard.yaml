@@ -1,4 +1,4 @@
-# L4 dashboard (P6) — static Next.js export served by nginx, which also proxies /api/ to the api
+# L4 dashboard: static Next.js export served by nginx, which also proxies /api/ to the api
 # gateway. Exposed via NodePort so it is reachable from a peer at the node IP (incl. the Tailscale
 # address) over the tailnet, with no public ingress.
 # 2E: TLS + basic auth at the front door. REQUIRES two Secrets in ns aiops before this applies:

@@ -23,7 +23,7 @@ from .ranking import blast_radius, build_graph, rank_root_causes
 SCHEMA_VERSION = "l3-memory-v5"  # v5: + baselines (per-workload steady-state; incident = deviation)
 
 # Evidence tags that mark an edge as SOURCE-attributed (a real aggressor, not a victim cascade).
-# Only psi_io has one today (`write`, from pipeline._writer_edge); Stage 1/2 (ROAD) add CPU/mem
+# Only psi_io has one today (`write`, from pipeline._writer_edge). Add CPU/mem
 # source tags here when those source signals land. A case is promoted only from a source-rooted
 # verdict (see _promote_case).
 SOURCE_EVIDENCE = ("write",)
@@ -494,7 +494,7 @@ class GraphMemory:
         # cascade (e.g. dcim-bridge->timescaledb between storm pulses, when the live source edge
         # has decayed to its floor) must NOT mint a case, or the library learns the wrong
         # direction. S0 silence is the deviation gate's job; this only changes WHICH incidents
-        # become cases. (ROAD Stage 0 / archived REMAINING section 1.)
+        # become cases.
         if not any(
             stable_workload(e["src"]) == root
             and any(ev in SOURCE_EVIDENCE for ev in (e.get("evidence") or []))

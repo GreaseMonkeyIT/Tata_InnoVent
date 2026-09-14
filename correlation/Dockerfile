@@ -1,4 +1,4 @@
-# L3 correlation engine service (P4).
+# L3 correlation engine service.
 FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt ./

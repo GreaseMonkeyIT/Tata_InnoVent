@@ -850,3 +850,37 @@ JSON file first, zero stack change, cuttable from the recording; plus optionally
 single-machine thermal VI for the sponsor-alignment slide. **NO rewrite, NO second Modbus writer,
 NO LabVIEW on the recording's critical path**, and nothing decided before the remaining box session.
 Not mirrored to the commit tree (notes, not code) pending operator call.
+
+**LOG-057 · 2026-09-14 · One folder: the live copy and the repo merged, pre-InnoVent legacy removed, GitHub up to date.**
+Operator decisions: ONE `Tata InnoVent` folder for edits and commits. No pre-InnoVent legacy files. A normal new
+commit, with no history rewrite. A full backup before the merge.
+**Backup:** `Documents\Claude\Backups\Tata_InnoVent_pre-merge_2026-09-14\` holds a hash-verified copy of the live
+folder (12,054 files). It also holds the whole old `Tata_InnoVent_Commit` folder (moved, not copied) and a
+full-history git bundle.
+**Merge, in order:**
+(1) Delete the stale nested `.git`, `node_modules`, `.next`, `out`, and the Python caches while Syncthing still syncs them, so the box drops them too.
+(2) Add a `.stignore` (`.git`, `node_modules`, `.next`, `out`, caches, archives).
+(3) Move `ABB_Accelerator_Proto/*` to the root.
+(4) Copy the canonical `.git` in from the commit folder.
+`git status` then matched the 31 known changes, and all 172 repo files matched byte for byte.
+**Commit `724d262`:** the LOG-052 to LOG-056 work (tests 55/10/8/7 green).
+**This commit** removes the factory bench: `workloads/` (15 services), `deploy/charts/factory/`, and `scenarios/`
+(S0 to S5 and the ledger). It also removes `QUICKSTART.md`, `agents/`, `archive/`, `appendix/`, `tools/`, and
+`deploy/values/beyla.yaml`. The old accelerator docs, decks, and `output.txt` left the working folder too. Git
+never tracked them.
+**Fixes to everything that pointed at them:** `api/main.py` drops the S1/S2/S5 routes, its Kubernetes client, and
+`COOLING_URL`. The Caretta topology now uses `TOPOLOGY_NAMESPACES` (default `plant,aiops`) instead of the `factory`
+prefix. The plant Modbus flows can now appear, as the 2F done-when expects. `skctl` drops the factory groups and
+pause/resume/down. Prometheus drops the `l0-fast` factory job. The `Makefile` builds and imports the seven VISR
+images. `soak/` now cycles PS1/PS2/PS5 through the API and sends the operator token. Docs and code comments no
+longer point at deleted documents. `INNOVENT_PLAN.md` now shows the current state. `PIVOT_SETUP.md` gains the 2E
+Secrets step and the tag server.
+**Consequences:** the 2A box-verify moves to the PS-series: PS0 silent, PS1 roots press-1, PS2 roots compressor-1,
+PS5 forecast card. `POC_SCRIPT.md` drops the old bench fallback. A failing plant plane now means no recording.
+**Verified locally:** tests 55/10/8/7 pass. A 17-check API smoke test passes in a scratch FastAPI venv. A soak run
+against a mock API passes the token path, the refusal path, and the report render. `npm ci` and `next build` pass
+(4/4), and the dev preview renders from the new path. Syncthing shows the flat tree on the home PC at 100%. No
+`.git` and no build output entered the sync.
+**Box block (operator, next box session):** the working path is now `~/Tata_InnoVent`. Run
+`chmod +x deploy/skctl soak/*.sh plc/*.sh` after the sync. Confirm that `ls ~/Tata_InnoVent` shows no
+`ABB_Accelerator_Proto/`. Earlier log entries stay unchanged (append-only).

@@ -1,8 +1,8 @@
-// L2 aggregator - P3 (BUILD_GUIDE). Polls Prometheus every interval_s using the
+// L2 aggregator. Polls Prometheus every interval_s using the
 // queries.yaml pack, keeps a 15-min per-pod ring buffer (served at /window to L3),
 // and emits schema-conformant anomaly_candidate events on threshold breach
 // (stdout JSONL + /events + optional POST to L3). Output conforms to
-// schema/event.schema.json (FROZEN v1). D-004: the pack sources only kernel/K8s/eBPF
+// schema/event.schema.json (FROZEN v1). The pack sources only kernel/K8s/eBPF
 // signals, never an app's own /metrics.
 package main
 

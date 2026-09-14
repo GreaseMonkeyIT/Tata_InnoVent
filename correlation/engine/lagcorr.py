@@ -1,6 +1,6 @@
 """A4 Correlator internals: lagged cross-correlation between pod signal vectors.
 
-MASTER_PLAN section 1.4.3. Lags are positive: "src leads dst by lag_s".
+Lags are positive: "src leads dst by lag_s".
 """
 from __future__ import annotations
 

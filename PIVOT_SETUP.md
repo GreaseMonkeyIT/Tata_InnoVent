@@ -1,17 +1,15 @@
-# PIVOT_SETUP — ground-up bring-up of the Tata InnoVent (plant-physics) build
+# PIVOT_SETUP: ground-up bring-up of the Tata InnoVent (plant-physics) build
 
-**What this is.** The complete, copy-pasteable runbook to (1) take the old ABB factory off the
-remote box *without harming anything else*, (2) erase and reallocate the 64Gi/5Gi slowdisk
-volumes with **claimRef pinning** (cross-bind-proof), and (3) bring up the pivot stack from this
-clone: engine layers + the physics-simulated plant. Companion docs: `INNOVENT_MASTER_PLAN.md`
-(phases 2B′/2C′) and `plant/sim/main.py` (the emulator).
+**What this is.** The copy-pasteable runbook to (1) prepare the 64Gi/5Gi slowdisk volumes with
+**claimRef pinning** (cross-bind-proof) and (2) bring up the VISR stack from this repo: engine
+layers, the physics-simulated plant, the OpenPLC trip interlock, and the SCADA tag server.
+Companion docs: `INNOVENT_MASTER_PLAN.md` (phases 2B′/2C′/2F) and `plant/sim/main.py` (the emulator).
 
-**What is deliberately NOT touched:** k3s itself, the `observability` stack (Prometheus/Grafana),
-`aiops` (engine/api/dashboard), `caretta`. The frozen registration build lives in
-`ABB_Accelerator_Codex` and is not modified by anything here.
+**Re-runs are safe.** `skctl up` and `kubectl apply` are idempotent over an existing install.
 
-Conventions: run everything **on the box** unless marked otherwise. `$REPO` = this clone's path
-on the box (the Syncthing-synced folder).
+Conventions: run everything **on the box** unless marked otherwise. `$REPO` = this repo's path on
+the box (the Syncthing-synced `Tata_InnoVent` folder). Syncthing does not carry `.git`,
+`node_modules`, or build output. Git runs on the laptop only.
 
 ---
 
@@ -40,9 +38,9 @@ ollama pull gemma4:e4b-it-qat
 Syncthing from Windows strips execute bits. Restore them every time the tree is freshly synced:
 
 ```bash
-REPO=~/Sync/Tata\ InnoVent/ABB_Accelerator_Proto     # <- adjust to the box's synced path
+REPO=~/Tata_InnoVent     # <- the box's synced path
 cd "$REPO"
-chmod +x deploy/skctl appendix/*.sh scenarios/*/*.sh soak/*.sh 2>/dev/null
+chmod +x deploy/skctl soak/*.sh plc/*.sh 2>/dev/null
 # belt-and-suspenders: anything that lost its bit
 find . -name "*.sh" -exec chmod +x {} + 2>/dev/null
 bash -n deploy/skctl && echo "skctl parses OK"
@@ -51,46 +49,31 @@ bash -n deploy/skctl && echo "skctl parses OK"
 If `helm`/`kubectl` complain about permissions: `export KUBECONFIG=~/.kube/config` (never run
 helm as root against k3s's config).
 
-## 2. Teardown of the old factory (safe — nothing else is touched)
+## 2. Fresh engine memory (only when the baselines must re-learn)
+
+The engine keeps learned baselines, edges, and cases in its memory DB. Wipe it after a change to
+the signal set or after a long pause. Then run the LOG-035 soak before any demo.
 
 ```bash
-# 2.1 remove the factory workloads (helm release "factory" from the old deploy)
-helm uninstall factory 2>/dev/null || true
-
-# 2.2 delete the factory namespaces (takes their PVCs with them)
-kubectl delete ns factory-core factory-data factory-edge --wait=true
-
-# 2.3 confirm the survivors are healthy — MUST all still be Running
-kubectl get pods -n observability
-kubectl get pods -n aiops
-kubectl get pods -n caretta 2>/dev/null || true
-
-# 2.4 wipe the engine's learned memory (baselines/edges/cases are keyed by the OLD
-#     factory workload names — stale state, demo data, safe to clear)
 ENGINE_POD=$(kubectl -n aiops get pod -l app=correlation-engine -o name | head -1)
 kubectl -n aiops exec "$ENGINE_POD" -- sh -c 'rm -f /var/lib/skn/memory/*.db*' || true
 kubectl -n aiops rollout restart deploy/correlation-engine
 ```
 
-## 3. Erase the 64Gi/5Gi volumes and reallocate them (with claimRef stickiness)
+## 3. Prepare the 64Gi/5Gi volumes (with claimRef stickiness)
 
 ```bash
-# 3.1 the old PVs are Retain — released, not deleted, by the namespace teardown
-kubectl get pv | grep slowdisk          # expect tsdb-pv-slowdisk + shared-logs-pv-slowdisk (Released)
-kubectl delete pv tsdb-pv-slowdisk shared-logs-pv-slowdisk
-
-# 3.2 ERASE the data and lay out the new directories
-sudo rm -rf /mnt/slowdisk/tsdb /mnt/slowdisk/shared-logs
+# 3.1 lay out the directories on the slow HDD
 sudo mkdir -p /mnt/slowdisk/historian /mnt/slowdisk/plant-shared
-df -h /mnt/slowdisk                     # sanity: the HDD is mounted and now ~empty
+df -h /mnt/slowdisk                     # sanity: the HDD is mounted
 
-# 3.3 apply the NEW PVs — claimRef is baked in the manifest, so historian-pv can ONLY
+# 3.2 apply the PVs. claimRef is baked in the manifest, so historian-pv can ONLY
 #     bind plant/historian-data and plant-shared-pv can ONLY bind plant/plant-shared.
-#     The LOG-008 cross-bind (5Gi claim grabbing the 64Gi volume) is now impossible.
+#     The LOG-008 cross-bind (5Gi claim grabbing the 64Gi volume) is impossible.
 cd "$REPO"
 NODE=$(kubectl get node -o jsonpath='{.items[0].metadata.labels.kubernetes\.io/hostname}')
 sed "s/<NODE_NAME>/$NODE/g" deploy/slowdisk.yaml | kubectl apply -f -
-kubectl get pv                          # both Available, CLAIM column pre-set to plant/...
+kubectl get pv                          # CLAIM column pre-set to plant/...
 ```
 
 ## 4. Build and import the images
@@ -102,24 +85,41 @@ docker build -t skn/correlation-engine:v0.1 correlation/
 docker build -t skn/api:v0.1                api/
 docker build -t skn/dashboard:v0.1          dashboard/
 docker build -t skn/plant-sim:v0.1          plant/
-docker build -t skn/openplc:v0.1            plc/     # 2F: SLOW source build (~10-15 min, once); box-verify step
+docker build -t skn/tag-server:v0.1         scada/   # 2F.2 SCADA tag server
+docker build -t skn/openplc:v0.1            plc/     # 2F: SLOW source build (~10-15 min, once)
 
-for img in skn/aggregator:v0.1 skn/correlation-engine:v0.1 skn/api:v0.1 skn/dashboard:v0.1 skn/plant-sim:v0.1; do
+for img in skn/aggregator:v0.1 skn/correlation-engine:v0.1 skn/api:v0.1 skn/dashboard:v0.1 \
+           skn/plant-sim:v0.1 skn/tag-server:v0.1 skn/openplc:v0.1; do
   docker save $img | sudo k3s ctr images import -
 done
-sudo k3s ctr images ls | grep skn/      # all five present
-# historian uses the public timescale/timescaledb:latest-pg16 — k3s pulls it on first schedule
+sudo k3s ctr images ls | grep skn/      # all seven present
+# historian uses the public timescale/timescaledb:latest-pg16. k3s pulls it on first schedule.
 ```
+
+`make import` runs the same builds and imports in one command.
 
 ## 5. Deploy the stack
 
 ```bash
 cd "$REPO"
 
+# 5.0 the 2E Secrets FIRST. The dashboard readiness probe fails closed without them (LOG-053).
+kubectl get ns aiops >/dev/null 2>&1 || kubectl create ns aiops
+sudo apt-get install -y apache2-utils   # htpasswd (once)
+htpasswd -nbB viewer   '<viewer-pass>'   > /tmp/htpasswd
+htpasswd -nbB operator '<operator-pass>' >> /tmp/htpasswd
+TOKEN=$(openssl rand -hex 24)
+openssl req -x509 -newkey rsa:2048 -nodes -days 730 -subj "/CN=visr.local" \
+  -keyout /tmp/tls.key -out /tmp/tls.crt
+kubectl -n aiops create secret generic visr-auth \
+  --from-file=htpasswd=/tmp/htpasswd --from-literal=operator-token="$TOKEN"
+kubectl -n aiops create secret tls visr-tls --cert=/tmp/tls.crt --key=/tmp/tls.key
+rm /tmp/htpasswd /tmp/tls.key /tmp/tls.crt
+
 # 5.1 telemetry + engine + dashboard via skctl (idempotent over an existing observability)
 ./deploy/skctl up --components telemetry,engine,language,dashboard
-#   - installs/upgrades kube-prometheus-stack (+ loki; alloy may fail = known-ignorable)
-#   - re-applies the aggregator ConfigMap from aggregator/queries.yaml  <- the PIVOT pack
+#   - installs/upgrades kube-prometheus-stack (+ loki; alloy may fail = known-ignorable) + caretta
+#   - re-applies the aggregator ConfigMap from aggregator/queries.yaml  <- the plant query pack
 #   - deploys aggregator + correlation-engine + api + dashboard into aiops
 
 # 5.2 the Grafana dashboards (d-solo panels embedded in VISR; sidecar reloads ~30s):
@@ -130,16 +130,22 @@ kubectl apply -f deploy/grafana-plant-dashboard.yaml
 # 5.3 the plant: namespace, PVCs (bind to the claimRef'd PVs), sim, historian, ServiceMonitor
 kubectl apply -f plant/deploy.yaml
 
-# 5.3b the PLC (2F, optional — the sim runs open-loop without it): Modbus :502, web UI :30081
+# 5.3b the PLC (2F, optional: the sim runs open-loop without it): Modbus :502, web UI :30081
 #      (login openplc/openplc). If the headless program upload fails, upload plc/program.st
-#      once via the web UI per pod restart — see plc/REGISTER_MAP.md + plc/entrypoint.sh.
+#      once via the web UI per pod restart. See plc/REGISTER_MAP.md + plc/entrypoint.sh.
 kubectl apply -f deploy/openplc.yaml
 
-# 5.4 verify storage stuck to the right pods — THE claimRef check
+# 5.3c the SCADA tag server (2F.2): read-only Modbus client -> tag DB + historian + /tags.
+#      It ships WITHOUT a ServiceMonitor on purpose. Apply scada/cutover-servicemonitor.yaml and
+#      delete the plant-sim ServiceMonitor ONLY after the tag values match the sim through a
+#      PS1 + PS5 run (LOG-055). Rollback = the reverse pair.
+kubectl apply -f scada/deploy.yaml
+
+# 5.4 verify storage stuck to the right pods: THE claimRef check
 kubectl get pvc -n plant
 #   historian-data   Bound   historian-pv-slowdisk      64Gi
 #   plant-shared     Bound   plant-shared-pv-slowdisk    5Gi
-kubectl get pods -n plant -w            # plant-sim Running, historian-db-0 Running
+kubectl get pods -n plant -w            # plant-sim, historian-db-0, openplc, tag-server Running
 ```
 
 ## 6. Verify end-to-end (plant physics → Prometheus → aggregator window)
@@ -166,31 +172,24 @@ sleep 20 && curl -s localhost:9200/state        # press-1 amps UP, rail psu-a vo
                                                 # cnc-1/qa-scanner-1 throughput sliding
 curl -s -X POST localhost:9200/reset
 
-# 6.5 dashboard — full VISR (reskin + Industry font + Pods matrix, synced from Codex 2026-07-02)
-echo "http://<box-ip-or-tailscale>:30080"
-# Honest interim notes:
-#  - the MACHINES section (2026-07-03) is the PRIMARY view: plant assets grouped by rail +
-#    coolant loop, V/A/°C/throughput tiles + sparklines + 3 skn-plant Grafana trend embeds,
-#    fed by /api/plant (sim /state proxy). The Pods matrix is secondary (aiops+scada hosts).
-#  - the Scenarios console is the PS-series now (2026-07-03): PS1/PS2/PS5 Fire/Reset buttons hit
-#    /api/scenarios/PS*/trigger -> plant-sim /fault; the S-series is retired to the bench
+# 6.5 dashboard (VISR)
+echo "https://<box-ip-or-tailscale>:30443"     # 30080 redirects here. Log in as viewer or operator.
+# Notes:
+#  - the MACHINES section is the PRIMARY view: plant assets grouped by rail + coolant loop,
+#    V/A/°C/throughput tiles + sparklines + 3 skn-plant Grafana trend embeds, fed by /api/plant
+#    (sim /state proxy), plus the SCADA tag browser (/api/tags). The Pods matrix is secondary.
+#  - the Scenarios console is the PS-series: PS1/PS2/PS5 Fire/Reset buttons hit
+#    /api/scenarios/PS*/trigger -> plant-sim /fault (operator login when 2E auth is enforced)
 ```
 
 ## 7. What works now vs what's next (honest state)
 
-| Works after this runbook | Pending (next code session) |
+| Works after this runbook | Pending (the box session, `POC_SCRIPT.md` step 0) |
 |---|---|
-| Old factory gone; observability/aiops intact | **2F.2 tag server** (SCADA gateway): Modbus poll → ISA-88 tags + quality → TimescaleDB historian ingest + `/metrics` repoint + `/tags` |
-| 64Gi/5Gi wiped, reallocated, **claimRef-pinned** | **2G 3D plant floor** (FLOOR/GRAPH toggle; needs 2C′ edges, which now exist) |
-| Plant physics live: PS1/PS2/PS5 injectable, cascades emerge | **OpenPLC box-verify**: `skn/openplc` image build + headless program upload (`plc/entrypoint.sh`) — until proven, the sim runs open-loop and everything else is unaffected |
-| **2C′ SHIPPED (2026-07-03, LOG-033):** rail/loop domain witnesses, `PLANT_SOURCES`, sag inversion, trip forecast — env baked in `deploy/engine.yaml`; fixtures green (`correlation/tests/test_plant.py`) | Tags UI (per-machine popover + browser) once the tag server exists |
-| **PS-series console SHIPPED:** Fire/Reset via `/api/scenarios/PS*` → plant-sim; Machines section (tiles + units + trends) live | 2C′ **box** verification: PS1 → root=press-1 with `rail` evidence chips; PS0 soak silent |
-| Plant families ENABLED with the patch (engine.yaml); rollback = drop them from `ENGINE_SIGNALS` | |
+| 64Gi/5Gi volumes laid out and **claimRef-pinned** | **2A/2E box-verify:** PS0 silent, PS1 roots press-1, PS2 roots compressor-1, PS5 forecast card. Login wall, 401 without a token, audit rows. |
+| Plant physics live: PS1/PS2/PS5 injectable, cascades emerge | **OpenPLC box-verify:** headless program upload (`plc/entrypoint.sh`) and the trip latch re-confirm. Until then the sim runs open-loop. |
+| **2C′ (LOG-033):** rail/loop domain witnesses, `PLANT_SOURCES`, sag inversion, trip forecast. Env baked in `deploy/engine.yaml`. Fixtures green (`correlation/tests/test_plant.py`). | Tag-server stability watch, then the ServiceMonitor cutover pair (LOG-055) |
+| **2E front door (LOG-053):** TLS + basic auth, operator token gate, hash-chained audit ledger | LOG-035 soak (`soak/soak.sh`), then the recording |
+| **2F.2 tag server + tag browser (LOG-055):** tag DB, quality, historian ingest into `plant_tags` | **2G 3D plant floor** (FLOOR/GRAPH toggle) |
+| Plant families ENABLED (engine.yaml). Rollback = drop them from `ENGINE_SIGNALS` | |
 | PLC trip loop in the sim (closed-loop when OpenPLC answers; trips latch, `/reset` pulses the reset word) | |
-
-## 8. Rollback (registration insurance)
-
-The frozen `ABB_Accelerator_Codex` deploy can resurrect the old factory at any time: re-apply its
-`deploy/slowdisk.yaml` (old dirs recreated by hand), `./deploy/skctl up` from Codex, re-import its
-images. Nothing in this runbook forecloses that — the disks are the only shared resource, and
-re-purposing them back is the same §3 dance in reverse.

@@ -52,9 +52,9 @@ const SOAK = __SOAK_DATA__;
 
 const PHASE_COLOR = {
   baseline:"rgba(204,204,220,.10)", cooldown:"rgba(115,191,105,.10)",
-  S1:"rgba(110,159,255,.32)", S2:"rgba(255,152,48,.32)", S3:"rgba(184,119,217,.32)", S5:"rgba(242,73,92,.32)"
+  PS1:"rgba(110,159,255,.32)", PS2:"rgba(255,152,48,.32)", PS5:"rgba(242,73,92,.32)"
 };
-const SCEN_COLOR = {S1:"#6e9fff", S2:"#ff9830", S3:"#b877d9", S5:"#f2495c"};
+const SCEN_COLOR = {PS1:"#6e9fff", PS2:"#ff9830", PS5:"#f2495c"};
 const esc = s => String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const el = (h)=>{const d=document.createElement("div");d.innerHTML=h;return d.firstElementChild;};
 
@@ -81,13 +81,10 @@ html += tiles.map(t=>`<div class="panel c3 stat"><div class="v">${t[1]}</div><di
 
 // ---- per-scenario summary ----
 function verdictCell(s, d){
-  if(s==="S5"){
+  if(d.forecast){
     const ok = d.oom_cycle_rate>0;
     const eta = d.min_oom_eta_s!=null ? ` · best ETA ~${Math.round(d.min_oom_eta_s)}s` : "";
-    return `<span class="${ok?'ok':'bad'}">${ok?'OOM forecast fired':'no forecast'} (${pct(d.oom_cycle_rate)} of cycles)${eta}</span>`;
-  }
-  if(s==="S3"){
-    return `<span class="muted">detect ${pct(d.detect_rate)} · dominant ${esc(d.dominant_root)}</span>`;
+    return `<span class="${ok?'ok':'bad'}">${ok?'forecast card fired':'no forecast card'} (${pct(d.oom_cycle_rate)} of cycles)${eta}</span>`;
   }
   const correct = d.correct_rate, cls = correct>=0.5?"ok":(correct>0?"warn":"bad");
   return `<span class="${cls}">root ${esc(d.dominant_root)} · correct ${pct(correct)}</span>`;
@@ -106,7 +103,7 @@ let rows = SOAK.scen_order.map(s=>{
 }).join("");
 html += panel("c12", "Per-scenario outcome", "real faults, real verdicts — gaps shown as-is",
   `<table><thead><tr><th>Scenario</th><th>Expected root</th><th>Result</th><th>Cycles</th><th>Median time-to-detect</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>
-   <div class="note">"Correct" = share of in-fault samples whose top root equals the expected source. S1 should be high; S2 exposes the held-backbone mis-root; S3 stays honestly quiet (CPU physics); S5 has no causal root by design — its success is the OOM forecast firing before the kill.</div>`);
+   <div class="note">"Correct" = share of in-fault samples whose top root equals the expected source. PS1 should be high. PS2 tests the young-baseline door. PS5 has no expected machine root: its success is the trip forecast card firing before the trip.</div>`);
 
 // ---- timeline (SVG) ----
 const series = SOAK.series.filter(p=>p.epoch);
@@ -157,7 +154,7 @@ const legend = `<div class="legend">
   <span><span class="dot" style="background:#f2495c"></span>root ≠ expected</span>
   <span style="color:#6e9fff">— accepted edges</span>
   <span style="color:#ff9830">— findings</span>
-  <span style="color:#f2495c">| OOM forecast</span>
+  <span style="color:#f2495c">| forecast card</span>
 </div>`;
 html += panel("c12", "Timeline", "phase ribbon · detections · edge & finding counts (UTC)",
   timelineSVG()+legend);

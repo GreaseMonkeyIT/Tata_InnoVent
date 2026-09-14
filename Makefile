@@ -1,50 +1,31 @@
-# SiliconKnights / ABB Accelerator — build, test, deploy.
-# Override image coords:  make import REG=skn TAG=v0.1
-.PHONY: help test images import charts demo pause resume clean
+# VISR (Tata InnoVent): test, build, and import the images for the single-node K3s box.
+# Override the image coordinates: make import REG=skn TAG=v0.1
+.PHONY: help test images import clean
 REG ?= skn
 TAG ?= v0.1
+# image-name:build-directory pairs. PIVOT_SETUP.md section 4 builds the same set.
+IMAGES = aggregator:aggregator correlation-engine:correlation api:api dashboard:dashboard \
+         plant-sim:plant openplc:plc tag-server:scada
 
 help:
-	@echo "make test    - engine (pytest) + aggregator (go) unit tests"
-	@echo "make images  - docker build all 15 workloads + aggregator + engine + api + dashboard"
-	@echo "make import  - build + import images into K3s containerd (air-gap path)"
-	@echo "make charts  - helm lint + template the factory chart"
-	@echo "make demo    - ./deploy/skctl up --mode solo (deploy on one box)"
-	@echo "make pause / make resume - idle / restore the factory"
-	@echo "make clean   - remove pycache + locally-built Go binaries"
+	@echo "make test    - pytest (correlation, plant, api, scada) + aggregator go test"
+	@echo "make images  - docker build every VISR image (openplc is a slow source build)"
+	@echo "make import  - build, then import every image into K3s containerd"
+	@echo "make clean   - remove Python caches and the local aggregator binary"
 
 test:
-	cd correlation && python3 -m pytest tests/ -q
+	cd correlation && python3 -m pytest -q
+	cd plant && python3 -m pytest -q
+	cd api && python3 -m pytest -q
+	cd scada && python3 -m pytest -q
 	-cd aggregator && go test ./...
 
 images:
-	@for d in workloads/*/; do n=$$(basename $$d); echo ">> build $$n"; docker build -t $(REG)/$$n:$(TAG) $$d || exit 1; done
-	docker build -t $(REG)/aggregator:$(TAG) aggregator
-	docker build -t $(REG)/correlation-engine:$(TAG) correlation
-	docker build -t $(REG)/api:$(TAG) api
-	docker build -t $(REG)/dashboard:$(TAG) dashboard
+	@for p in $(IMAGES); do n=$${p%%:*}; d=$${p#*:}; echo ">> build $(REG)/$$n:$(TAG) from $$d/"; docker build -t $(REG)/$$n:$(TAG) $$d || exit 1; done
 
 import: images
-	@for d in workloads/*/; do n=$$(basename $$d); docker save $(REG)/$$n:$(TAG) | sudo k3s ctr images import -; done
-	docker save $(REG)/aggregator:$(TAG) | sudo k3s ctr images import -
-	docker save $(REG)/correlation-engine:$(TAG) | sudo k3s ctr images import -
-	docker save $(REG)/api:$(TAG) | sudo k3s ctr images import -
-	docker save $(REG)/dashboard:$(TAG) | sudo k3s ctr images import -
-
-charts:
-	helm lint deploy/charts/factory
-	helm template deploy/charts/factory >/dev/null && echo "chart renders OK"
-
-demo:
-	./deploy/skctl up --mode solo
-
-pause:
-	./deploy/skctl pause
-
-resume:
-	./deploy/skctl resume
+	@for p in $(IMAGES); do n=$${p%%:*}; docker save $(REG)/$$n:$(TAG) | sudo k3s ctr images import - || exit 1; done
 
 clean:
 	find . -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null; true
-	rm -f aggregator/aggregator workloads/*/ccr workloads/*/dcim-bridge \
-	      workloads/*/notify-gateway workloads/*/plc-gateway workloads/*/safety-interlock 2>/dev/null; true
+	rm -f aggregator/aggregator

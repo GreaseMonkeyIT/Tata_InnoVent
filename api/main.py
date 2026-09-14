@@ -4,14 +4,13 @@ It proxies and *normalizes* the causal graph, per-pod signals, and anomaly event
 stable JSON with permissive CORS and an auto-generated OpenAPI spec at /docs — so any frontend
 (React, Vue, a plain HTML page, a CLI) can consume the system without knowing the internal
 service names or payload shapes. No causal logic lives here; the reasoning stays in L3. The one
-transform it applies is collapsing live pod names (`cooling-monitor-6644486769-6wlst`) to stable
-workload names (`cooling-monitor`) so a UI can key off something that survives restarts.
+transform it applies is collapsing live pod names (`tag-server-6644486769-6wlst`) to stable
+workload names (`tag-server`) so a UI can key off something that survives restarts.
 
-Env: ENGINE_URL, AGGREGATOR_URL, COOLING_URL, ENGINE_SIGNAL.
+Env: ENGINE_URL, AGGREGATOR_URL, PROM_URL, PLANT_URL, SCADA_URL, ENGINE_SIGNAL, TOPOLOGY_NAMESPACES.
 """
 import json
 import os
-import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -25,9 +24,10 @@ import security
 ENGINE = os.environ.get("ENGINE_URL", "http://correlation-engine.aiops.svc:9100").rstrip("/")
 AGG = os.environ.get("AGGREGATOR_URL", "http://aggregator.aiops.svc:9000").rstrip("/")
 PROM = os.environ.get("PROM_URL", "http://prom-kube-prometheus-stack-prometheus.observability.svc.cluster.local.:9090").rstrip("/")  # Caretta topology source (eBPF L4 service map)
-COOLING = os.environ.get("COOLING_URL", "http://cooling-monitor.factory-data.svc:8080").rstrip("/")
 PLANT = os.environ.get("PLANT_URL", "http://plant-sim.plant.svc:9200").rstrip("/")  # plane-2 physics sim (pivot, LOG-029)
 SCADA = os.environ.get("SCADA_URL", "http://tag-server.plant.svc:9300").rstrip("/")  # 2F.2 tag server (PLC-read tag DB + historian)
+# Caretta topology scope: both ends of an edge must sit in one of these namespaces (drops monitoring/infra flows).
+TOPOLOGY_NS = {s.strip() for s in os.environ.get("TOPOLOGY_NAMESPACES", "plant,aiops").split(",") if s.strip()}
 SIGNAL = os.environ.get("ENGINE_SIGNAL", "psi_io")             # primary/default resource class
 SIGNALS = [s.strip() for s in os.environ.get("ENGINE_SIGNALS", "psi_io,psi_cpu,psi_mem").split(",") if s.strip()]
 SIGNAL_RESOURCE = {"psi_io": "disk I/O", "psi_cpu": "CPU", "psi_mem": "memory",
@@ -48,7 +48,7 @@ OPERATOR_TOKEN = os.environ.get("VISR_OPERATOR_TOKEN", "")
 AUDIT = security.AuditLedger(os.environ.get("AUDIT_PATH", "/data/audit.jsonl"))
 
 app = FastAPI(
-    title="SiliconKnights Edge Causal AIOps API",
+    title="VISR API",
     version="1.0",
     description="Frontend-agnostic REST over the causal correlation engine (L3) and the "
                 "telemetry aggregator (L2). Read endpoints under /api; OpenAPI at /openapi.json.",
@@ -70,60 +70,9 @@ def _post(url, timeout=8):
         return r.read().decode()
 
 
-KUBE = "https://kubernetes.default.svc"
-_SA = "/var/run/secrets/kubernetes.io/serviceaccount"
-
-
-def _k8s(method, path, body=None):
-    """Minimal in-cluster Kubernetes API call via the pod ServiceAccount (no client lib). Used only
-    by the scenario console (create the S2 Job; patch the S5 leak flag) under a bounded Role."""
-    with open(_SA + "/token") as f:
-        token = f.read().strip()
-    ctx = ssl.create_default_context(cafile=_SA + "/ca.crt")
-    data = json.dumps(body).encode() if body is not None else None
-    ct = "application/strategic-merge-patch+json" if method == "PATCH" else "application/json"
-    req = urllib.request.Request(KUBE + path, data=data, method=method, headers={
-        "Authorization": "Bearer " + token, "Content-Type": ct, "Accept": "application/json"})
-    with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
-        return json.load(r)
-
-
-def _trigger_s2():
-    """Clone the suspended log-archiver CronJob into a fixed-name Job (== scenarios/S2/trigger.sh).
-    The name MUST stay `log-archiver-s2` so workload() resolves it to `log-archiver` (LOG-075)."""
-    ns, name = "factory-data", "log-archiver-s2"
-    job_url = f"/apis/batch/v1/namespaces/{ns}/jobs/{name}"
-    try:
-        _k8s("DELETE", job_url + "?propagationPolicy=Background")
-    except urllib.error.HTTPError as e:
-        if e.code != 404:
-            raise
-    for _ in range(20):  # fixed name -> wait for the old Job to clear before recreating (avoid 409)
-        try:
-            _k8s("GET", job_url)
-            time.sleep(0.5)
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                break
-            raise
-    cj = _k8s("GET", f"/apis/batch/v1/namespaces/{ns}/cronjobs/log-archiver")
-    job = {"apiVersion": "batch/v1", "kind": "Job",
-           "metadata": {"name": name, "namespace": ns},
-           "spec": cj["spec"]["jobTemplate"]["spec"]}
-    _k8s("POST", f"/apis/batch/v1/namespaces/{ns}/jobs", job)
-    return {"scenario": "S2", "status": "fired", "job": name}
-
-
-def _leak(value):
-    """Patch vision-qc's LEAK_ENABLED (== scenarios/S5/{trigger,reset}.sh); template change -> rollout."""
-    patch = {"spec": {"template": {"spec": {"containers": [
-        {"name": "vision-qc", "env": [{"name": "LEAK_ENABLED", "value": value}]}]}}}}
-    _k8s("PATCH", "/apis/apps/v1/namespaces/factory-edge/deployments/vision-qc", patch)
-
-
-def _parse_caretta(result, ns_prefix="factory"):
+def _parse_caretta(result, namespaces=TOPOLOGY_NS):
     """Collapse Caretta's `caretta_links_observed` series (Caretta emits one per role/kind) into a
-    single directed workload edge per (client -> server), scoped to the factory namespaces (drops
+    single directed workload edge per (client -> server), scoped to TOPOLOGY_NAMESPACES (drops
     monitoring/infra flows). client_name/server_name are already workload names -- no pod-hash
     stripping needed. Keeps the largest observed byte count per pair."""
     best = {}
@@ -133,7 +82,7 @@ def _parse_caretta(result, ns_prefix="factory"):
         cns, sns = m.get("client_namespace", ""), m.get("server_namespace", "")
         if not cn or not sn or cn == sn:
             continue
-        if not (cns.startswith(ns_prefix) and sns.startswith(ns_prefix)):
+        if not (cns in namespaces and sns in namespaces):
             continue
         try:
             b = float(s.get("value", [0, 0])[1])
@@ -252,7 +201,7 @@ def _ollama(prompt, timeout=30):
     if not OLLAMA:
         return None
     body = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
-                       "think": False, "keep_alive": "10m",  # stay warm through an incident (P5)
+                       "think": False, "keep_alive": "10m",  # stay warm through an incident
                        "options": {"temperature": 0.2}}).encode()
     req = urllib.request.Request(OLLAMA + "/api/generate", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
@@ -321,7 +270,7 @@ def _plant_entities() -> set:
 
 
 def workload(pod: str) -> str:
-    """cooling-monitor-6644486769-6wlst -> cooling-monitor (drop replicaset + pod hash).
+    """tag-server-6644486769-6wlst -> tag-server (drop replicaset + pod hash).
     Known plant entities keep their names verbatim — they carry no k8s hashes to strip."""
     if pod in _plant_entities():
         return pod
@@ -329,18 +278,13 @@ def workload(pod: str) -> str:
     return "-".join(parts[:-2]) if len(parts) > 2 else pod
 
 
-# PS-series = the plant-physics demo scenarios (pivot, LOG-028/029): faults perturb the MODEL,
-# symptoms emerge. S-series = the kernel-plane motifs, retired to the regression bench (their
-# factory targets are torn down; they live on as box-verified fixtures + the frozen Codex demo).
+# PS-series = the plant-physics demo scenarios (LOG-028/029): faults perturb the MODEL, and the
+# symptoms emerge.
 SCENARIOS = [
     {"id": "PS0", "name": "Steady plant", "mechanism": "no faults; baselines mature, engine stays silent", "triggerable": False},
     {"id": "PS1", "name": "Rail-sag cascade", "mechanism": "press-1 bearing friction -> amps up -> rail A sags -> mates degrade", "triggerable": True},
     {"id": "PS2", "name": "Duty-cycle aggressor stuck on", "mechanism": "compressor-1 pinned at full draw on rail B (no matured baseline)", "triggerable": True},
     {"id": "PS5", "name": "Coolant pump degradation", "mechanism": "flow drops -> temps ramp toward the 78C trip (forecast beat)", "triggerable": True},
-    {"id": "S0", "name": "Steady-state control (bench)", "mechanism": "kernel plane; retired to the regression bench", "triggerable": False},
-    {"id": "S1", "name": "PVC I/O contention cascade (bench)", "mechanism": "kernel plane; retired to the regression bench", "triggerable": False},
-    {"id": "S2", "name": "Large-file I/O starvation (bench)", "mechanism": "kernel plane; retired to the regression bench", "triggerable": False},
-    {"id": "S5", "name": "Memory leak + OOM (bench)", "mechanism": "kernel plane; retired to the regression bench", "triggerable": False},
 ]
 
 
@@ -518,7 +462,7 @@ def events():
 
 @app.get("/api/topology", tags=["topology"])
 def topology():
-    """Auto-discovered L4 service map from Caretta (eBPF) — who-talks-to-whom across the factory,
+    """Auto-discovered L4 service map from Caretta (eBPF) — who-talks-to-whom across the plant and engine pods,
     with zero application instrumentation. Directed edges with the server port + observed bytes.
     `source: unavailable` until Caretta is up and scraped."""
     return _caretta_topology()
@@ -666,8 +610,7 @@ def audit(limit: int = 100):
 
 @app.post("/api/scenarios/{sid}/trigger", tags=["scenarios"])
 def trigger(sid: str, request: Request):
-    """Fire a scenario from the console. S1 arms cooling-monitor's fio over HTTP; S2 clones the
-    archiver CronJob into a Job; S5 flips vision-qc's leak flag (both via a bounded ServiceAccount).
+    """Fire a PS-series fault from the console: the API posts it to the plant sim's /fault/<id>.
     2E: requires the operator token when configured; the action is audit-logged either way."""
     sid = sid.upper()
     actor = _require_operator(request, "trigger", sid)
@@ -676,21 +619,9 @@ def trigger(sid: str, request: Request):
             _post(PLANT + "/fault/" + sid)
             AUDIT.append(actor, "trigger", sid, "fired", _evidence_snapshot())
             return {"scenario": sid, "status": "fired", "plane": "plant"}
-        if sid == "S1":
-            _post(COOLING + "/flush")
-            AUDIT.append(actor, "trigger", "S1", "armed", _evidence_snapshot())
-            return {"scenario": "S1", "status": "armed"}
-        if sid == "S2":
-            out = _trigger_s2()
-            AUDIT.append(actor, "trigger", "S2", out.get("status", "fired"), _evidence_snapshot())
-            return out
-        if sid == "S5":
-            _leak("true")
-            AUDIT.append(actor, "trigger", "S5", "fired", _evidence_snapshot())
-            return {"scenario": "S5", "status": "fired"}
     except urllib.error.HTTPError as e:
         AUDIT.append(actor, "trigger", sid, f"error {e.code}")
-        raise HTTPException(e.code, f"k8s: {e.read().decode()[:200]}")
+        raise HTTPException(e.code, f"plant-sim: {e.read().decode()[:200]}")
     except Exception as e:
         AUDIT.append(actor, "trigger", sid, "error")
         raise HTTPException(503, f"{sid} trigger failed: {e}")
@@ -699,7 +630,7 @@ def trigger(sid: str, request: Request):
 
 @app.post("/api/scenarios/{sid}/reset", tags=["scenarios"])
 def reset_scenario(sid: str, request: Request):
-    """Reset a scenario: S2 deletes the Job, S5 clears the leak flag; S1 self-clears via the gate.
+    """Reset a PS-series fault. The sim's /reset clears every active plant fault.
     2E: operator-gated + audit-logged, same as trigger."""
     sid = sid.upper()
     actor = _require_operator(request, "reset", sid)
@@ -709,23 +640,9 @@ def reset_scenario(sid: str, request: Request):
             _post(PLANT + "/reset")
             AUDIT.append(actor, "reset", sid, "reset")
             return {"scenario": sid, "status": "reset", "plane": "plant"}
-        if sid == "S2":
-            try:
-                _k8s("DELETE", "/apis/batch/v1/namespaces/factory-data/jobs/log-archiver-s2?propagationPolicy=Background")
-            except urllib.error.HTTPError as e:
-                if e.code != 404:
-                    raise
-            AUDIT.append(actor, "reset", "S2", "reset")
-            return {"scenario": "S2", "status": "reset"}
-        if sid == "S5":
-            _leak("false")
-            AUDIT.append(actor, "reset", "S5", "reset")
-            return {"scenario": "S5", "status": "reset"}
-        if sid == "S1":
-            return {"scenario": "S1", "status": "self-clears via recency gate"}
     except urllib.error.HTTPError as e:
         AUDIT.append(actor, "reset", sid, f"error {e.code}")
-        raise HTTPException(e.code, f"k8s: {e.read().decode()[:200]}")
+        raise HTTPException(e.code, f"plant-sim: {e.read().decode()[:200]}")
     raise HTTPException(501, f"{sid} reset not wired")
 
 

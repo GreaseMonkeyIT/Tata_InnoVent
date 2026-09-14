@@ -1,4 +1,4 @@
-"""Root-cause ranking and blast radius — MASTER_PLAN section 1.4.5.
+"""Root-cause ranking and blast radius.
 
 Ranking = explanatory reach: a node's score is how much of the symptom set it
 explains through accepted causal edges (forward reachability with decay),

@@ -1,4 +1,4 @@
-"""Evidence acceptance gate — MASTER_PLAN section 1.4.4. The false-positive killer.
+"""Evidence acceptance gate. The false-positive killer.
 
 An edge enters the causal graph only if ALL THREE clauses hold:
   1. statistical: |r| >= R_PEAK at peak AND elevated at an adjacent lag window
@@ -19,9 +19,9 @@ R_ADJ = 0.4
 TEMPORAL_TOL_S = 10.0  # one-2 samples of slack on onset ordering
 COUPLING_KINDS = ("ebpf", "pvc")  # admits a BARE correlation edge (accept_edge); "psi"/"node" only corroborate here
 # A SOURCE-attributed edge (writer/hog -> staller) may ALSO rest on same-node coupling: CPU/memory
-# contention has no network edge, so same-node PSI is its only physical witness (MASTER_PLAN
-# 1.4.4-2b). Kept OUT of COUPLING_KINDS so a same-node pair NEVER forms a bare psi cascade edge
-# (the LOG-061 false-positive fix); the source guard (usage leads stall + out-hogs) admits it safely.
+# contention has no network edge, so same-node PSI is its only physical witness. Kept OUT of
+# COUPLING_KINDS so a same-node pair NEVER forms a bare psi cascade edge (an earlier false-positive
+# fix). The source guard (usage leads stall + out-hogs) admits it safely.
 SOURCE_COUPLING_KINDS = ("ebpf", "pvc", "node")
 
 

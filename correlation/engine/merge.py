@@ -1,4 +1,4 @@
-"""Stage 1 (ROAD): union per-signal rendered graphs into one served causal graph.
+"""Union per-signal rendered graphs into one served causal graph.
 
 Each resource signal (psi_io / psi_cpu / psi_mem) is detected and correlated independently by its
 own GraphMemory (a different physical witness and a different case family per resource class). This

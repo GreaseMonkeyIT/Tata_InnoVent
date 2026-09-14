@@ -15,7 +15,7 @@ def _graph():
                 "dst": "timescaledb-aaa111-bbb22",
                 "r": 0.8,
                 "lag_s": 30,
-                "evidence": ["write", "pvc", "temporal"],  # source-rooted S1 (LOG-060): writer->staller
+                "evidence": ["write", "pvc", "temporal"],  # source-rooted: writer->staller
             }
         ],
         "root_cause_ranking": [
@@ -323,7 +323,7 @@ def test_case_is_promoted_from_incident(tmp_path):
 
 
 def test_case_not_promoted_from_victim_cascade(tmp_path):
-    """ROAD Stage 0 / REMAINING section 1: a psi-only victim->victim cascade whose ranked root
+    """A psi-only victim->victim cascade whose ranked root
     owns no source(write) edge must NOT be promoted -- it is the wrong-direction case that the
     deviation gate cannot catch (both pods are real victims). Only source-rooted verdicts promote."""
     mem = GraphMemory(str(tmp_path / "memory.db"))

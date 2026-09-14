@@ -1,7 +1,7 @@
-# Grafana Alloy - ship pod logs to the in-cluster Loki (BUILD_GUIDE P2 step 2; Promtail is EOL).
+# Grafana Alloy - ship pod logs to the in-cluster Loki (Promtail is EOL).
 # loki.source.kubernetes reads logs via the K8s API, so a single Deployment works (no hostPath).
 # If logs don't appear, switch to a file-based DaemonSet (controller.type=daemonset + /var/log mounts)
-# or grant pods/log RBAC. Verify: appendix/verify_taps.sh shows Loki factory-core streams.
+# or grant pods/log RBAC.
 controller:
   type: deployment
 alloy:

@@ -7,7 +7,7 @@ A memory leak is self-caused (source == victim), so it forms NO cross-pod causal
 is a per-pod projection of the working-set ramp to the pod's memory limit ("OOM in ~Ns"), emitted
 BEFORE the kill. A flat level or a plateau (e.g. a DB cache fill) has ~zero tail slope and is skipped
 by forecast_to_limit; a slow drift whose ETA lands beyond the horizon is skipped here. This realizes
-the S5 "forecast OOM before it happens" beat (MASTER_PLAN 2.5 / 5.5).
+the "forecast the failure before it happens" beat (OOM cards, and the PS5 trip card via FORECAST_PAIRS).
 """
 from __future__ import annotations
 

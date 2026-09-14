@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""L3 correlation service (P4).
+"""L3 correlation service.
 
 Polls the L2 aggregator's /window (per-pod signal vectors) and /events (anomaly
 seeds), builds the engine inputs, runs one deterministic pass, and serves the
@@ -76,7 +76,7 @@ FORECAST_PAIRS = [p.split(":") for p in os.environ.get(
     "FORECAST_PAIRS", f"{FORECAST_SIGNAL}:{FORECAST_LIMIT}:leak,coolant_temp:temp_limit:trip"
 ).split(",") if p.count(":") == 2]
 FORECAST_HORIZON_S = float(os.environ.get("FORECAST_HORIZON_S", "900"))  # warn only if OOM is within this window
-FORECAST_MIN_FRAC  = float(os.environ.get("FORECAST_MIN_FRAC", "0.5"))   # warn only once working_set is past this fraction of the limit (drops transient/low-level climbs); 0.5 = S5-verified earlier card (LOG-093), do not go lower (re-admits the LOG-087 false cards)
+FORECAST_MIN_FRAC  = float(os.environ.get("FORECAST_MIN_FRAC", "0.5"))   # warn only once working_set is past this fraction of the limit (drops transient/low-level climbs). 0.5 is box-verified. Do not go lower: it re-admits false early cards.
 INTERVAL   = int(os.environ.get("ENGINE_INTERVAL", "10"))        # seconds between passes
 PORT       = int(os.environ.get("ENGINE_PORT", "9100"))
 COPR_MIN   = float(os.environ.get("COPRESSURE_MIN", "0.10"))     # signal level that counts as "stalled"
@@ -205,8 +205,8 @@ def _witness_for(signal, vectors):
     - psi_io: disk (pvc) coupling among the storage quartet -> admits I/O cascade edges.
     - psi_cpu / psi_mem: same-node coupling (single node = one CPU/mem contention domain) ->
       admits a SOURCE-attributed edge only (the aggressor's usage leads a co-resident's stall, with
-      NO network edge -- the S3 'mesh-blind' case). A bare psi pair still forms no edge (same-node
-      is excluded from gate.couples), preserving the LOG-061 false-positive fix.
+      NO network edge, the 'mesh-blind' case). A bare psi pair still forms no edge (same-node
+      is excluded from gate.couples), preserving an earlier false-positive fix.
     psi co-pressure stays corroboration only.
     - plant families (2C'): coupling comes ONLY from the declared shared-medium domains
       (rail:/loop: registry) — no same-node blanket (plant entities aren't pods), no co-pressure

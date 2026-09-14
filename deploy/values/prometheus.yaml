@@ -1,4 +1,4 @@
-# kube-prometheus-stack values - 12h retention, 5s scrape on L0 namespaces (D-001, MASTER_PLAN 1.2)
+# kube-prometheus-stack values - 12h retention, 5s scrape for cadvisor and the eBPF exporters
 grafana:
   enabled: true                  # re-enabled (reverses LOG-024); pinned to v11 to avoid the v12 apiserver crashloop
   image:
@@ -26,18 +26,6 @@ prometheus:
     retention: 12h
     scrapeInterval: 15s
     additionalScrapeConfigs:
-      - job_name: l0-fast
-        scrape_interval: 5s
-        kubernetes_sd_configs:
-          - role: pod
-            namespaces: { names: [factory-core, factory-data, factory-edge] }
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_pod_label_app]
-            target_label: app
-          - source_labels: [__meta_kubernetes_namespace]
-            target_label: namespace
-          - target_label: channel        # D-004 (LOG-026/027): l0-fast = app /metrics = ground-truth channel; stamp it so L2/engine can exclude it
-            replacement: truth
       - job_name: cadvisor-fast
         scrape_interval: 5s
         scheme: https
@@ -48,7 +36,7 @@ prometheus:
         relabel_configs:
           - source_labels: [__meta_kubernetes_node_name]
             target_label: node
-      - job_name: ebpf-exporters       # scrape any pod annotated prometheus.io/scrape=true (Caretta, OBI/Beyla) - P2 steps 3-4
+      - job_name: ebpf-exporters       # scrape any pod annotated prometheus.io/scrape=true (Caretta)
         scrape_interval: 5s
         kubernetes_sd_configs: [{ role: pod }]
         relabel_configs:

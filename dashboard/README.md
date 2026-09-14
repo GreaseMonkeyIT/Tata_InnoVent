@@ -1,25 +1,35 @@
-# dashboard (P6)
+# dashboard
 
-Next.js **static export** (no Node server at runtime) served by nginx, which also reverse-proxies
-`/api/` to the in-cluster api gateway (`api.aiops.svc:8088`) — so the browser uses a single origin
-(no CORS, no second exposed port). Data is fetched client-side from `/api/graph`, `/api/narrative`,
-and `/api/health`. The causal graph is React Flow + dagre: edge width from `render_weight`, animated
-+ hot when `state=active`, grey when `source=memory` (the steady backbone), root node highlighted.
-The scenario console fires `POST /api/scenarios/S1/trigger`; PSI heatmaps/signals live in Grafana
-(linked, not re-implemented here).
+The VISR dashboard is a Next.js **static export** (no Node server at runtime) served by nginx.
+nginx also proxies `/api/` to the in-cluster API gateway (`api.aiops.svc:8088`), so the browser uses
+one origin (no CORS, no second exposed port). The page fetches live data from `/api/*`.
 
-## Local dev (on the laptop — node/npm live there)
+Sections: Boot · Causal Monitor (FLOOR and EDGE views) · Machines (plant tiles, trends, SCADA tag
+browser) · Pods · Scenarios (PS0, PS1, PS2, PS5) · Recommendations · Audit.
 
-```bash
-cd dashboard && npm install && npm run build   # emits out/ (the static export)
-```
-
-## Build & deploy (on the box — docker/kubectl live there)
+## Local development (laptop)
 
 ```bash
-docker build -t skn/dashboard:v0.1 dashboard/ && docker save skn/dashboard:v0.1 | sudo k3s ctr images import -
-./deploy/skctl up --mode solo                  # applies deploy/dashboard.yaml (NodePort 30080)
+cd dashboard
+npm ci
+npm run dev      # http://localhost:3000, dev-only mock data when /api is not reachable
+npm run build    # writes the static export to out/
 ```
 
-Reachable at `http://<NODE_IP>:30080` — including the box's Tailscale IP from any tailnet peer, with
-no public ingress.
+The mock data in `app/page.jsx` is for design review only. The production export never uses it.
+
+## Build and deploy (box)
+
+Create the `visr-auth` and `visr-tls` Secrets before the first deploy. The readiness probe fails
+closed without them. `PIVOT_SETUP.md` step 5.0 has the commands.
+
+```bash
+docker build -t skn/dashboard:v0.1 dashboard/
+docker save skn/dashboard:v0.1 | sudo k3s ctr images import -
+kubectl apply -f deploy/dashboard.yaml
+kubectl -n aiops rollout restart deploy/dashboard
+```
+
+Open `https://<node-ip>:30443`. Port 30080 only redirects to HTTPS. Log in as `viewer` to look, or
+as `operator` to fire and reset scenarios. The node IP includes the box's Tailscale address, and
+there is no public ingress.

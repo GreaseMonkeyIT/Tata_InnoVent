@@ -1,6 +1,6 @@
 """A1 Resource Agent internals: EWMA+CUSUM changepoint detection and shape classification.
 
-MASTER_PLAN section 1.4.2. Pure functions, no I/O. Python 3.10+.
+Pure functions, no I/O. Python 3.10+.
 """
 from __future__ import annotations
 

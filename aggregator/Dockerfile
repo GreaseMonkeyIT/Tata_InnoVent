@@ -1,4 +1,4 @@
-# L2 aggregator (P3) — static Go binary on distroless.
+# L2 aggregator: static Go binary on distroless.
 FROM golang:1.23-alpine AS build
 WORKDIR /src
 COPY go.mod main.go ./

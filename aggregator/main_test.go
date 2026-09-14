@@ -1,4 +1,4 @@
-// Golden tests for the L2 aggregator (BUILD_GUIDE P3 step 4). Mock Prometheus via
+// Golden tests for the L2 aggregator. Mock Prometheus via
 // httptest, assert pack parse + threshold->schema-conformant event + idle silence.
 package main
 

@@ -14,20 +14,20 @@ Two jobs, picked by argv[1]:
       Read samples.jsonl, compute per-scenario summary stats, and emit a self-contained report.html
       (data embedded — open it by double-click, like a `powercfg /batteryreport`). No reasoning here;
       this only summarizes what the engine already decided. Honest by construction: it shows the
-      ACTUAL dominant root per scenario, so the S2 mis-root / S3 physics gaps appear as-is.
+      ACTUAL dominant root per scenario, so a mis-root appears as-is.
 """
 import sys, os, json, time, csv
 
-# What a clean run SHOULD root each scenario at (the ground truth). S5 has no causal root by design
-# (a leak is self-caused) — its success signal is the OOM forecast firing, handled separately.
-EXPECT = {"S1": "cooling-monitor", "S2": "log-archiver", "S3": "analytics-batch", "S5": None}
+# What a clean run SHOULD root each scenario at (the ground truth). PS5 has no expected machine
+# root (the pump fault degrades the shared loop). Its success signal is the trip forecast card,
+# handled separately.
+EXPECT = {"PS1": "press-1", "PS2": "compressor-1", "PS5": None}
 NOTE = {
-    "S1": "Hero path — expect root = cooling-monitor.",
-    "S2": "Known gap: may mis-root to a held backbone edge (a no-baseline CronJob source). See BOOK §4.2.",
-    "S3": "Out of scope on this box (CPU physics can't starve co-residents) — the engine stays honestly quiet.",
-    "S5": "Self-caused leak — success = OOM forecast fires BEFORE the kill (no causal root expected).",
+    "PS1": "Hero path: expect root = press-1 with rail evidence.",
+    "PS2": "No matured baseline for compressor-1: the young-baseline door (2A) must admit the storm.",
+    "PS5": "Coolant pump degradation: success = the trip forecast card fires before the trip.",
 }
-SCEN_ORDER = ["S1", "S2", "S3", "S5"]
+SCEN_ORDER = ["PS1", "PS2", "PS5"]
 
 
 def jload(s):
@@ -151,21 +151,21 @@ def cmd_report(rundir, template):
         for r in with_root:
             counts[r["root"]] = counts.get(r["root"], 0) + 1
         dom, dom_n = (max(counts.items(), key=lambda kv: kv[1]) if counts else ("—", 0))
-        # OOM (S5) — fraction of cycles where a forecast fired, and the best (smallest) ETA seen
+        # forecast card (PS5): share of cycles where a forecast fired, and the best (smallest) ETA seen
         oom_cycles, min_eta = set(), None
         for r in obs:
             e = _num(r.get("oom_eta_s"))
             if e is not None:
                 oom_cycles.add(r.get("cycle"))
                 min_eta = e if (min_eta is None or e < min_eta) else min_eta
-        # median time-to-first-detection per cycle (root present, or OOM for S5)
+        # median time-to-first-detection per cycle (root present, or a forecast card for a no-root scenario)
         ttds = []
         for c in cycles:
             cr = [r for r in obs if r.get("cycle") == c and r.get("epoch") is not None]
             if not cr:
                 continue
             t0 = min(r["epoch"] for r in cr)
-            if s == "S5":
+            if EXPECT[s] is None:
                 hit = [r["epoch"] for r in cr if _num(r.get("oom_eta_s")) is not None]
             else:
                 hit = [r["epoch"] for r in cr if (r.get("root") or "")]
@@ -178,7 +178,8 @@ def cmd_report(rundir, template):
             "detect_rate": round(len(with_root) / n, 3) if n else 0.0,
             "correct_rate": round(len(correct) / n, 3) if n else 0.0,
             "dominant_root": dom, "dominant_n": dom_n,
-            "expected": EXPECT[s] or "(no root — OOM forecast)",
+            "expected": EXPECT[s] or "(no root: forecast card)",
+            "forecast": EXPECT[s] is None,
             "oom_cycle_rate": round(len(oom_cycles) / len(cycles), 3) if cycles else 0.0,
             "min_oom_eta_s": min_eta, "median_ttd_s": med_ttd, "note": NOTE[s],
         }
@@ -211,7 +212,7 @@ def cmd_report(rundir, template):
         if e is not None and okey not in seen:
             seen.add(okey)
             events.append({"t": r.get("t"), "kind": "oom", "text":
-                           f"{ph} cycle {r.get('cycle')}: OOM forecast — {r.get('oom_pod')} in ~{int(e)}s"})
+                           f"{ph} cycle {r.get('cycle')}: forecast card for {r.get('oom_pod')} in ~{int(e)}s"})
     # keep the last 40 events
     events = events[-40:]
 

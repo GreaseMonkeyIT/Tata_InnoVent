@@ -1,6 +1,6 @@
 """End-to-end A1->A4 pass: signal vectors in, CausalGraph JSON out.
 
-MASTER_PLAN sections 1.4.2-1.4.5. Deterministic; no LLM anywhere near this file.
+Deterministic. No LLM anywhere near this file.
 """
 from __future__ import annotations
 

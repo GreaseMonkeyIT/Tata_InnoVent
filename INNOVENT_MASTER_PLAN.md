@@ -1,8 +1,8 @@
 # INNOVENT MASTER PLAN — Stages 2 & 3
 **Team SiliconKnights · the step-by-step build plan for after registration**
 
-> **How this document works.** Stage 1 (registration, → 2026-07-05) is frozen and lives in
-> `INNOVENT_PLAN.md` — nothing here touches it. This plan covers **Stage 2 (Virtual PoC)** and
+> **How this document works.** Stage 1 (registration, → 2026-07-05) is done, and
+> `INNOVENT_PLAN.md` holds the current state at a glance. This plan covers **Stage 2 (Virtual PoC)** and
 > **Stage 3 (Final display)**. Phases are named **2A, 2B…** and **3A, 3B…** — deliberately NOT
 > "S2/S3", because S-numbers already mean *fault scenarios* (S1 = disk storm, S5 = memory leak).
 > Every phase has a plain-language goal, the steps, a **"done when"** you can verify on the box,
@@ -22,13 +22,13 @@ watch anything that isn't a pod, or *act* on what it finds. Stage 2 fixes the fi
 Stage 3 fixes the other two. §8 says what it all adds up to. That's the whole plan.
 
 **Assets already in hand (don't rebuild these):**
-- The engine + VISR dashboard, live on `mark-two` (`ABB_Accelerator_Codex`).
+- The engine + VISR dashboard (this repo).
 - **ESP32-S3 firmware** (laptop: `Documents/Google/MCU/firmware/esp32s3_visr/`) — a microcontroller
   that already speaks the engine's data dialect end-to-end ("Seam B": it serves the same `/window`
   JSON the engine eats). Move it into the repo when 3A starts.
 - **PLC-SCADA-Custom** (github.com/GreaseMonkeyIT/PLC-SCADA-Custom) — a working Python stack that
   reads/writes real Allen-Bradley PLC tags over EtherNet/IP.
-- The `soak/` evidence recorder, the scenario console, and the ABB documentation set.
+- The `soak/` evidence recorder and the scenario console.
 
 **The dates (pinned 2026-07-02 from the public InnoVent pages):** Virtual PoC presentation =
 **October 2026**; final demo day = **January 2027**. So Stage 2 has roughly three months after
@@ -52,11 +52,11 @@ calendar at the Stage-2 kickoff.
   devices* (microcontroller, PLC) next to the pods — and, with a human's confirmation, *acting*
   on its verdict. That's detect → explain → recommend → **act**, on stage, on real hardware.
 
-**The one rule that outranks everything (carried from ABB, re-affirmed):** nothing is scripted
+**The one rule that outranks everything (re-affirmed):** nothing is scripted
 theater. A number on screen is either *really measured* or *clearly labeled as simulation driven
 by real measurements*. The engine's core (`run_pass`) stays a pure function with green fixtures;
 anything new plugs in through configuration and service wiring around it, never by editing the
-brain mid-demo. This rule is what beat "scripted sensor data" at ABB and it is our identity.
+brain mid-demo. This rule is our identity.
 
 ---
 
@@ -66,48 +66,46 @@ brain mid-demo. This rule is what beat "scripted sensor data" at ABB and it is o
 > demo factory becomes a **physical-resource contention plant** — devices contending for current,
 > voltage, coolant, air — because that's what a real floor contends for. The engine's soul is
 > unchanged (baseline → onset → lag correlation → witness gate → ranking → forecast → narration);
-> the *resources* change. **Workspace split:** `ABB_Accelerator_Codex` stays FROZEN (registration
-> build + the S-series regression bench); all pivot work happens in the **Tata InnoVent clone**
-> (`Tata InnoVent/ABB_Accelerator_Proto`). k3s hosts SCADA + engine layers (+ the plant emulator
-> as pods, purely for ops convenience); the old factory namespaces are torn down and their
-> 64Gi/5Gi disks reallocated (see `PIVOT_SETUP.md` in the clone — the ground-up runbook).
+> the *resources* change. **Workspace:** all work happens in this repo (one `Tata InnoVent`
+> folder). k3s hosts SCADA + engine layers (+ the plant emulator as pods, purely for ops
+> convenience). The 64Gi/5Gi slowdisk volumes host the historian and the plant artifacts (see
+> `PIVOT_SETUP.md`, the ground-up runbook).
 > Old S1-S5 = causal motifs reborn as the **PS-series** (LOG-028); the emulator's non-negotiable:
 > **physics, not scripts** — faults are injected into a dynamical model and causality *emerges*.
 
 ### Phase 2A — Truth pass: no confident wrong answers
-**Goal:** the engine either roots scenario S2 correctly, or S2 provably stays out of every demo.
+**Goal:** no confident wrong root. Memory never out-votes live evidence, and a strong newcomer can compete.
 
 **Why first:** everything in Stage 2 builds credibility, and one confidently-wrong verdict in a
-recorded PoC destroys more credibility than ten right ones earn. We know from ABB (LOG-099 in the
-old BUILD_LOG) that S2 (bulk archive I/O) currently produces a **confident wrong root** — the
-engine blames cooling-monitor because its old, remembered coupling ("held backbone") wins when
-timescaledb stalls, while the real writer (log-archiver, a batch job with no learned baseline) is
-invisible.
+recorded PoC destroys more credibility than ten right ones earn. The old kernel-plane S2 scenario
+(bulk archive I/O) produced a **confident wrong root**: the engine blamed cooling-monitor because
+its old, remembered coupling ("held backbone") won when timescaledb stalled. The real writer
+(log-archiver, a batch job with no learned baseline) stayed invisible. PS2 (compressor-1, a
+duty-cycled source with no matured baseline) tests the same young-baseline door on the plant.
 
 **Steps, in order:**
 1. **Backbone fix (the real bug):** a remembered edge must not *win root* unless its source pod is
    *currently* deviating. Plainly: memory may say "these two are usually coupled", but memory alone
    must never out-vote live evidence. This is a ranking/promotion rule change inside the engine —
-   allowed, but only the ABB way: write the failing test first (fixtures = the engine's frozen test
+   allowed, but only test-first: write the failing test first (fixtures = the engine's frozen test
    cases, and they must stay green), then change the rule, then log the decision.
 2. **Let a strong newcomer be a finding:** a pod with no matured baseline (like a batch job that
    just woke up) but a very strong onset should be allowed into the findings list, clearly marked
    as "young baseline". Today it's silently skipped, which is why the true culprit can't even
    compete.
-3. **Make the culprit visible physically:** switch the S2 stress from async writes (the writer
-   never waits, so it never looks stressed) to synchronous writes (`fio` psync engine) so
-   log-archiver visibly self-stalls while it floods the disk.
-4. **Re-verify the whole demo set on the box, fresh:** S0 still silent, S1 still roots
-   cooling-monitor, S5 forecast still fires, and S2 now roots log-archiver. Run the `soak/`
+3. **Make the culprit visible physically:** DONE for the kernel-plane archiver (psync writes,
+   LOG-052). LOG-057 removed that bench from the repo, so the plant scenarios carry the proof.
+4. **Re-verify the whole demo set on the box, fresh:** PS0 still silent, PS1 still roots
+   press-1, the PS5 forecast card still fires, and PS2 roots compressor-1. Run the `soak/`
    recorder for a multi-hour pass as evidence.
 
-**Done when:** a from-scratch box run shows S0/S1/S5 unchanged AND S2 rooting log-archiver — or,
-if step 1-3 don't get us there in two honest attempts, we **log the decision** to keep S2 out of
-demos permanently and move on. No third attempt; Stage 2 has bigger fish.
+**Done when:** a from-scratch box run shows PS0/PS1/PS5 unchanged AND PS2 rooting compressor-1.
+If two honest attempts do not get there, we **log the decision** to keep PS2 out of the recording
+and move on. No third attempt. Stage 2 has bigger fish.
 
-**Risks / honesty notes:** touching ranking risks the scenarios that already work — that's why
-re-verification of S0/S1/S5 is *inside* the done-condition, not optional. The disk is a spinning
-HDD; S2's physics were never the problem, attribution was.
+**Risks / honesty notes:** touching ranking risks the scenarios that already work. That is why
+re-verification of PS0/PS1/PS5 is *inside* the done-condition, not optional. The physics was
+never the problem. Attribution was.
 
 ---
 
@@ -121,10 +119,10 @@ An electrical bus has source impedance, so aggregate draw genuinely sags the rai
 it; the coolant loop has a pump curve and thermal time constants, so one machine's heat spike
 raises its neighbors' temperatures *with real lags*. Faults perturb the model (bearing friction
 rises → that motor draws more current → rail sags → sensitive devices degrade); nothing writes a
-symptom directly. Scripted traces would make us the thing we beat at ABB.
+symptom directly. Scripted traces would make us the thing we set out to beat.
 
 **Steps:**
-1. `plant/` in the clone: ONE small Python service — physics core (rails + coolant loop, ~1s
+1. `plant/` in the repo: ONE small Python service — physics core (rails + coolant loop, ~1s
    timestep) + ~8 device agents (duty cycles, fault hooks) + a `/metrics` page labeling every
    series `namespace="plant", pod="<asset>"` so the existing L1/L2 ingests it unchanged, +
    `POST /fault/<PS-id>` and `/reset` as the new scenario console. **Scaffold shipped 2026-07-02.**
@@ -168,7 +166,7 @@ witness = the declared rail domain — and the PS-series demos attribute correct
    NO edge (the regression test); declared-rail pair with temporal order → edge.
 
 **Done when:** PS1 on the box yields root = press-1 with rail-domain evidence chips; PS0 soak
-silent; psi-family fixtures still green (the S-series bench is the control group).
+silent; psi-family fixtures still green (the fixtures are the control group).
 
 **Risks / honesty notes:** this is the pivot's engine-adjacent step — config + service-layer
 witness code, `run_pass` untouched. Rollback = remove the families from env. The clock-budget
@@ -179,6 +177,8 @@ from sub-second timestamps.
 ---
 
 ### Phase 2C — Domain correlation: the causal graph speaks factory
+> **SUPERSEDED by 2C′ (LOG-054).** Kept for history. LOG-057 removed the kernel-plane scenarios it names.
+
 **Goal:** the engine itself correlates a domain symptom — the verdict card can say "cooling-monitor's
 write storm is why *database queries* are 8× slower", with the domain signal as evidence.
 
@@ -220,8 +220,7 @@ top" instead.
    restart trap), so a from-scratch bring-up is clean for rehearsals.
 4. Write the PoC script and record: **PS0 calm plant → fire PS1 → rail sags, machines degrade →
    verdict + narration + blast radius (witness: rail domain) → PS5 forecast card → reset → calm.**
-   The S-series (frozen Codex build) stays the banked fallback if the plant slips. Soak report
-   attached as the evidence appendix.
+   Soak report attached as the evidence appendix.
 
 **Done when:** the video exists, a teammate who didn't build it can re-run the demo from the
 script alone, and the box can do it twice in a row without hand-holding.
@@ -412,7 +411,7 @@ move on — no sunk-cost building.
 live.
 
 **Risks / honesty notes:** prefer runtime-measured tags (scan time, error counters) over
-application heartbeats — same spirit as the ABB rule about never trusting an app's self-report.
+application heartbeats, in the same spirit as the rule about never trusting an app's self-report.
 
 ---
 
@@ -420,8 +419,8 @@ application heartbeats — same spirit as the ABB rule about never trusting an a
 **Goal:** the engine draws a causal edge between two *devices* — "this one is the source, that one
 is the victim" — using a declared wiring plan as the physical-plausibility witness.
 
-**Why:** correlation alone never forms an edge in our engine (that's the false-positive gate that
-won us class at ABB). Pods prove coupling via shared disks and network taps; devices prove it via
+**Why:** correlation alone never forms an edge in our engine (that is the false-positive gate
+at its core). Pods prove coupling via shared disks and network taps; devices prove it via
 **the wiring plan** — exactly the "new type of input" Kishan named in the team chat.
 
 **Steps:**
@@ -455,11 +454,11 @@ ourselves now rather than discover it on stage.
 **Goal:** the Recommendations panel grows an **Execute** button: the operator confirms, the system
 performs ONE bounded action, the pressure visibly drops, and the action is recorded in a ledger.
 
-**The safety frame (non-negotiable, from BOOK §6.5 / PLAN §6):** a closed vocabulary of verbs (the
+**The safety frame (non-negotiable, `INNOVENT_PLAN.md` §4):** a closed vocabulary of verbs (the
 system cannot invent actions) · every action **cites** the causal evidence it acts on ("cite-or-die")
 · human-confirm on everything · advisory layer only, never the safety-critical control loop.
-This is the deliberate, documented evolution of the ABB read-only boundary — we're allowed to act
-*because* we act on a known cause, with a person in the loop.
+This is the deliberate, documented evolution of the engine's original read-only boundary. We are
+allowed to act *because* we act on a known cause, with a person in the loop.
 
 **Steps:**
 1. **Verb 1 — `throttle` (software, fully real):** API endpoint `POST /api/actions/throttle`
@@ -468,11 +467,11 @@ This is the deliberate, documented evolution of the ABB read-only boundary — w
    ceiling**, so for an I/O storm the CPU quota relieves the victim only *indirectly* (a starved
    writer issues fewer writes) — **bench-verify the relief is visible before demo day.** If it
    is too subtle, the honest fallback verb is `pause` (scale the aggressor to zero replicas) —
-   cruder, still bounded, still reversible, and unmistakable on the graph. Demo: S1 fire →
-   verdict → Execute → victim's stalls visibly recede → reset restores.
+   cruder, still bounded, still reversible, and unmistakable on the graph. Demo: fire a source
+   storm → verdict → Execute → the victim's stalls visibly recede → reset restores.
 2. **Action ledger:** every executed action appends a record — what verdict, what evidence cited,
    what happened to the pressure in the next 60s. Shown as a small "actions taken" list. (This is
-   the seed of the rehearsal-ledger idea from the ABB roadmap — start it simple.)
+   the seed of the rehearsal-ledger idea. Start it simple.)
 3. **Verb 2 — `derate` (hardware, testbed only):** for the ESP32 rig: a confirm-gated command that
    tells the leaking/loading device to slow its work task (firmware already has task knobs). If 3B
    hardware exists and the bench allows: the PLC write path (our stack can write tags) may demote
@@ -499,7 +498,7 @@ by design it starts supervised."
    pump", domain symptoms, actions taken. No model retraining; it's a prompt/template pass.
 2. **The table:** desktop (cluster) + big screen (VISR) + ESP32 rig (+ PLC if 3B lives) + one
    printed one-pager of the architecture. Power and network survive without venue Wi-Fi.
-3. **The script:** calm → software fault (S1, domain symptoms) → verdict → Execute → relief →
+3. **The script:** calm → plant fault (PS1, domain symptoms) → verdict → Execute → relief →
    hardware leak → forecast card → (stretch: device chain) → close on the roadmap slide (hardware
    fault taxonomy, fleet scale — talked, not faked).
 4. **Fallbacks:** every live beat has a recorded twin from rehearsal; the demo laptop carries the
@@ -515,8 +514,8 @@ by design it starts supervised."
 
 | Order | Phase | Rough size | Hard dependency | Can drop? |
 |---|---|---|---|---|
-| 1 | 2A truth pass | 1-2 weekends | — | S2-fix yes (gate), backbone fix no |
-| 2 | 2B′ plant emulator + teardown/reallocation | 1-2 weekends | PIVOT_SETUP runbook | core of Stage 2 — no |
+| 1 | 2A truth pass | 1-2 weekends | — | PS2 verify yes (gate), backbone fix no |
+| 2 | 2B′ plant emulator + volume layout | 1-2 weekends | PIVOT_SETUP runbook | core of Stage 2: no |
 | 3 | 2C′ plant families + domain witnesses + PS-series console | 1 weekend + soak | 2B′ | edges gated; findings-only mode is the fallback |
 | 4 | 2F virtual PLC + SCADA (3B pulled forward, virtual) | 1-2 weekends | 2B′; OpenPLC image proves on the box | yes → falls back to sim-direct scrape |
 | 5 | 2G 3D plant floor (FLOOR/GRAPH toggle) | 2-3 days | 2C′ (edges exist) + layout data | yes (display depth, not the spine) |
@@ -542,14 +541,13 @@ detect→explain→recommend→act story, which is the pitch; the chain is depth
 2. **The brain stays pure.** `run_pass` remains a pure function; fixtures stay green; new inputs
    arrive via config and service wiring. Any exception is a logged decision with a test first.
 3. **Gates never loosen for demos.** If a demo needs a looser causal gate, the demo is wrong.
-4. **Two honest attempts, then decide.** Risky items (S2 fix, 2C, 3C) get two real tries; then we
+4. **Two honest attempts, then decide.** Risky items (2A PS2 verify, 2C, 3C) get two real tries; then we
    log the outcome and re-scope. No sunk-cost spirals — Kishan's one-USP discipline applies to
    engineering time too.
 5. **Every phase ends box-verified** — on the real desktop cluster, from the runbook, not on a
    laptop preview — and gets a LOG entry.
 6. **Claims match the build.** Roadmap items (fault taxonomy, fleet scale, autonomy) are *spoken*
-   as roadmap, never demoed as if built. It worked at ABB; it's cheaper than faking and always
-   will be.
+   as roadmap, never demoed as if built. It is cheaper than faking and always will be.
 
 ## 6. Known unknowns (pin these ASAP)
 
@@ -645,7 +643,7 @@ as the actual goals:
 
 ## 9. The device ladder (§8's rung-by-rung proof; only 3A/3B are scheduled work)
 
-- **D0 — Kubernetes pods.** Done since ABB. The reference rung: full signals, full causality.
+- **D0 — Kubernetes pods.** Done. The reference rung: full signals, full causality.
 - **D1 — Microcontroller (ESP32-S3).** Phase 3A. RTOS-equivalent signals, honestly labeled.
 - **D2 — Raspberry Pi (PARKED — planned, deliberately not scheduled).** The interesting rung,
   because a Pi runs real Linux: **it has a real kernel with real PSI** — no synthesis needed,

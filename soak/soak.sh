@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# SiliconKnights — soak / stress-test recorder.
+# SiliconKnights: soak / stress-test recorder for the VISR plant.
 #
-# Runs the REAL fault scenarios (S1, S2, S3, S5) back-to-back for a set duration, sampling the live
-# causal verdict onto the SSD every few seconds, then builds a self-contained HTML report you open
-# by double-click (think `powercfg /batteryreport`, but for the causal engine).
+# Cycles the PS-series plant faults (PS1, PS2, PS5) for a set duration. It samples the live causal
+# verdict every few seconds, then builds a self-contained HTML report that opens by double-click.
 #
-# Nothing is faked: faults fire through the canonical scenarios/<id>/trigger.sh scripts (real fio
-# storms, real CPU bursts, the real OOM-killer). The recorder just watches /api/graph and writes
-# down what the engine decided. S2/S3 will show their known limits as-is — that's the honest point.
+# Nothing is faked: each fault fires through the API console route (POST /api/scenarios/<id>/trigger),
+# which perturbs the physics model in the plant sim. The recorder only watches /api/graph and writes
+# down what the engine decided, so a mis-root shows as-is.
 #
-# Run on the BOX (where kubectl talks to the cluster). Requires: bash, kubectl, python3.
+# Run on the BOX (where kubectl talks to the cluster). Requires: bash, kubectl, curl, python3.
 #
-#   bash soak/soak.sh                 # 3h default, scenarios S1 S2 S3 S5
+#   bash soak/soak.sh                 # 3h default, scenarios PS1 PS2 PS5
 #   DURATION_H=1 bash soak/soak.sh    # shorter
 #   API_BASE=http://localhost:8088 bash soak/soak.sh    # use curl instead of the kubectl proxy
+#   API_BASE=http://localhost:8088 VISR_OPERATOR_TOKEN=<token> bash soak/soak.sh   # 2E auth enforced
 #
-# Stop early with Ctrl-C — the report is still built from whatever was captured.
+# Stop early with Ctrl-C. The report is still built from whatever was captured.
 set -uo pipefail
 
 # ---- config (all env-overridable) --------------------------------------------------------------
 DURATION_H=${DURATION_H:-3}                 # total run length (hours)
-SCENARIOS=${SCENARIOS:-"S1 S2 S3 S5"}       # cycle order
+SCENARIOS=${SCENARIOS:-"PS1 PS2 PS5"}       # cycle order
 SAMPLE_S=${SAMPLE_S:-12}                     # seconds between verdict samples
 BASELINE_S=${BASELINE_S:-60}                 # quiet watch BEFORE each fire (confirm steady)
 OBSERVE_S=${OBSERVE_S:-180}                  # watch window WHILE a scenario is firing
@@ -30,9 +30,9 @@ AIOPS_NS=${AIOPS_NS:-aiops}
 API_SVC=${API_SVC:-api}
 API_PORT=${API_PORT:-8088}
 API_BASE=${API_BASE:-}                       # set (e.g. http://localhost:8088) → use curl; else kubectl proxy
+OPERATOR_TOKEN=${VISR_OPERATOR_TOKEN:-}      # 2E operator token; only the curl path can send it
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUT_ROOT=${OUT_ROOT:-"$SCRIPT_DIR/runs"}     # on the SSD (the repo working copy). Override to relocate.
 RUN_ID="soak-$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="$OUT_ROOT/$RUN_ID"
@@ -52,23 +52,23 @@ api_get(){
   fi
 }
 
-fire(){   # $1 = scenario id → use the canonical trigger script
-  if [ -x "$REPO_DIR/scenarios/$1/trigger.sh" ] || [ -f "$REPO_DIR/scenarios/$1/trigger.sh" ]; then
-    bash "$REPO_DIR/scenarios/$1/trigger.sh" >>"$LOG" 2>&1 || log "WARN: $1 trigger returned nonzero"
+# POST an API route (no body) → stdout. Returns nonzero on failure so the caller can log it.
+api_post(){
+  if [ -n "$API_BASE" ]; then
+    local hdr=(-H "X-Remote-User: soak")
+    [ -n "$OPERATOR_TOKEN" ] && hdr+=(-H "X-Auth-Token: $OPERATOR_TOKEN")
+    curl -fsS --max-time 12 -X POST "${hdr[@]}" "$API_BASE$1" 2>>"$LOG"
   else
-    log "WARN: no trigger.sh for $1 — skipping fire"
+    kubectl create --raw "/api/v1/namespaces/$AIOPS_NS/services/$API_SVC:$API_PORT/proxy$1" -f /dev/null 2>>"$LOG"
   fi
 }
 
-clear_fault(){   # mirror scenarios/<id>/reset.sh, but inline so it never blocks the sampling cadence
-  case "$1" in
-    S1) local p; p=$(kubectl get pod -n factory-data -l app=cooling-monitor -o name 2>/dev/null | head -1)
-        [ -n "$p" ] && kubectl exec -n factory-data "$p" -- rm -f /shared/cooling/FLUSH >>"$LOG" 2>&1 || true ;;
-    S2) kubectl delete job log-archiver-s2 -n factory-data --ignore-not-found >>"$LOG" 2>&1 || true ;;
-    S3) kubectl get jobs -n factory-data -o name 2>/dev/null | grep '/s3-run-' \
-          | xargs -r kubectl delete -n factory-data >>"$LOG" 2>&1 || true ;;
-    S5) kubectl set env deploy/vision-qc -n factory-edge LEAK_ENABLED=false >>"$LOG" 2>&1 || true ;;
-  esac
+fire(){   # $1 = scenario id → the same console route the dashboard Fire button uses
+  api_post "/api/scenarios/$1/trigger" >>"$LOG" || log "WARN: $1 trigger failed (see log)"
+}
+
+clear_fault(){   # the sim's /reset clears every active plant fault; a short call, so the cadence holds
+  api_post "/api/scenarios/$1/reset" >>"$LOG" || log "WARN: $1 reset failed (see log)"
 }
 
 # sample for $1 seconds, tagging each row phase=$2 cycle=$3
@@ -107,7 +107,13 @@ if [ -z "$(api_get /api/health)" ]; then
   log "       and re-run with API_BASE=http://localhost:8088, or check the kubectl proxy path."
   exit 1
 fi
-log "API reachable. (Tip: make sure S0 is silent — engine warmed — before relying on the first cycle.)"
+AUTH=$(api_get /api/audit | python3 -c 'import json,sys; print(json.load(sys.stdin).get("auth",""))' 2>/dev/null || true)
+if [ "$AUTH" = "enforced" ] && { [ -z "$API_BASE" ] || [ -z "$OPERATOR_TOKEN" ]; }; then
+  log "ERROR: API auth is enforced (2E). Fire/reset needs the operator token, and only curl can send it."
+  log "       Re-run with API_BASE=http://localhost:8088 (port-forward) and VISR_OPERATOR_TOKEN set."
+  exit 1
+fi
+log "API reachable (auth: ${AUTH:-unknown}). PS0 must be silent (engine warm, LOG-035 soak) before you trust cycle 1."
 
 # ---- main loop ---------------------------------------------------------------------------------
 START=$(date +%s); END=$(( START + DURATION_S )); cycle=0
