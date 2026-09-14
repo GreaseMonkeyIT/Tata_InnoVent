@@ -67,6 +67,42 @@ const MOCK = {
     },
     active_faults: ["PS1"],
   },
+  // 2F.2 tag browser — built programmatically so the mock stays in lockstep with the shape
+  // /api/tags serves (scada/tags.py tag_table + live values).
+  "/api/tags": (() => {
+    const A = { "press-1": ["psu-a", 79.6, 66.1, 99.2], "press-2": ["psu-a", 37.8, 55.9, 98.7],
+      "cnc-1": ["psu-a", 28.7, 50.6, 84.4], "qa-scanner-1": ["psu-a", 7.2, null, 85.8],
+      "conveyor-1": ["psu-b", 18.2, null, 100], "compressor-1": ["psu-b", 6.7, null, 100],
+      "furnace-1": ["psu-b", 30.4, 65.3, 100], "chiller-1": ["psu-b", 22.0, null, 100] };
+    const HK = { "press-1": 0.55, "press-2": 0.55, "cnc-1": 0.55, "furnace-1": 1.0 };
+    const RV = { "psu-a": 346.3, "psu-b": 372.8 };
+    const T = (a, s) => `PLANT.${a.toUpperCase().replace(/-/g, "_")}.${s}`;
+    const rows = [];
+    const add = (asset, signal, unit, kind, address, value, i) =>
+      rows.push({ tag: T(asset, signal), asset, signal, unit, kind, address, value,
+                  quality: value == null ? "BAD" : (i % 9 === 7 ? "STALE" : "GOOD"), ts: 1752741600 });
+    let i = 0; const cooled = Object.keys(HK);
+    cooled.forEach((m, k) => add(m, "TEMP", "degC", "measured", `%MW${k}`, A[m][2], i++));
+    add("cool-1", "FLOW", "L/min", "measured", "%MW4", 118.2, i++);
+    add("cool-1", "PUMP_HEALTH", "ratio", "measured", "%MW5", 1.0, i++);
+    Object.keys(RV).forEach((r, k) => add(r, "VOLTS", "V", "measured", `%MW${6 + k}`, RV[r], i++));
+    Object.keys(A).forEach((m, k) => add(m, "AMPS", "A", "measured", `%MW${8 + k}`, A[m][1], i++));
+    Object.keys(A).forEach((m, k) => add(m, "THROUGHPUT", "pct", "measured", `%MW${24 + k}`, A[m][3], i++));
+    cooled.forEach((m, k) => add(m, "TRIP", "bool", "measured", `%QX0.${k}`, 0, i++));
+    Object.keys(A).forEach((m) => add(m, "VOLTS", "V", "derived", `= ${T(A[m][0], "VOLTS")}`, RV[A[m][0]], i++));
+    cooled.forEach((m) => add(m, "HEAT", "W", "derived", `= ${HK[m]} * ${T(m, "AMPS")}`, HK[m] * A[m][1], i++));
+    add("cool-1", "TRIP_LIMIT", "degC", "derived", "= const 78.0", 78.0, i++);
+    return { source: "scada", plc_connected: true,
+             historian: { connected: true, rows_total: 128740, rows_per_s: 41.0 }, tags: rows };
+  })(),
+  "/api/audit": {
+    chain_ok: true, count: 3, auth: "enforced",
+    entries: [
+      { ts: 1752741000.1, actor: "operator", verb: "trigger", target: "PS1", status: "fired", evidence: { root: "press-1", score: 1.0, evidence: ["write", "rail", "temporal"] } },
+      { ts: 1752741300.4, actor: "viewer", verb: "trigger", target: "PS5", status: "denied", evidence: {} },
+      { ts: 1752741420.9, actor: "operator", verb: "reset", target: "PS1", status: "reset", evidence: {} },
+    ],
+  },
   "/api/recommendations": {
     source: "prometheus",
     right_sizing: [
@@ -115,6 +151,8 @@ export default function Page() {
   const [podres, setPodres] = useState(null);
   const [plant, setPlant] = useState(null);
   const [recs, setRecs] = useState(null);
+  const [auditLog, setAudit] = useState(null);
+  const [scada, setScada] = useState(null);   // 2F.2 tag browser (/api/tags)
   const [pending, setPending] = useState({});   // sid -> in-flight trigger/reset (button busy state)
   const [fired, setFired] = useState(null);
   const [plane, setPlane] = useState("floor");   // Causal Monitor view: plant floor | edge stack
@@ -126,7 +164,7 @@ export default function Page() {
 
   async function refresh() {
     try {
-      const [g, n, h, t, p, pr, pl] = await Promise.all([
+      const [g, n, h, t, p, pr, pl, tg] = await Promise.all([
         getJSON("/api/graph"),
         getJSON("/api/narrative"),
         getJSON("/api/health"),
@@ -134,9 +172,11 @@ export default function Page() {
         getJSON("/api/pods").catch(() => null),
         getJSON("/api/pod-resources").catch(() => null),
         getJSON("/api/plant").catch(() => null),
+        getJSON("/api/tags").catch(() => null),
       ]);
       setGraph(g); setNarr(n); setHealth(h);
       if (t) setTopo(t); if (p) setPods(p); if (pr) setPodres(pr); if (pl) setPlant(pl);
+      if (tg) setScada(tg);
       setUpdated(new Date());
     } catch (e) { /* keep last good values */ }
   }
@@ -149,6 +189,15 @@ export default function Page() {
 
   useEffect(() => {
     const load = () => getJSON("/api/recommendations").then(setRecs).catch(() => {});
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // 2E audit trail — slow poll like recommendations; every fire/reset (and denied attempt)
+  // lands here from the API's hash-chained ledger.
+  useEffect(() => {
+    const load = () => getJSON("/api/audit").then(setAudit).catch(() => {});
     load();
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
@@ -321,7 +370,7 @@ export default function Page() {
         {/* ── Machines (plane 2 — the plant floor is the PRIMARY subject; pods below just host it) ── */}
         <section className="viz">
           <Head title="Machines" meta={`${Object.keys(plant?.devices || {}).length || "—"} assets · simulated plant`} />
-          <Machines plant={plant} host={host} />
+          <Machines plant={plant} host={host} scada={scada} />
         </section>
 
         {/* ── Pods (secondary — the hosting plane: these workloads run the AIOps engine + SCADA) ── */}
@@ -407,6 +456,30 @@ export default function Page() {
               <span className="val">{fairness.toFixed(2)}</span>
             </div>
           )}
+        </section>
+
+        {/* ── Audit (2E) — the tamper-evident action ledger: who fired/reset what, citing which verdict ── */}
+        <section className="viz">
+          <Head title="Audit" meta={
+            auditLog ? (
+              <><span className="dot" style={{ background: auditLog.chain_ok ? "var(--green)" : "var(--red)" }} />
+                {auditLog.chain_ok ? "chain intact" : "CHAIN BROKEN"} · {auditLog.count ?? 0} entries · auth {auditLog.auth || "?"}</>
+            ) : "hash-chained ledger"
+          } />
+          {auditLog?.entries?.length ? (
+            <div className="aud">
+              {[...auditLog.entries].reverse().slice(0, 12).map((e, i) => (
+                <div key={e.hash || i} className={`aud-row${e.status === "denied" ? " denied" : ""}`}>
+                  <span className="t">{new Date(e.ts * 1000).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}</span>
+                  <span className="who">{e.actor}</span>
+                  <span className={`verb ${e.verb}`}>{e.verb}</span>
+                  <span className="tgt">{e.target}</span>
+                  <span className="st">{e.status}</span>
+                  <span className="ev">{e.evidence?.root ? `root ${e.evidence.root} · ${(e.evidence.evidence || []).join("+")}` : ""}</span>
+                </div>
+              ))}
+            </div>
+          ) : <div style={{ color: "var(--text-faint)" }}>no state-changing actions recorded yet</div>}
         </section>
       </main>
 

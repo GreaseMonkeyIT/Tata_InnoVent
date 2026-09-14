@@ -1,0 +1,46 @@
+# 2F.2 SCADA tag server — ns plant, beside the sim/PLC/historian it joins.
+# NOTE: NO ServiceMonitor here on purpose. Scraping both the sim and the tag server would
+# double every plant_* series (same namespace/pod labels, two jobs) and corrupt the engine's
+# vectors. The cutover — apply scada/cutover-servicemonitor.yaml, delete the plant-sim
+# ServiceMonitor — happens on the box AFTER the tag server proves stable (LOG-033 decision:
+# single-path telemetry; the sim's /metrics stays as an unscraped debug tap).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tag-server
+  namespace: plant
+  labels: { app: tag-server }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: tag-server } }
+  template:
+    metadata:
+      labels: { app: tag-server }
+    spec:
+      containers:
+      - name: tag-server
+        image: skn/tag-server:v0.1
+        imagePullPolicy: IfNotPresent
+        env:
+          - { name: PLC_HOST, value: "openplc.plant.svc" }
+          - { name: PLC_PORT, value: "502" }
+          # must match the sim's PLC_MW_BASE (REGISTER_MAP.md: verify once on the box)
+          - { name: PLC_MW_BASE, value: "1024" }
+          - { name: HISTORIAN_DSN, value: "host=historian-db.plant.svc dbname=postgres user=postgres password=plant-historian" }
+          - { name: TZ, value: "Asia/Kolkata" }
+        ports: [{ containerPort: 9300, name: metrics }]
+        resources:
+          requests: { cpu: 50m,  memory: 64Mi }
+          limits:   { cpu: 200m, memory: 128Mi }
+        readinessProbe: { httpGet: { path: /healthz, port: 9300 } }
+        livenessProbe:  { httpGet: { path: /healthz, port: 9300 } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tag-server
+  namespace: plant
+  labels: { app: tag-server }
+spec:
+  selector: { app: tag-server }
+  ports: [{ name: metrics, port: 9300, targetPort: 9300 }]

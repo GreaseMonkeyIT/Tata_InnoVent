@@ -35,7 +35,13 @@ def merge_graphs(per_signal: dict[str, dict], primary: str | None = None) -> dic
     ranking: list[dict] = []
     blast: list[dict] = []
     if edges and findings:
-        g = build_graph(edges)
+        # 2A backbone fix (mirrors state._render): a memory-held edge renders but only VOTES
+        # for root when its source is itself a current finding -- memory alone must never
+        # out-vote live evidence.
+        finding_pods = {f["pod"] for f in findings}
+        rank_edges = [e for e in edges
+                      if e.get("source") != "memory" or e["src"] in finding_pods]
+        g = build_graph(rank_edges)
         # Seed ONLY with findings that actually sit on the causal graph. A finding on one signal
         # (e.g. a CPU burst with no CPU edge yet) must not seed ranking over another signal's
         # steady-backbone edges -- rank_root_causes falls back to all nodes on an empty seed set,

@@ -17,14 +17,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+
+import security
 
 ENGINE = os.environ.get("ENGINE_URL", "http://correlation-engine.aiops.svc:9100").rstrip("/")
 AGG = os.environ.get("AGGREGATOR_URL", "http://aggregator.aiops.svc:9000").rstrip("/")
 PROM = os.environ.get("PROM_URL", "http://prom-kube-prometheus-stack-prometheus.observability.svc.cluster.local.:9090").rstrip("/")  # Caretta topology source (eBPF L4 service map)
 COOLING = os.environ.get("COOLING_URL", "http://cooling-monitor.factory-data.svc:8080").rstrip("/")
 PLANT = os.environ.get("PLANT_URL", "http://plant-sim.plant.svc:9200").rstrip("/")  # plane-2 physics sim (pivot, LOG-029)
+SCADA = os.environ.get("SCADA_URL", "http://tag-server.plant.svc:9300").rstrip("/")  # 2F.2 tag server (PLC-read tag DB + historian)
 SIGNAL = os.environ.get("ENGINE_SIGNAL", "psi_io")             # primary/default resource class
 SIGNALS = [s.strip() for s in os.environ.get("ENGINE_SIGNALS", "psi_io,psi_cpu,psi_mem").split(",") if s.strip()]
 SIGNAL_RESOURCE = {"psi_io": "disk I/O", "psi_cpu": "CPU", "psi_mem": "memory",
@@ -37,6 +40,12 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e4b-it-qat")  # default ma
 RECLAIM_FRAC = float(os.environ.get("RECLAIM_FRAC", "0.5"))   # p95 < this * request -> over-provisioned -> reclaim
 RESIZE_FRAC = float(os.environ.get("RESIZE_FRAC", "0.85"))    # p95 > this * limit  -> at-risk -> resize up
 HEADROOM = 1.3                                                # reclaim target = p95 * headroom
+# 2E secure pass: state-changing endpoints require the operator token when it is set (unset =
+# pre-2E open behavior, reported honestly by /api/health). nginx injects X-Auth-Token for the
+# basic-auth `operator` user and X-Remote-User for attribution; a direct caller supplies the
+# token itself. Every action AND denied attempt lands in the hash-chained audit ledger.
+OPERATOR_TOKEN = os.environ.get("VISR_OPERATOR_TOKEN", "")
+AUDIT = security.AuditLedger(os.environ.get("AUDIT_PATH", "/data/audit.jsonl"))
 
 app = FastAPI(
     title="SiliconKnights Edge Causal AIOps API",
@@ -346,6 +355,8 @@ def health():
         except Exception:
             out["services"][name] = "down"
     out["ok"] = all(v == "up" for v in out["services"].values())
+    # 2E honesty: say whether the action gate is live, so an open deployment can't pass as secured
+    out["auth"] = "enforced" if OPERATOR_TOKEN else "disabled"
     return out
 
 
@@ -594,44 +605,109 @@ def plant_state():
     return s
 
 
+@app.get("/api/tags", tags=["telemetry"])
+def scada_tags():
+    """The SCADA tag browser (2F.2): every plant tag with ISA-style name, PLC address, unit,
+    live value, GOOD/STALE/BAD quality, plus PLC/historian health and the historian ingest rate.
+    Values here traveled physics -> OpenPLC registers -> Modbus -> tag server — the industrial
+    data path, not a shortcut through the sim."""
+    try:
+        return _get(SCADA + "/tags", timeout=4)
+    except Exception:
+        return {"source": "unavailable", "tags": []}
+
+
 @app.get("/api/scenarios", tags=["scenarios"])
 def scenarios():
     """Catalogue of fault scenarios and whether each can be fired through this API."""
     return SCENARIOS
 
 
+def _actor(request: Request) -> str:
+    """Attribution: nginx sets X-Remote-User to the basic-auth username; else anonymous."""
+    return request.headers.get("x-remote-user", "") or "anonymous"
+
+
+def _require_operator(request: Request, verb: str, target: str) -> str:
+    """The 2E action gate: state changes need the operator token (when configured). A denied
+    attempt is itself an audit event — the ledger records who knocked, not just who entered."""
+    token = request.headers.get("x-auth-token", "")
+    if not token:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth[7:]
+    actor = _actor(request)
+    if not security.token_ok(token, OPERATOR_TOKEN):
+        AUDIT.append(actor, verb, target, "denied")
+        raise HTTPException(401, "operator token required for state-changing actions")
+    return actor
+
+
+def _evidence_snapshot() -> dict:
+    """Best-effort verdict context at action time (what the operator saw when they acted)."""
+    try:
+        g = _get(ENGINE + "/graph", timeout=3)
+        root = (g.get("root_cause_ranking") or [{}])[0]
+        edge = next((e for e in g.get("edges", []) if e.get("src") == root.get("pod")), {})
+        return {"root": root.get("pod"), "score": root.get("score"),
+                "evidence": edge.get("evidence", [])}
+    except Exception:
+        return {}
+
+
+@app.get("/api/audit", tags=["security"])
+def audit(limit: int = 100):
+    """The tamper-evident action ledger: who fired/reset what, when, citing which verdict.
+    chain_ok re-derives every hash on read — a false value means the file was edited."""
+    ok, n = AUDIT.verify()
+    return {"entries": AUDIT.entries(limit), "chain_ok": ok, "count": n,
+            "auth": "enforced" if OPERATOR_TOKEN else "disabled"}
+
+
 @app.post("/api/scenarios/{sid}/trigger", tags=["scenarios"])
-def trigger(sid: str):
+def trigger(sid: str, request: Request):
     """Fire a scenario from the console. S1 arms cooling-monitor's fio over HTTP; S2 clones the
-    archiver CronJob into a Job; S5 flips vision-qc's leak flag (both via a bounded ServiceAccount)."""
+    archiver CronJob into a Job; S5 flips vision-qc's leak flag (both via a bounded ServiceAccount).
+    2E: requires the operator token when configured; the action is audit-logged either way."""
     sid = sid.upper()
+    actor = _require_operator(request, "trigger", sid)
     try:
         if sid in ("PS1", "PS2", "PS5"):
             _post(PLANT + "/fault/" + sid)
+            AUDIT.append(actor, "trigger", sid, "fired", _evidence_snapshot())
             return {"scenario": sid, "status": "fired", "plane": "plant"}
         if sid == "S1":
             _post(COOLING + "/flush")
+            AUDIT.append(actor, "trigger", "S1", "armed", _evidence_snapshot())
             return {"scenario": "S1", "status": "armed"}
         if sid == "S2":
-            return _trigger_s2()
+            out = _trigger_s2()
+            AUDIT.append(actor, "trigger", "S2", out.get("status", "fired"), _evidence_snapshot())
+            return out
         if sid == "S5":
             _leak("true")
+            AUDIT.append(actor, "trigger", "S5", "fired", _evidence_snapshot())
             return {"scenario": "S5", "status": "fired"}
     except urllib.error.HTTPError as e:
+        AUDIT.append(actor, "trigger", sid, f"error {e.code}")
         raise HTTPException(e.code, f"k8s: {e.read().decode()[:200]}")
     except Exception as e:
+        AUDIT.append(actor, "trigger", sid, "error")
         raise HTTPException(503, f"{sid} trigger failed: {e}")
     raise HTTPException(501, f"{sid} is not triggerable via the API")
 
 
 @app.post("/api/scenarios/{sid}/reset", tags=["scenarios"])
-def reset_scenario(sid: str):
-    """Reset a scenario: S2 deletes the Job, S5 clears the leak flag; S1 self-clears via the gate."""
+def reset_scenario(sid: str, request: Request):
+    """Reset a scenario: S2 deletes the Job, S5 clears the leak flag; S1 self-clears via the gate.
+    2E: operator-gated + audit-logged, same as trigger."""
     sid = sid.upper()
+    actor = _require_operator(request, "reset", sid)
     try:
         if sid in ("PS1", "PS2", "PS5"):
             # the sim's /reset clears ALL active plant faults (one live fault at a time, demo-wise)
             _post(PLANT + "/reset")
+            AUDIT.append(actor, "reset", sid, "reset")
             return {"scenario": sid, "status": "reset", "plane": "plant"}
         if sid == "S2":
             try:
@@ -639,13 +715,16 @@ def reset_scenario(sid: str):
             except urllib.error.HTTPError as e:
                 if e.code != 404:
                     raise
+            AUDIT.append(actor, "reset", "S2", "reset")
             return {"scenario": "S2", "status": "reset"}
         if sid == "S5":
             _leak("false")
+            AUDIT.append(actor, "reset", "S5", "reset")
             return {"scenario": "S5", "status": "reset"}
         if sid == "S1":
             return {"scenario": "S1", "status": "self-clears via recency gate"}
     except urllib.error.HTTPError as e:
+        AUDIT.append(actor, "reset", sid, f"error {e.code}")
         raise HTTPException(e.code, f"k8s: {e.read().decode()[:200]}")
     raise HTTPException(501, f"{sid} reset not wired")
 

@@ -71,6 +71,42 @@ def test_merge_idle_backbone_has_no_root():
     assert out["blast_radius"] == []
 
 
+def test_merge_memory_edge_with_quiet_source_cannot_win_root():
+    """2A backbone fix (S2 motif): a remembered edge may RENDER, but memory alone must not
+    out-vote live evidence — when its source is not currently deviating, it does not vote
+    for root. Victim deviates, remembered aggressor is quiet -> no confident wrong root."""
+    io = {
+        "findings": [{"pod": "timescaledb", "class": "shift", "onset_s": 40.0, "severity": 0.6}],
+        "edges": [{"src": "cooling-monitor", "dst": "timescaledb", "r": 0.8, "lag_s": 30,
+                   "evidence": ["stat", "pvc"], "state": "decaying", "source": "memory"}],
+        "root_cause_ranking": [],
+        "blast_radius": [],
+        "meta": {"pods": 13, "active": 1, "accepted_edges": 1, "held_edges": 1},
+    }
+    out = merge_graphs({"psi_io": io})
+    assert out["edges"], "the held edge must still render (backbone stays visible)"
+    assert out["root_cause_ranking"] == []      # memory alone -> no root
+    assert out["blast_radius"] == []
+
+
+def test_merge_memory_edge_votes_when_its_source_deviates():
+    """The counter-case that keeps memory VALUABLE: when the remembered source IS currently
+    deviating, the held edge may vote and re-attributes the incident immediately."""
+    io = {
+        "findings": [
+            {"pod": "cooling-monitor", "class": "burst", "onset_s": 10.0, "severity": 0.8},
+            {"pod": "timescaledb", "class": "shift", "onset_s": 40.0, "severity": 0.6},
+        ],
+        "edges": [{"src": "cooling-monitor", "dst": "timescaledb", "r": 0.8, "lag_s": 30,
+                   "evidence": ["stat", "pvc"], "state": "decaying", "source": "memory"}],
+        "root_cause_ranking": [],
+        "blast_radius": [],
+        "meta": {"pods": 13, "active": 2, "accepted_edges": 1, "held_edges": 1},
+    }
+    out = merge_graphs({"psi_io": io})
+    assert out["root_cause_ranking"] and out["root_cause_ranking"][0]["pod"] == "cooling-monitor"
+
+
 def test_merge_cross_signal_keeps_both_edges():
     cpu = {
         "findings": [{"pod": "analytics-batch", "class": "burst", "onset_s": 50.0, "severity": 0.8},

@@ -223,8 +223,41 @@ def test_baseline_gate_suppresses_within_normal_and_flags_deviation():
     out = run_pass(vecs, w, baselines={"a": 3.0, "b": 3.0})
     finds = {f["pod"] for f in out["findings"]}
     assert "b" in finds and "a" not in finds
-    # an immature baseline (None value) is treated as 'still learning' -> not an incident:
-    assert run_pass(vecs, w, baselines={"a": None, "b": None})["findings"] == []
+    # an immature baseline (None value) is 'still learning' -> silent, UNLESS the onset is an
+    # unambiguous storm: that enters the findings clearly marked young_baseline (2A step 2 —
+    # previously the silent skip hid a true culprit with no matured baseline). 'b' storms
+    # (zpeak >> YOUNG_Z) -> marked finding; 'a' bumps within noise -> stays silent.
+    young = run_pass(vecs, w, baselines={"a": None, "b": None})["findings"]
+    assert [f["pod"] for f in young] == ["b"]
+    assert young[0]["young_baseline"] is True
+
+
+def test_young_baseline_moderate_onset_stays_silent():
+    """The young-baseline door is NARROW: a pod still learning its baseline surfaces only on
+    an unambiguous storm (|zpeak| >= YOUNG_Z). A moderate onset — exactly the warm-up
+    transient class that maturity gating exists to silence — stays out of the findings.
+    The fixture self-checks its calibration so a detector change can't silently hollow it."""
+    from engine import pipeline
+    # private rng: the module-level `rng` is consumed sequentially by every noise() call, so
+    # drawing from it here would shift the noise sequence under all later tests in the file.
+    lr = np.random.default_rng(7)
+    a = lr.normal(0, 0.2, N); a[60:90] += 1.0   # moderate excursion: real onset, not a storm
+    b = lr.normal(0, 0.2, N); b[60:90] += 8.0   # unambiguous storm
+    ons_a = [o for o in detectors.cusum_onsets(a) if abs(o["zpeak"]) >= 3.0]
+    ons_b = [o for o in detectors.cusum_onsets(b) if abs(o["zpeak"]) >= 3.0]
+    assert ons_a, "calibration: 'a' must have a real (>=3.0) onset"
+    assert max(abs(o["zpeak"]) for o in ons_a) < pipeline.YOUNG_Z, \
+        "calibration: 'a' must sit in the [3.0, YOUNG_Z) gap"
+    assert max(abs(o["zpeak"]) for o in ons_b) >= pipeline.YOUNG_Z, \
+        "calibration: 'b' must clear YOUNG_Z"
+    w = Witness(shared_relation={frozenset(("a", "b"))})
+    out = run_pass({"a": a, "b": b}, w, baselines={"a": None, "b": None})
+    finds = {f["pod"]: f for f in out["findings"]}
+    assert "a" not in finds                   # moderate + young -> silent (PS0 stays quiet)
+    assert "b" in finds and finds["b"]["young_baseline"] is True
+    # a MATURED pod is never marked young:
+    out2 = run_pass({"a": a, "b": b}, w, baselines={"a": 3.0, "b": 3.0})
+    assert all("young_baseline" not in f for f in out2["findings"])
 
 
 def test_source_attribution_picks_the_dominant_writer():

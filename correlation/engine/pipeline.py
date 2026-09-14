@@ -15,6 +15,7 @@ from .ranking import blast_radius, build_graph, rank_root_causes
 
 DT_S = detectors.DT_S
 R_SRC = 0.5  # cross-signal write->stall correlation floor (psi-psi uses gate.R_PEAK = 0.6)
+YOUNG_Z = 8.0  # immature-baseline pods surface only above this |zpeak| (an unambiguous storm)
 
 
 def _edge_pref(e: dict) -> tuple[int, float]:
@@ -72,20 +73,30 @@ def run_pass(
     # value = baseline still maturing (treat as not-yet-an-incident). This is what makes S0 silent:
     # normal factory I/O stays within each pod's band, so nothing becomes a finding.
     raw_onsets: dict[str, list[dict]] = {}
+    young: set[str] = set()
     for pod, vec in vectors.items():
         ons = [o for o in detectors.cusum_onsets(vec) if abs(o["zpeak"]) >= 3.0]  # ignore weak/spurious onsets
         if not ons:
             continue
         if baselines is not None:
             thr = baselines.get(pod)
-            # sustained elevation (p90), not a single noisy sample, must clear the band. When
-            # `recent` is set, judge deviation over the RECENT tail only -> a storm that has
-            # cooled is no longer a live incident (the verdict resets ~recent samples after it
-            # ends, instead of when it scrolls out of the full ring), while detection still
-            # scanned the whole ring for the onset. recent=None (fixtures) judges all of vec.
-            gate_vec = vec[-recent:] if recent else vec
-            if thr is None or float(np.percentile(gate_vec, 90)) <= thr:
-                continue  # still learning, or within the pod's normal band -> steady state
+            if thr is None:
+                # Still learning its baseline. A blanket skip here hid a true culprit that had
+                # no matured baseline (a batch job that just woke up) -- 2A step 2: an
+                # UNAMBIGUOUS storm may enter the findings, clearly marked young_baseline;
+                # anything weaker stays silent, so PS0/S0 warm-up transients keep quiet.
+                if max(abs(o["zpeak"]) for o in ons) < YOUNG_Z:
+                    continue
+                young.add(pod)
+            else:
+                # sustained elevation (p90), not a single noisy sample, must clear the band. When
+                # `recent` is set, judge deviation over the RECENT tail only -> a storm that has
+                # cooled is no longer a live incident (the verdict resets ~recent samples after it
+                # ends, instead of when it scrolls out of the full ring), while detection still
+                # scanned the whole ring for the onset. recent=None (fixtures) judges all of vec.
+                gate_vec = vec[-recent:] if recent else vec
+                if float(np.percentile(gate_vec, 90)) <= thr:
+                    continue  # within the pod's normal band -> steady state
         raw_onsets[pod] = ons
 
     # Choose the event CENTRE only among pods whose resources are COUPLED to another
@@ -120,6 +131,8 @@ def run_pass(
             "severity": min(abs(ev["zpeak"]) / 10.0, 1.0),
             "n_onsets": len(ons),
         }
+        if pod in young:
+            findings[pod]["young_baseline"] = True  # honest label: no matured baseline behind this
 
     # Source-side WRITE onsets (io_write): the aggressor writes hard but barely stalls,
     # so it is invisible in psi -- detect its disturbance on its own signal, tied to the

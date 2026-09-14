@@ -38,7 +38,32 @@ function Spark({ hist, lo, hi, color }) {
   );
 }
 
-function Machine({ name, d, trip, hist }) {
+const QC = { GOOD: "var(--green)", STALE: "var(--orange)", BAD: "var(--red)" };
+const fmtTag = (t) =>
+  t.value == null ? "—"
+    : t.unit === "bool" ? (t.value ? "TRIP" : "ok")
+      : `${Number(t.value).toFixed(1)} ${t.unit === "pct" ? "%" : t.unit === "degC" ? "°C" : t.unit}`;
+
+// 2F.2 — hover popover (pod-pop pattern): this machine's SCADA tags, straight off the
+// PLC registers via the tag server; quality is the freshness truth, address is the proof.
+function TagPop({ name, tags }) {
+  if (!tags?.length) return null;
+  return (
+    <div className="pod-pop tagpop">
+      <div className="ttl">{name} · scada tags (via PLC)</div>
+      {tags.map((t) => (
+        <div key={t.tag} className="trow">
+          <span className="dot" style={{ background: QC[t.quality] || "var(--text-faint)" }} />
+          <span className="k">{t.signal}</span>
+          <span className="v">{fmtTag(t)}</span>
+          <span className="a">{t.address}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Machine({ name, d, trip, hist, tags }) {
   const st = machSt(d, trip);
   const ampsHi = Math.max(...(hist.amps.length ? hist.amps : [d.amps]), d.amps) * 1.2;
   return (
@@ -50,6 +75,7 @@ function Machine({ name, d, trip, hist }) {
           {d.tripped ? "tripped · contactor open" : d.cooled ? "cooled" : "uncooled"}
         </span>
       </div>
+      <TagPop name={name} tags={tags} />
       <div className="mrow">
         <span className="k">draw</span>
         <span className="v">{d.amps.toFixed(1)} A</span>
@@ -77,7 +103,7 @@ const PANELS = [
   { id: 3, cap: "Coolant temps · vs trip" },
 ];
 
-export default function Machines({ plant, host }) {
+export default function Machines({ plant, host, scada }) {
   const histRef = useRef(new Map()); // series key -> ring buffer
   const [, bump] = useState(0);      // hist mutated after render -> nudge one repaint
 
@@ -108,6 +134,8 @@ export default function Machines({ plant, host }) {
   const H = histRef.current;
   const g = (k) => H.get(k) || [];
   const trip = plant.trip_c ?? 78;
+  const tagRows = scada?.tags?.length ? scada.tags : null;
+  const tagsFor = (asset) => tagRows?.filter((t) => t.asset === asset);
   const loop = plant.loop;
   const faults = plant.active_faults || [];
   const nomFlow = loop?.flow_nominal ?? 120;
@@ -137,7 +165,7 @@ export default function Machines({ plant, host }) {
               </div>
               <div className="machs">
                 {Object.entries(plant.devices).filter(([, d]) => d.rail === rn).map(([dn, d]) => (
-                  <Machine key={dn} name={dn} d={d} trip={trip}
+                  <Machine key={dn} name={dn} d={d} trip={trip} tags={tagsFor(dn)}
                     hist={{ amps: g("m/" + dn + "/a"), temp: g("m/" + dn + "/t"), thru: g("m/" + dn + "/p") }} />
                 ))}
               </div>
@@ -154,6 +182,35 @@ export default function Machines({ plant, host }) {
           <span className="vf">pump {Math.round((loop.pump_health ?? 1) * 100)}% · trip {Math.round(trip)}°C</span>
         </div>
       )}
+      {/* 2F.2 SCADA tag browser — the industrial data path made visible: every tag traveled
+          physics -> OpenPLC %MW/%QX -> Modbus -> tag server -> historian. Absent server = say so. */}
+      <div className="scada">
+        <div className="scada-head">
+          <span className="brk">scada · tag browser</span>
+          {tagRows ? (
+            <span className="scada-badge">
+              <span className="dot" style={{ background: scada.plc_connected ? "var(--green)" : "var(--red)" }} />plc
+              <span className="dot" style={{ background: scada.historian?.connected ? "var(--green)" : "var(--red)", marginLeft: 10 }} />historian
+              <b>{scada.historian?.rows_per_s ?? 0} rows/s</b>
+              <i>{(scada.historian?.rows_total ?? 0).toLocaleString("en-IN")} total</i>
+            </span>
+          ) : (
+            <span className="scada-badge"><span className="dot" style={{ background: "var(--text-faint)" }} />tag server unreachable — telemetry is sim-direct</span>
+          )}
+        </div>
+        {tagRows && (
+          <div className="tagstrip">
+            {tagRows.map((t) => (
+              <div key={t.tag} className={`tagchip${t.kind === "derived" ? " drv" : ""}`} title={`${t.kind} · ${t.address}`}>
+                <span className="dot" style={{ background: QC[t.quality] || "var(--text-faint)" }} />
+                <span className="tn">{t.tag}</span>
+                <span className="tv">{fmtTag(t)}</span>
+                <span className="ta">{t.address}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="gnote" style={{ margin: "14px 0 10px" }}>
         Trends — live from Grafana over Prometheus. Substrate: physics-simulated plant (plane 2); the inference over it is real.
       </div>

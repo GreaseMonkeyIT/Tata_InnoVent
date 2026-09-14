@@ -60,6 +60,56 @@ def test_edge_memory_persists_and_renders_held_edge(tmp_path):
     assert reopened.stats()["visible_memory_edges"] == 1
 
 
+def test_held_edge_with_quiet_source_cannot_win_root(tmp_path):
+    """2A backbone fix (the S2 confident-wrong-root): once cm->tsdb is remembered, a later
+    pass where ONLY the victim (tsdb) deviates must not rank the remembered source as root —
+    memory may say 'these two are usually coupled', but memory alone must never out-vote
+    live evidence. The held edge still RENDERS (backbone visible); it just doesn't vote."""
+    db = tmp_path / "memory.db"
+    mem = GraphMemory(str(db), MemoryConfig(alpha=0.5, decay=0.1, show=0.6, hide=0.25))
+    src, dst = "cooling-monitor-abc123-def45", "timescaledb-aaa111-bbb22"
+    vectors = {src: np.zeros(180), dst: np.zeros(180)}
+    mem.observe(_graph(), vectors, ts=1000.0)
+    mem.observe(_graph(), vectors, ts=1010.0)          # edge confirmed + visible
+
+    victim_only = {
+        "findings": [{"pod": dst, "class": "shift", "onset_s": 40.0, "severity": 0.6}],
+        "edges": [],
+        "root_cause_ranking": [],
+        "blast_radius": [],
+        "meta": {"pods": 2, "active": 1, "accepted_edges": 0},
+    }
+    out = mem.observe(victim_only, vectors, ts=1020.0)
+    assert out["edges"] and out["edges"][0]["source"] == "memory"   # backbone still shown
+    assert out["root_cause_ranking"] == []                           # memory alone -> no root
+    assert out["blast_radius"] == []
+
+
+def test_held_edge_votes_when_its_source_deviates(tmp_path):
+    """Counter-case pinning why memory exists: the remembered source IS deviating this pass
+    (both pods anomalous, live correlation not re-formed yet) -> the held edge may vote and
+    the incident re-attributes to the source immediately."""
+    db = tmp_path / "memory.db"
+    mem = GraphMemory(str(db), MemoryConfig(alpha=0.5, decay=0.1, show=0.6, hide=0.25))
+    src, dst = "cooling-monitor-abc123-def45", "timescaledb-aaa111-bbb22"
+    vectors = {src: np.zeros(180), dst: np.zeros(180)}
+    mem.observe(_graph(), vectors, ts=1000.0)
+    mem.observe(_graph(), vectors, ts=1010.0)
+
+    both_deviating = {
+        "findings": [
+            {"pod": src, "class": "burst", "onset_s": 10.0, "severity": 0.8},
+            {"pod": dst, "class": "shift", "onset_s": 40.0, "severity": 0.6},
+        ],
+        "edges": [],
+        "root_cause_ranking": [],
+        "blast_radius": [],
+        "meta": {"pods": 2, "active": 2, "accepted_edges": 0},
+    }
+    out = mem.observe(both_deviating, vectors, ts=1020.0)
+    assert out["root_cause_ranking"] and out["root_cause_ranking"][0]["pod"] == src
+
+
 def _graph_named(src, dst):
     return {
         "findings": [

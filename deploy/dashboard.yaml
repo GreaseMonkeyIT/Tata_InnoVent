@@ -1,6 +1,9 @@
 # L4 dashboard (P6) — static Next.js export served by nginx, which also proxies /api/ to the api
 # gateway. Exposed via NodePort so it is reachable from a peer at the node IP (incl. the Tailscale
 # address) over the tailnet, with no public ingress.
+# 2E: TLS + basic auth at the front door. REQUIRES two Secrets in ns aiops before this applies:
+#   visr-auth (keys: htpasswd, operator-token)  ·  visr-tls (kubernetes.io/tls: tls.crt, tls.key)
+# Fail-closed by design — nginx refuses to start without them. Creation block: INNOVENT_LOG 2E entry.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,15 +21,27 @@ spec:
         - name: dashboard
           image: skn/dashboard:v0.1
           imagePullPolicy: IfNotPresent
-          ports: [{ containerPort: 80 }]
+          ports: [{ containerPort: 80 }, { containerPort: 443 }]
           env:
             - { name: TZ, value: "Asia/Kolkata" }
+            # rendered into the nginx role->token map by the image's envsubst entrypoint;
+            # the operator basic-auth user gets this injected as X-Auth-Token on /api/ calls
+            - name: VISR_OPERATOR_TOKEN
+              valueFrom: { secretKeyRef: { name: visr-auth, key: operator-token } }
+          volumeMounts:
+            - { name: auth, mountPath: /etc/nginx/auth, readOnly: true }
+            - { name: tls,  mountPath: /etc/nginx/tls,  readOnly: true }
           readinessProbe:
-            httpGet: { path: /, port: 80 }
+            httpGet: { path: /, port: 443, scheme: HTTPS }
             initialDelaySeconds: 3
           resources:
             requests: { cpu: 25m,  memory: 32Mi }
             limits:   { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: auth
+          secret: { secretName: visr-auth, items: [{ key: htpasswd, path: htpasswd }] }
+        - name: tls
+          secret: { secretName: visr-tls }
 ---
 apiVersion: v1
 kind: Service
@@ -37,4 +52,6 @@ metadata:
 spec:
   type: NodePort
   selector: { app: dashboard }
-  ports: [{ name: http, port: 80, targetPort: 80, nodePort: 30080 }]
+  ports:
+    - { name: http,  port: 80,  targetPort: 80,  nodePort: 30080 }   # 301 -> https only
+    - { name: https, port: 443, targetPort: 443, nodePort: 30443 }

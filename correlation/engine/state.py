@@ -467,7 +467,15 @@ class GraphMemory:
         out.setdefault("meta", {})["held_edges"] = len(held_edges)
 
         if graph.get("findings") and out["edges"]:
-            g = build_graph(out["edges"])
+            # 2A backbone fix: a held (memory) edge may RENDER, but it may only VOTE for root
+            # when its source is currently deviating (a live finding). Memory may say "these
+            # two are usually coupled"; memory alone must never out-vote live evidence -- that
+            # is the S2 confident-wrong-root (remembered coupling beats the invisible true
+            # writer). Live edges always vote; they were formed from this pass's data.
+            finding_pods = {f["pod"] for f in graph.get("findings", [])}
+            rank_edges = [e for e in out["edges"]
+                          if e.get("source") != "memory" or e["src"] in finding_pods]
+            g = build_graph(rank_edges)
             seeds = [f["pod"] for f in graph.get("findings", [])]
             onset_s = {f["pod"]: f.get("onset_s") for f in graph.get("findings", [])}
             ranking = rank_root_causes(g, seeds, onset_s)

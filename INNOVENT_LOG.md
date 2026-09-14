@@ -701,3 +701,152 @@ latencies, correct details, tokens/centering confirmed via computed styles, clic
 exercised (NB: the Browser pane's screenshot tool timed out ALL session, even pre-Boot — verification was
 text-based: read_page + computed-style probes) — and `next build` ✓ 4/4. Deploy = dashboard image rebuild + import
 + restart; box is paused, so this rides with the next box session (add to the resume checklist).
+
+**LOG-052 · 2026-07-17 · 2A truth pass, LOCAL HALF SHIPPED — fixtures-first; memory can no longer out-vote live
+evidence; young-baseline storms surface marked; S2 stress goes synchronous.** October-prep framework order pinned:
+2A → 2E → 2D remainder (2C is superseded by the shipped 2C′ plant families — decision to be logged with 2D; 2F tag
+server is post-2E). **The three 2A rules, tests written FIRST and confirmed failing for the right reason:**
+(1) **Backbone fix** — the S2 confident-wrong-root reproduced in BOTH ranking sites: `state._render` and
+`merge.merge_graphs` let a held (memory) edge vote for root whenever findings existed, so a remembered coupling
+(cm→tsdb) beat the invisible true writer when only the victim deviated. Rule now: a memory-sourced edge RENDERS
+(backbone stays visible) but only VOTES when its src is a current finding; live edges always vote. Counter-cases
+pinned so memory stays valuable: source deviating ⇒ held edge re-attributes immediately. (2) **Young-baseline
+door** (`pipeline.run_pass`): immature baseline (thr None) was a blanket skip — the true culprit couldn't compete.
+Now an UNAMBIGUOUS storm (|zpeak| ≥ `YOUNG_Z` = 8.0, vs the 3.0 finding floor) enters findings marked
+`young_baseline: True`; anything weaker stays silent (PS0/S0 warm-up quiet is preserved — the door is narrow by
+design). The old pin (`baselines=None ⇒ findings == []`, test_engine ~L227) encoded exactly the behavior 2A
+changes — deliberately rewritten. (3) **S2 goes synchronous** (`workloads/log-archiver/archive.sh`):
+`--ioengine=libaio → psync` — async queueing let the archiver flood the disk without waiting, so its OWN psi_io
+barely moved; psync blocks every write(2) ⇒ it visibly self-stalls ⇒ detectable finding + write-evidenced source
+edge. `bash -n` ✓. **Suite: 55/55 green** (5 new fixtures; one flake caught + fixed in MY test: the module-shared
+`rng` is consumed sequentially, so a new test drawing from it shifts noise under later tests — new tests use a
+private generator; also learned: EWMA decays the residual before the CUSUM alarm, so zpeak-at-alarm ≪ raw step —
+calibration self-asserts baked into the fixture). **Box-verify checklist for the next box session:** rebuild
+correlation-engine + log-archiver images, then fresh-run S0 silent · S1 roots cooling-monitor · S5 forecast · S2
+now roots log-archiver (twice, per the plan's two-attempt honesty rule) + PS0/PS1 regression (plant families ride
+the same ranking path). Files: engine/{pipeline,state,merge}.py, tests/{test_engine,test_state,test_merge}.py,
+workloads/log-archiver/archive.sh. Mirrored to `Tata_InnoVent_Commit` working tree; commit/push withheld per
+operator instruction (explicit command only).
+
+**LOG-053 · 2026-07-17 · 2E secure pass, LOCAL HALF SHIPPED — operator-gated actions, hash-chained audit ledger
+(+ dashboard Audit section), TLS+login front door prepared.** Deliberately boring per the plan (auth bugs are demo
+killers): ONE shared operator token + nginx basic auth, no hand-rolled login. **(1) `api/security.py` (NEW,
+stdlib-only ⇒ unit-testable without FastAPI):** `token_ok` (constant-time; empty/unset expected token = auth
+DISABLED — safe rollout) + `AuditLedger` — append-only JSONL, every entry `{ts,actor,verb,target,status,evidence,prev,
+hash}`, hash = sha256(prev + canonical(body)) ⇒ edit/delete/splice breaks `verify()` AT that entry; tail hash
+recovered on open so the chain survives restarts. **8/8 tests green** (`api/tests/test_security.py`, incl. edited-
+entry and deleted-entry tamper cases). This ledger is the same one the Stage-3 act loop writes into. **(2)
+api/main.py wired:** POST trigger/reset now `_require_operator` (X-Auth-Token or Bearer; 401 + a "denied" audit
+entry on failure — the ledger records who KNOCKED); every fire/reset audited with a best-effort verdict snapshot
+(root/score/evidence chips = what the operator saw when they acted); `GET /api/audit` (entries + chain_ok re-derived
+on read); `/api/health` gains `auth: enforced|disabled` (an open deployment can't pass as secured). `py_compile` ✓.
+**(3) Front door:** `dashboard/nginx.conf` → **`nginx.conf.template`** (official envsubst mechanism — token never
+baked into the image): 80 = 301→https:30443 only; 443 TLS + basic auth (`viewer` looks, `operator` acts); `map
+$remote_user` injects X-Auth-Token ONLY for operator (viewer's clicks get the API's honest 401) + X-Remote-User for
+attribution. Dockerfile → templates dir, EXPOSE 80 443. **(4) Deploy:** dashboard.yaml mounts Secrets `visr-auth`
+(htpasswd + operator-token) + `visr-tls`, adds nodePort **30443**, HTTPS readiness probe — **fail-closed** (create
+Secrets FIRST); api.yaml takes VISR_OPERATOR_TOKEN with `optional:true` (Secret absent = disabled, honest) +
+AUDIT_PATH on an emptyDir (PVC promotion = noted roadmap, single-node box). **(5) Dashboard "Audit" section** (last
+panel): 30s poll, newest-first rows time·actor·VERB·target·status·evidence, denied rows red, chain-intact/BROKEN +
+auth state in the meta; dev mock incl. a denied viewer attempt. Verified: dev preview (rows + meta correct, zero
+console errors) + `next build` ✓ 4/4. **Deferred within 2E:** step 4 device tokens ride with 3A (no fan-in proxy
+exists yet); grafana :30030 anonymous + api GET NodePort stay open inside the mesh = viewer-equivalent, said
+honestly. **Box block (create Secrets, then rebuild dashboard+api images + apply + restart):**
+```
+sudo apt-get install -y apache2-utils   # htpasswd (once)
+htpasswd -nbB viewer   '<viewer-pass>'   > /tmp/htpasswd
+htpasswd -nbB operator '<operator-pass>' >> /tmp/htpasswd
+TOKEN=$(openssl rand -hex 24)
+openssl req -x509 -newkey rsa:2048 -nodes -days 730 -subj "/CN=visr.local" \
+  -keyout /tmp/tls.key -out /tmp/tls.crt
+kubectl -n aiops create secret generic visr-auth \
+  --from-file=htpasswd=/tmp/htpasswd --from-literal=operator-token="$TOKEN"
+kubectl -n aiops create secret tls visr-tls --cert=/tmp/tls.crt --key=/tmp/tls.key
+rm /tmp/htpasswd /tmp/tls.key /tmp/tls.crt
+# then: rebuild skn/dashboard + skn/api images, k3s ctr images import, kubectl apply -f
+# deploy/dashboard.yaml -f deploy/api.yaml, rollout restart both.
+# done-when (2E): incognito browser -> login wall; `curl -k -X POST https://<node>:30443/api/scenarios/PS1/trigger`
+# (no auth) -> 401; viewer login firing -> 401 + a `denied` audit row; operator fire -> row with evidence;
+# `curl -s -X POST http://<node>:30088/api/scenarios/PS1/trigger` (direct NodePort, no token) -> 401.
+```
+Files: api/{security.py,main.py,pytest.ini,tests/test_security.py}, dashboard/{nginx.conf.template,Dockerfile,
+app/page.jsx,app/globals.css} (nginx.conf REMOVED — superseded), deploy/{dashboard.yaml,api.yaml}. Mirrored to the
+commit working tree; commit/push withheld.
+
+**LOG-054 · 2026-07-17 · 2D remainder CLOSED (local) + DECISION: old 2C superseded by 2C′ — the up-to-2E framework
+is laid.** (1) **2D-3 claimRef bake: already done** — `deploy/slowdisk.yaml` is the pivot edition (LOG-029) with
+claimRef pre-bound on both PVs; the master-plan open item predates that rewrite. Verified, no change. (2) **2D-4
+script: `POC_SCRIPT.md` (NEW, proto root)** — the full recording script to the done-when standard (teammate can
+re-run it alone; box does it twice): prep day (resume→deploy pending images→LOG-035 soak→rehearse twice), then
+cold-open on the 2E login + Boot self-check, PS0 calm two-plane tour, PS1 hero beat (fire in a compressor-OFF
+window; floor ~5 s; verdict ~10–15 s; evidence-chip beat = the USP, never trimmed), audit row on camera, PS5
+forecast→PLC trip→reset, close; honesty rails scripted verbatim (simulated-plant labeling, "spokesperson-only"
+LLM, 62443-aligned-not-certified); pre-decided fallbacks (narrator down, LOG-046 young-baseline artifact, S-series
+bench rollback); ~5–6 min budget. (3) **DECISION — old Phase 2C (db_query_latency domain correlation) is
+SUPERSEDED, not skipped:** 2C targeted the retired factory workloads; the pivot's 2C′ (LOG-033, shipped + box-
+verified LOG-046) delivers the same thesis — domain signals as first-class engine families behind declared-domain
+witnesses — on plant physics (`bus_voltage`/`coolant_temp` + PLANT_SOURCES + rail/loop witness map). Nothing
+db-latency-shaped returns unless a SCADA-historian-latency angle earns it in 2F; logged so nobody "finishes" 2C
+later. **Framework state up to 2E: 2A ✓(local, LOG-052) · 2B′/2C′ ✓(shipped pre-registration) · 2D Boot ✓(LOG-051)
++ script ✓ + claimRef ✓ (font swap + the recording itself = operator/box) · 2E ✓(local, LOG-053). Remaining Stage-2:
+2F tag server + tags UI (next local build), then ONE box session: deploy LOG-051..053 images + Secrets, 2A/2E
+box-verify, PS5 acceptance, OpenPLC latch re-confirm, soak, record per POC_SCRIPT.md.** Mirrored; commit/push
+withheld (operator's explicit command only).
+
+**LOG-055 · 2026-07-17 · 2F remainder, LOCAL HALF SHIPPED — SCADA tag server (`scada/`, NEW) + tags UI; Stage 2 is
+now fully code-complete locally.** Path realized: physics → OpenPLC %MW/%QX → Modbus → **tag server** → tag DB +
+TimescaleDB historian + /metrics + /tags. **(1) `scada/tags.py`** (pure, **7/7 tests**): the tag DB as code — 41
+tags (28 measured + 13 derived), ISA-style names (`PLANT.PRESS_1.AMPS`), units, PLC addresses, ×10/×100 scaling
+per REGISTER_MAP; derived tags = SCADA calculated-tag practice with the formula shown in the address field
+(machine VOLTS = its rail's; HEAT = k·I from the sim's calibration constants; TRIP_LIMIT const) — honest, since
+those aren't PLC-readable; **quality GOOD→STALE(>10 s)→BAD(>30 s)** by age of last good read (`requality`); BAD
+tags LEAVE /metrics (a gap, never a lie); `prom_text` emits series/labels IDENTICAL to the sim's exposition, and
+`engine_parity_metrics()` pins the aggregator's queries.yaml set inside a test so a rename breaks loudly. **(2)
+`scada/tagserver.py`:** READ-ONLY Modbus client (FC03 32-word block + FC01 coils, 1 s poll — never writes; the sim
+stays the field wiring, the trip program the authority); lazy self-healing psycopg2 → `plant_tags` hypertable
+(create_hypertable with plain-postgres fallback; **closes the PIVOT_SETUP §7 historian-ingest line**); rows/s +
+rows_total; HTTP /metrics (+`scada_plc_connected`/`scada_historian_*` self-health), /tags, /healthz; PLC down ⇒
+last map served, aging honestly. **(3) Register contract extended:** the sim now also writes **MW24–31 throughput
+×10 as a SEPARATE FC16 write** — a single 32-word sweep would zero MW20 (reset_cmd) every tick and race the reset
+pulse (caught in review); REGISTER_MAP.md updated (16–19/21–23 never written; tag server = read-only second
+client). **(4) Deploy split = the cutover gate:** `scada/deploy.yaml` (Deployment+Service, ns plant, **NO
+ServiceMonitor** — scraping sim AND tag server would duplicate every plant_* series and corrupt the engine's
+vectors) + `scada/cutover-servicemonitor.yaml` (apply it, then delete the plant-sim ServiceMonitor, ONLY after box
+stability: tag values match the sim's debug tap through a PS1+PS5 run; rollback = the reverse pair; Grafana
+caveat: `plant_fault_active`/`plant_plc_connected` panels go empty post-cutover — sim-plane meta, check skn-plant
+panels). **(5) UI:** api `GET /api/tags` proxy (SCADA_URL; honest "unavailable") + Machines gains the **SCADA
+tag-browser strip** (scrollable grid, quality dots, derived dimmed, PLC+historian badge with rows/s; absent server
+⇒ "tag server unreachable — telemetry is sim-direct") and **per-machine hover popovers** (pod-pop pattern: signal ·
+value · address/formula). Verified: scada 7/7 · py_compile ✓ (tagserver/tags/sim/api) · dev preview (41 chips, 8
+popovers, press-1 = TEMP/AMPS/THROUGHPUT/TRIP/VOLTS/HEAT with formulas, badge live, zero console errors) ·
+`next build` ✓ 4/4. **Box-session additions:** build `skn/tag-server:v0.1`; rebuild plant-sim (MW24–31) + api +
+dashboard; apply scada/deploy.yaml; stability-watch vs the sim tap; then the cutover pair; caretta should now show
+sim⇄PLC⇄tag-server Modbus flows — say so on camera. **Everything left in Stage 2 is the ONE box session
+(LOG-051..055 deploy + verify + soak + record per POC_SCRIPT.md).** Mirrored; commit/push withheld.
+
+**LOG-056 · 2026-08-10 · CLAD/LabVIEW workshop Day 1 + the sponsor read; study pack written
+(`LabVIEW_CLAD/`, NEW), no stack change.** Tata is running a **CLAD** (Certified LabVIEW Associate
+Developer) workshop for InnoVent. **Why:** this edition launched 2026-06-04 with **Emerson's Test &
+Measurement business (= the former NI: LabVIEW, TestStand, PXI, cRIO)** and AWS as partners, theme
+"AI at the Edge"; Tata's own stated intent for the Emerson tie is taking student code "from virtual
+simulations into rugged, real-world hardware environments", and the support package includes NI
+tool access + jobs to top participants. Read: **sponsor enablement + a hiring credential + the
+virtual-PoC→physical-finals arc**, i.e. an available advantage, NOT a stated requirement (confirm
+with organizers before building for that reason alone). Day 1 covered data types, operations,
+conditionals, loops, front-panel elements, arrays, clusters/bundles, **shift registers**, and
+**loop dependency on CPU speed** — which is our own stack in another notation: `scada/tags.py`
+tag_table = an array-of-clusters, quality GOOD/STALE/BAD = an enum, `plc/program.st` latch = a shift
+register, `plant/sim/main.py` `loop()` = a While loop + shift-register Euler integrator + a
+compensated wait (= Wait Until Next ms Multiple). **Written:** `LabVIEW_CLAD/{README.md (objective +
+exam context + day log), DAY1_FUNDAMENTALS.md (syllabus + 20 CLAD traps + 5 practice VIs),
+VISR_APPLICATION.md (concept map + PoC options)}`. **Finding logged (no fix applied):** the sim's
+`dt, last = max(now - last, 1e-3), now` clamps only the LOW side; with `tau=45 s` a stalled tick
+above ~90 s would make the Euler step diverge and manufacture a temperature excursion no fault
+caused — cheap hardening later = clamp dt to a few ticks + count the clamps (the Python form of
+Timed Loop's `Finished Late?`). **RECOMMENDATION, decision deferred to operator:** if we use
+LabVIEW at all, **Option A only** — an additive read-only LabVIEW panel over the tag server's
+`/tags` JSON (HTTP GET → Unflatten From JSON → array of Tag clusters), built against a RECORDED
+JSON file first, zero stack change, cuttable from the recording; plus optionally a one-afternoon
+single-machine thermal VI for the sponsor-alignment slide. **NO rewrite, NO second Modbus writer,
+NO LabVIEW on the recording's critical path**, and nothing decided before the remaining box session.
+Not mirrored to the commit tree (notes, not code) pending operator call.

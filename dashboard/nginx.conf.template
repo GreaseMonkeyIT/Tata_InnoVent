@@ -1,0 +1,52 @@
+# 2E secure pass — the dashboard front door. Rendered by the official nginx image's envsubst
+# entrypoint (/etc/nginx/templates/*.template -> conf.d); only ${VISR_OPERATOR_TOKEN} is
+# substituted (it exists in the pod env, from the visr-auth Secret) — nginx's own $vars survive
+# because envsubst replaces only names present in the environment.
+#
+# Design (deliberately boring, per the master plan): TLS + basic auth at nginx; two accounts in
+# the htpasswd — `viewer` (can look) and `operator` (can act). The API's action gate is the real
+# enforcement: nginx injects X-Auth-Token ONLY for the operator user (the map below), so viewer's
+# fire/reset clicks get an honest 401 from the API itself — same 401 a direct anonymous curl to
+# the api NodePort gets. X-Remote-User attributes every audited action to the logged-in user.
+#
+# Deploy prereqs (fail-closed: nginx will not start without them — create the Secrets FIRST):
+#   visr-auth Secret: htpasswd (apr1) + operator-token   |   visr-tls Secret: self-signed pair
+# The paste-ready block lives in INNOVENT_LOG (2E entry).
+
+map $remote_user $visr_token {
+  default  "";
+  operator "${VISR_OPERATOR_TOKEN}";
+}
+
+server {
+  listen 80;
+  server_name _;
+  # NodePort 30080 stays open only to bounce the browser to TLS (nothing is served over http).
+  return 301 https://$host:30443$request_uri;
+}
+
+server {
+  listen 443 ssl;
+  server_name _;
+  ssl_certificate     /etc/nginx/tls/tls.crt;
+  ssl_certificate_key /etc/nginx/tls/tls.key;
+  root /usr/share/nginx/html;
+  index index.html;
+
+  auth_basic           "VISR — operator console";
+  auth_basic_user_file /etc/nginx/auth/htpasswd;
+
+  # Single-origin: proxy the API to the in-cluster gateway so the browser needs no CORS and no
+  # second exposed port. A transient 502 just means the api pod isn't ready yet.
+  location /api/ {
+    proxy_pass http://api.aiops.svc.cluster.local:8088;
+    proxy_set_header Host $host;
+    proxy_set_header X-Remote-User $remote_user;   # audit attribution (who acted)
+    proxy_set_header X-Auth-Token  $visr_token;    # operator role -> action token; viewer -> ""
+  }
+
+  # Static export: serve the requested file, its exported .html, or fall back to the app shell.
+  location / {
+    try_files $uri $uri.html $uri/ /index.html;
+  }
+}

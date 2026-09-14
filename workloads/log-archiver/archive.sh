@@ -20,7 +20,11 @@ PER_JOB=$(( SEED_MB / JOBS ))           # per-job file size; PER_JOB x JOBS = SE
 mkdir -p "$DST"
 # concurrent O_DIRECT write storm with frequent fsync -> real device I/O (no page cache, no OOM) that
 # thrashes the shared spindle. --unlink=1 drops the job files at the end so the PVC stays bounded.
-# (If the alpine fio build lacks the libaio engine, swap --ioengine=libaio -> --ioengine=psync.)
+# SYNCHRONOUS engine (2A step 3): with libaio the writer queued async I/O and never waited, so
+# log-archiver barely registered in its OWN psi_io -- the true culprit was invisible to detection.
+# psync makes every write(2) block until the disk accepts it: the archiver visibly SELF-STALLS
+# while it floods the disk, so its psi deviates, it enters the findings, and its write signal
+# carries the source edge. (psync is also universally available -- no libaio package needed.)
 fio --name=s2archive --directory="$DST" --rw=write --bs=1M \
     --size="${PER_JOB}m" --numjobs="$JOBS" --fsync="$FSYNC" --direct=1 \
-    --ioengine=libaio --time_based --runtime="$RUNTIME" --group_reporting --unlink=1 2>/dev/null
+    --ioengine=psync --time_based --runtime="$RUNTIME" --group_reporting --unlink=1 2>/dev/null

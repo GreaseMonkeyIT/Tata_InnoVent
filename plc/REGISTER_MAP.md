@@ -1,7 +1,9 @@
 # PLC register map — the contract between plant-sim, program.st, and (Phase-2F.2) the tag server
 
 One source of truth. If an address changes here, it changes in `plant/sim/main.py` (`plc_loop`),
-`plc/program.st`, and later the tag server's tag table — nowhere else.
+`plc/program.st`, and `scada/tags.py` (the 2F.2 tag server's tag table) — nowhere else.
+The tag server is a second Modbus client but READ-ONLY (FC03 holding block + FC01 coils);
+the sim remains the only writer besides the PLC program itself.
 
 ## Modbus addressing (OpenPLC slave)
 
@@ -26,7 +28,10 @@ Poll cadence = sim tick (1 s); PLC scan = 100 ms.
 | 6 | rail psu-a voltage | V ×10 | (tag server only) |
 | 7 | rail psu-b voltage | V ×10 | (tag server only) |
 | 8–15 | per-machine current draw, DEVICES order: press-1, press-2, cnc-1, qa-scanner-1, conveyor-1, compressor-1, furnace-1, chiller-1 | A ×10 | (tag server only) |
+| 16–19 | reserved (never written) | — | — |
 | 20 | operator reset request (write 1; program consumes) | bool-ish | `reset_cmd` |
+| 21–23 | reserved (never written) | — | — |
+| 24–31 | per-machine throughput, DEVICES order (as 8–15); written as a SEPARATE FC16 block so the sweep can't clobber MW20's pulse | % ×10 | (tag server only) |
 
 ## Coils (PLC → sim), address 0+
 

@@ -28,12 +28,24 @@ spec:
             # no longer wipes it. Change to your node IP if it differs; empty -> template fallback.
             - { name: OLLAMA_HOST,    value: "http://192.168.1.239:11434" }
             - { name: TZ,             value: "Asia/Kolkata" }
+            # 2E action gate: optional:true = safe rollout — Secret absent -> auth stays disabled
+            # and /api/health says "auth: disabled" honestly. Create visr-auth to enforce.
+            - name: VISR_OPERATOR_TOKEN
+              valueFrom: { secretKeyRef: { name: visr-auth, key: operator-token, optional: true } }
+            - { name: AUDIT_PATH,     value: "/data/audit.jsonl" }
+          volumeMounts:
+            - { name: audit, mountPath: /data }
           readinessProbe:
             httpGet: { path: /healthz, port: 8088 }
             initialDelaySeconds: 3
           resources:
             requests: { cpu: 50m,  memory: 96Mi }
             limits:   { cpu: 250m, memory: 192Mi }
+      volumes:
+        # survives container restarts (not pod rescheduling) — single-node box, acceptable;
+        # promoting the ledger to a PVC is a noted roadmap step, not a silent claim.
+        - name: audit
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

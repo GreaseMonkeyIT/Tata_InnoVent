@@ -193,7 +193,11 @@ def plc_loop():
                 regs += [max(0, int(LOOP.flow * 10)), max(0, int(LOOP.pump_health * 100)),
                          max(0, int(RAIL_A.voltage * 10)), max(0, int(RAIL_B.voltage * 10))]  # MW4..7
                 regs += [max(0, int(d.current * 10)) for d in DEVICES]             # MW8..15 amps x10
+                # MW24..31 throughput x10 (2F.2 tag server). A SEPARATE write: one 32-word
+                # block would sweep 0 over MW20 (reset_cmd) every tick and race the pulse.
+                thru = [max(0, int(d.throughput * 10)) for d in DEVICES]
             client.write_registers(PLC_MW_BASE, regs, slave=1)
+            client.write_registers(PLC_MW_BASE + 24, thru, slave=1)
             if _PLC_RESET.is_set():
                 client.write_registers(PLC_MW_BASE + 20, [1], slave=1)            # MW20: reset cmd
                 _PLC_RESET.clear()
