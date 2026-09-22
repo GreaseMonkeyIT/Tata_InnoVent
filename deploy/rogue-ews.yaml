@@ -1,0 +1,56 @@
+# PS4A injector (SCENARIOS 2.4): a rogue engineering workstation, not a PLC.
+#   - namespace plant, beside the sim and the tag server, but it reaches the fleet PLC over S7comm
+#   - it runs vplc/ews.py on the skn/vplc image (which carries python-snap7), never the vPLC runtime
+#   - labels app: rogue-ews and visr/role: fault-injector. It never carries app: vplc, so the fleet
+#     ServiceMonitor and the enrollment path never mistake it for a PLC.
+#   - SCADA_WRITE_TOKEN from the visr-fleet Secret (optional). A missing token fails closed in code.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rogue-ews
+  namespace: plant
+  labels: { app: rogue-ews, visr/role: fault-injector }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: rogue-ews } }
+  template:
+    metadata:
+      labels: { app: rogue-ews, visr/role: fault-injector }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: rogue-ews
+          image: localhost:5000/skn/vplc:v0.1
+          imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          command: ["python", "-u", "ews.py"]
+          env:
+            - { name: EWS_HTTP_PORT, value: "8090" }
+            - { name: EWS_TARGET, value: "plc-stamping.fleet.svc.cluster.local" }
+            - { name: EWS_PORT, value: "102" }
+            - { name: EWS_DB, value: "1" }
+            - { name: EWS_BYTE, value: "292" }     # DB1.DBW292 = %MW10 = press-1 DERATE_PCT
+            - { name: EWS_VALUE, value: "30" }
+            - { name: TZ, value: "Asia/Kolkata" }
+            # A missing token leaves the variable empty and the POST endpoints fail closed (403).
+            - name: SCADA_WRITE_TOKEN
+              valueFrom: { secretKeyRef: { name: visr-fleet, key: scada-write-token, optional: true } }
+          ports:
+            - { name: control, containerPort: 8090 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8090 }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 100m, memory: 96Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rogue-ews
+  namespace: plant
+  labels: { app: rogue-ews, visr/role: fault-injector }
+spec:
+  selector: { app: rogue-ews }
+  ports:
+    - { name: control, port: 8090, targetPort: 8090 }

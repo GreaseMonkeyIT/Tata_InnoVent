@@ -1,0 +1,20 @@
+{
+  "task": "packaging-cell-rush",
+  "title": "Packaging cell sequencer (rush)",
+  "description": "Rush cadence for the packaging cell: the wrapper cycles 10 s on and 5 s off, so the electrical load changes twice as often. Same wiring as packaging-cell.",
+  "st": "packaging-cell-rush.st",
+  "profile_hint": "generic-iec",
+  "cell": {
+    "name": "packaging",
+    "rail_default": "psu-c",
+    "machines": [
+      {"prefix": "pack-conveyor", "kind": "conveyor", "i_base": 9.0, "cooled": false},
+      {"prefix": "pack-wrapper", "kind": "wrapper", "i_base": 14.0, "cooled": true, "tau": 50.0, "heat_k": 0.5},
+      {"prefix": "pack-labeler", "kind": "labeler", "i_base": 4.0, "cooled": false, "v_sensitive": true}
+    ]
+  },
+  "io_extra": [
+    {"asset": "SYS", "signal": "PACK_COUNT", "address": "%MW20", "unit": "count"},
+    {"asset": "SYS", "signal": "STEP", "address": "%MW21", "unit": "step"}
+  ]
+}

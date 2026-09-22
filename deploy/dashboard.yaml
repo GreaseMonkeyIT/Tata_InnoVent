@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
         - name: dashboard
-          image: skn/dashboard:v0.1
-          imagePullPolicy: IfNotPresent
+          image: localhost:5000/skn/dashboard:v0.1
+          imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
           ports: [{ containerPort: 80 }, { containerPort: 443 }]
           env:
             - { name: TZ, value: "Asia/Kolkata" }
@@ -32,7 +32,8 @@ spec:
             - { name: auth, mountPath: /etc/nginx/auth, readOnly: true }
             - { name: tls,  mountPath: /etc/nginx/tls,  readOnly: true }
           readinessProbe:
-            httpGet: { path: /, port: 443, scheme: HTTPS }
+            # /healthz skips basic auth. A probe on / gets 401 and the pod never becomes Ready.
+            httpGet: { path: /healthz, port: 443, scheme: HTTPS }
             initialDelaySeconds: 3
           resources:
             requests: { cpu: 25m,  memory: 32Mi }

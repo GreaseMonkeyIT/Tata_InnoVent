@@ -1,0 +1,15 @@
+{
+  "task": "stamping-line",
+  "title": "Stamping line",
+  "description": "Both presses run continuously. Each press speed follows its DERATE_PCT setpoint, limited to 0..100, while the press is READY and CELL_ENABLE is 1.",
+  "st": "stamping-line.st",
+  "profile_hint": "siemens-s7-1200",
+  "cell": {
+    "name": "stamping",
+    "rail_default": "psu-a",
+    "machines_fixed": ["press-1", "press-2"]
+  },
+  "io_extra": [
+    {"asset": "SYS", "signal": "RUNNING", "address": "%MW20", "unit": "count"}
+  ]
+}

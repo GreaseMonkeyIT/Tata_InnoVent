@@ -334,6 +334,39 @@ scene, nothing floats, nothing rearranges.
 
 ---
 
+### Phase 2H — Virtual PLC fleet + act loop verb 1 (added 2026-09-15, LOG-058)
+**Goal:** an operator adds a virtual PLC, loads a Structured Text task into it, and watches it come
+online through real, observed phases. A verdict on a PLC-controlled machine gets an **Execute**
+button. SCADA writes one bounded setpoint over the PLC protocol, and the ledger records the relief.
+The judges said the most complete product has the best chance, so 3D verb 1 moves into Stage 2.
+
+**Design and contract:** `FLEET.md` (the one source of truth for ports, maps, and JSON shapes).
+
+**What shipped (locally, LOG-058):**
+1. `vplc/`: an IEC 61131-3 Structured Text subset compiler and a measured scan loop. Protocol
+   profiles: Siemens S7-1200 (S7comm DB1) and generic IEC (Modbus TCP). A field port for
+   plant-sim, control HTTP, signed enrollment. Tasks: stamping-line, packaging-cell,
+   packaging-cell-rush. The Micro820 profile and the bottle-filling task were removed (LOG-064).
+2. `plant/`: cells, the spare feeder `psu-c`, per-cell field wiring, `/cells`, `/domains`. The base
+   stamping cell (press-1, press-2) fails open, so the plant behaves as before without its PLC.
+3. `scada/`: fleet registry, S7comm and Modbus drivers, enrollment with HMAC device tokens, tag
+   quality, setpoint writes behind a SCADA token, `/metrics/fleet`, `plc:` domains.
+4. `correlation/service.py`: run-time domains from `DOMAIN_SOURCES`. Static domains never shrink.
+5. `api/`: fleet routes over a least-privilege Role in namespace `fleet`, the act loop
+   (cite-or-die proposals, 409 on a changed verdict, relief measured after 60 s), narrator controller line.
+6. `dashboard/`: Fleet section, Execute and action ledger, drive rows, N-rail floor with PLC cabinets.
+
+**Done when (box):** plc-stamping connected over S7comm with GOOD tags · Add PLC reaches all six
+phases · Load task changes the cell cadence · PS1 → Execute → press-1 amps fall and rail A recovers ·
+the relief row lands · PS0 stays silent with plc-stamping running through the soak.
+
+**Honesty notes:** a virtual PLC is a protocol profile, not vendor firmware, and every card says so.
+The protocols are real frames. The scan time is measured. The act loop writes one setpoint and never
+touches the trip interlock. The college lab PLC track is dropped (LOG-061). The plant plane runs
+on the physics sim only, and it needs no field data (LOG-076).
+
+---
+
 ## 3. STAGE 3 — Final display
 
 ### Phase 3A — Hardware ingest: a physical device in the Pods matrix
@@ -392,10 +425,9 @@ forecasts but **no causal edges** (edges need a coupled pair) — do not promise
 **Goal:** real controller data (scan time, fault bits, comm errors) flowing into the same
 dashboard, via our own EtherNet/IP stack.
 
-**Conditional phase — first action is a hardware-access check:** do we have a MicroLogix (college
-lab / internship contact) for the finals window? If **no**: run the tag stack against an SLC
-emulator and say so honestly, or drop 3B and let 3A+3C carry the hardware story. Decide, log it,
-move on — no sunk-cost building.
+**Status (2026-09-22):** the college lab hardware path is dropped (LOG-061). The project stays on
+the physics sim and the virtual PLC fleet, so this phase takes no field data (LOG-076). The steps
+below are the old plan.
 
 **Steps (if hardware confirmed):**
 1. Containerize `tag_server.py` from PLC-SCADA-Custom → one pod in a `factory-hw` namespace.
@@ -519,6 +551,7 @@ by design it starts supervised."
 | 3 | 2C′ plant families + domain witnesses + PS-series console | 1 weekend + soak | 2B′ | edges gated; findings-only mode is the fallback |
 | 4 | 2F virtual PLC + SCADA (3B pulled forward, virtual) | 1-2 weekends | 2B′; OpenPLC image proves on the box | yes → falls back to sim-direct scrape |
 | 5 | 2G 3D plant floor (FLOOR/GRAPH toggle) | 2-3 days | 2C′ (edges exist) + layout data | yes (display depth, not the spine) |
+| 5b | 2H virtual PLC fleet + 3D verb 1 (derate) | 1 week (LOG-058) | 2F, 2E ledger | no (completeness is judged) |
 | 6 | 2E secure pass | 1 weekend | — | no (theme-title word) |
 | 7 | 2D PoC package | 1 weekend | 2A/2B/2E | no |
 | 8 | 3A ESP32 ingest | 1 weekend | fan-in proxy, 2E device tokens | no (Stage-3 core) |
@@ -656,7 +689,7 @@ as the actual goals:
     coupling by node label — a service-layer change, noted in the code comments already).
   - **(c) Standalone mini-VISR node:** the Pi runs the whole small stack — this is the federation
     unit of §8, one "site" in miniature. Roadmap tier.
-- **D3 — PLC (MicroLogix).** Phase 3B, conditional on hardware access.
+- **D3 — PLC.** Phase 3B. The virtual PLC fleet on the physics sim replaces the lab hardware path (LOG-061, LOG-076).
 - **D4 — Vehicle (roadmap; optional proof point).** IF a real car + an OBD-II reader are actually
   available near finals: a Pi/ESP32 gateway reading a handful of real signals (RPM, coolant temp)
   into the Pods matrix would be the single most Tata-shaped demo beat we could stage — but it is

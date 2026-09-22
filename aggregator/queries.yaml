@@ -1,7 +1,8 @@
 # L2 query pack - PIVOT edition (LOG-029). ConfigMap-mounted in-cluster.
 # TWO PLANES, one window:
 #   Plane 1 (software, REAL kernel signals): the edge box watches ITSELF - the
-#     engine/SCADA/plant-sim pods in aiops|observability|plant.
+#     engine/SCADA/plant-sim pods in aiops|observability|plant, and the virtual PLC
+#     pods in fleet (2H, FLEET.md).
 #   Plane 2 (physical, SIMULATED physics): plant_* series from plant-sim, labeled
 #     namespace="plant", pod="<asset>" by the exporter (honorLabels on the scrape),
 #     so they ride the same ns/pod/signal window keys with zero aggregator changes.
@@ -9,14 +10,17 @@ interval_s: 5
 window_min: 15
 queries:
   # ---- plane 1: kernel/cgroup (real) -------------------------------------------------
-  cpu:          sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~"aiops|observability|plant",container!=""}[30s]))
-  mem:          sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"aiops|observability|plant",container!=""})
-  mem_limit:    sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~"aiops|observability|plant",resource="memory"})
-  psi_cpu:      sum by (namespace, pod) (rate(container_pressure_cpu_stalled_seconds_total{namespace=~"aiops|observability|plant"}[30s]))
-  psi_mem:      sum by (namespace, pod) (rate(container_pressure_memory_stalled_seconds_total{namespace=~"aiops|observability|plant"}[30s]))
-  psi_io:       sum by (namespace, pod) (rate(container_pressure_io_stalled_seconds_total{namespace=~"aiops|observability|plant"}[30s]))
-  io_write:     sum by (namespace, pod) (rate(container_fs_writes_bytes_total{namespace=~"aiops|observability|plant"}[30s]))
-  restarts:     rate(kube_pod_container_status_restarts_total{namespace=~"aiops|observability|plant"}[5m])
+  # mem reads the cadvisor-fast job only. The kubelet job also scrapes cAdvisor, and a sum
+  # over both jobs doubled the working set (tag-server 63 MiB against a real 31 MiB, 2026-09-17).
+  # mem feeds only the forecast pairs, so the learned baselines do not change.
+  cpu:          sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~"aiops|observability|plant|fleet",container!=""}[30s]))
+  mem:          sum by (namespace, pod) (container_memory_working_set_bytes{job="cadvisor-fast",namespace=~"aiops|observability|plant|fleet",container!=""})
+  mem_limit:    sum by (namespace, pod) (kube_pod_container_resource_limits{namespace=~"aiops|observability|plant|fleet",resource="memory"})
+  psi_cpu:      sum by (namespace, pod) (rate(container_pressure_cpu_stalled_seconds_total{namespace=~"aiops|observability|plant|fleet"}[30s]))
+  psi_mem:      sum by (namespace, pod) (rate(container_pressure_memory_stalled_seconds_total{namespace=~"aiops|observability|plant|fleet"}[30s]))
+  psi_io:       sum by (namespace, pod) (rate(container_pressure_io_stalled_seconds_total{namespace=~"aiops|observability|plant|fleet"}[30s]))
+  io_write:     sum by (namespace, pod) (rate(container_fs_writes_bytes_total{namespace=~"aiops|observability|plant|fleet"}[30s]))
+  restarts:     rate(kube_pod_container_status_restarts_total{namespace=~"aiops|observability|plant|fleet"}[5m])
   # ---- plane 2: plant physics (simulated substrate, real inference) ------------------
   # The exporter already labels series with the ASSET as pod= - pass through as-is.
   bus_voltage:  plant_bus_voltage_volts
@@ -26,6 +30,25 @@ queries:
   heat_load:    plant_heat_load_watts
   throughput:   plant_throughput_pct
   temp_limit:   plant_trip_threshold_celsius
+  # ---- plane 2 additions (SCENARIOS.md 4.1) ----------------------------------------
+  # feeder_current: the independent feeder meter per rail (PS4B current balance).
+  # cooling_shortfall and motor_tripped: the chiller-1 overload relay (PS2).
+  # net_offered, field_latency and net_util: the field-1 segment model (PS3).
+  feeder_current:    plant_feeder_current_amps
+  cooling_shortfall: plant_cooling_shortfall_watts
+  motor_tripped:     plant_motor_tripped
+  net_offered:       plant_net_offered_fps
+  field_latency:     plant_net_latency_ms
+  net_util:          plant_net_utilization_ratio
+  # PS7 (SCENARIOS.md 2.8): incomer-1 rides the existing bus_voltage and current_draw queries,
+  # because the exporter labels it pod="incomer-1" like any other plant entity. Only the fixed
+  # rating needs a key of its own, and it is display-only.
+  supply_nominal:    plant_supply_nominal_volts
+  # ---- 2H virtual PLC fleet: display-only keys (not in ENGINE_SIGNALS) --------------
+  # scan time is measured by the PLC runtime and read by SCADA over the PLC protocol.
+  plc_scan_ms:     vplc_scan_time_ms
+  plc_poll_rtt:    scada_poll_rtt_ms
+  commanded_speed: plant_commanded_speed_pct
 thresholds:
   cpu_util: 0.80
   psi_some_avg: 0.15

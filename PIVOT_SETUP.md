@@ -13,6 +13,34 @@ the box (the Syncthing-synced `Tata_InnoVent` folder). Syncthing does not carry 
 
 ---
 
+## Resume after a pause (the box already has k3s, the volumes, and the registry)
+
+Two scripts do sections 4 to 7 for an existing install. They run on the box as the normal user.
+
+1. The operator reboots when `/var/run/reboot-required` exists: `sudo reboot`. Never reboot during a soak.
+2. The operator runs `bash ~/Tata_InnoVent/deploy/resume.sh`. It writes `registries.yaml`, starts k3s,
+   waits for the node, and creates the 2E Secrets (typed passwords) and the 2H Secrets. It is the only
+   script that needs sudo. At the end it starts step 3 in the screen session `visr-golive`
+   (set `GOLIVE=0` to skip that).
+3. `deploy/golive.sh` writes its log to `/var/tmp/visr-golive.log`. To run it by hand:
+   `bash ~/Tata_InnoVent/deploy/golive.sh 2>&1 | tee /var/tmp/visr-golive.log`. It removes
+   the old-bench leftovers, applies every manifest in order, restarts every Deployment onto the
+   registry images, and verifies the front door, the plant, the PLCs, SCADA, the engine, and the api.
+   It exits with the number of failed checks. It does not wipe the engine memory.
+4. When the engine must learn the plant again (after a long pause, or after a change to the plant, the
+   fleet, or the signal set), run `deploy/factory-up.sh` in screen:
+   `screen -dmS visr-factory bash -c 'bash ~/Tata_InnoVent/deploy/factory-up.sh > /var/tmp/visr-factory.log 2>&1'`.
+   It removes the UI-created PLCs, pushes the images, runs `golive.sh`, backs up and wipes the engine
+   memory while the engine is stopped (step 2 below), and starts the PS0 watcher. The watcher writes one
+   verdict line per minute to `/var/tmp/visr-ps0-soak.log`. `WIPE=0` keeps the memory. `PUSH=0` skips
+   the push.
+
+Over SSH, export `KUBECONFIG=~/.kube/config` first. A non-interactive shell does not set it, and
+kubectl then reads the root-only k3s config. Run long jobs under `screen -dmS`, because user linger
+is off and `systemd-run --user` jobs stop with the SSH session.
+
+---
+
 ## 0. One-time prerequisites (skip what already exists — the box has all of these)
 
 ```bash
@@ -54,10 +82,16 @@ helm as root against k3s's config).
 The engine keeps learned baselines, edges, and cases in its memory DB. Wipe it after a change to
 the signal set or after a long pause. Then run the LOG-035 soak before any demo.
 
+`deploy/factory-up.sh` step 4 does the wipe safely: it stops the engine, copies the memory to
+`~/visr-backups`, wipes it from a maintenance pod, and starts the engine. Do not wipe during a rolling
+restart. The engine keeps its database files open and creates some of them on first use, so the old
+pod can write its learned state into the new files. The manual order:
+
 ```bash
-ENGINE_POD=$(kubectl -n aiops get pod -l app=correlation-engine -o name | head -1)
-kubectl -n aiops exec "$ENGINE_POD" -- sh -c 'rm -f /var/lib/skn/memory/*.db*' || true
-kubectl -n aiops rollout restart deploy/correlation-engine
+kubectl -n aiops scale deploy/correlation-engine --replicas=0   # wait until the pod is gone
+# start a pod that mounts engine-memory-pvc (the pod in deploy/factory-up.sh step 4), copy the
+# files out as a backup, then run: rm -f /var/lib/skn/memory/*.db*
+kubectl -n aiops scale deploy/correlation-engine --replicas=1
 ```
 
 ## 3. Prepare the 64Gi/5Gi volumes (with claimRef stickiness)
@@ -76,56 +110,125 @@ sed "s/<NODE_NAME>/$NODE/g" deploy/slowdisk.yaml | kubectl apply -f -
 kubectl get pv                          # CLAIM column pre-set to plant/...
 ```
 
-## 4. Build and import the images
+## 4. Build and push the images (local registry, no sudo per deploy)
+
+The box runs a local registry on `127.0.0.1:5000`. Every skn manifest pulls
+`localhost:5000/skn/<name>:v0.1` with `imagePullPolicy: Always`. A build, a push, and a rollout
+restart deploy a new image, and no step needs sudo.
+
+**4.0 One-time setup.** Run this once, before k3s starts:
+
+```bash
+docker volume create visr-registry
+docker run -d --restart=always --name visr-registry \
+  -p 127.0.0.1:5000:5000 -v visr-registry:/var/lib/registry registry:2
+# k3s must pull localhost:5000 over plain HTTP. This file is read when k3s starts.
+sudo tee /etc/rancher/k3s/registries.yaml >/dev/null <<'EOF'
+mirrors:
+  "localhost:5000":
+    endpoint:
+      - "http://localhost:5000"
+EOF
+```
+
+**4.1 Build and push.**
 
 ```bash
 cd "$REPO"
-docker build -t skn/aggregator:v0.1         aggregator/
-docker build -t skn/correlation-engine:v0.1 correlation/
-docker build -t skn/api:v0.1                api/
-docker build -t skn/dashboard:v0.1          dashboard/
-docker build -t skn/plant-sim:v0.1          plant/
-docker build -t skn/tag-server:v0.1         scada/   # 2F.2 SCADA tag server
-docker build -t skn/openplc:v0.1            plc/     # 2F: SLOW source build (~10-15 min, once)
-
-for img in skn/aggregator:v0.1 skn/correlation-engine:v0.1 skn/api:v0.1 skn/dashboard:v0.1 \
-           skn/plant-sim:v0.1 skn/tag-server:v0.1 skn/openplc:v0.1; do
-  docker save $img | sudo k3s ctr images import -
-done
-sudo k3s ctr images ls | grep skn/      # all seven present
+make push                              # all eight images: build, tag, push
+make push ONLY="api dashboard"         # only the named images
+curl -s http://127.0.0.1:5000/v2/_catalog
+# openplc is a SLOW source build (~10-15 min). Skip it when the cached image has the upload fix
+# (LOG-036): this prints 1 or more when the fix is present.
+docker run --rm --entrypoint grep skn/openplc:v0.1 -c prog_file /entrypoint.sh
 # historian uses the public timescale/timescaledb:latest-pg16. k3s pulls it on first schedule.
 ```
 
-`make import` runs the same builds and imports in one command.
+**4.2 Restart after a push.** The tag stays `v0.1`, so `kubectl apply` rolls a Deployment only when
+its manifest changed. Restart the Deployment of each pushed image. The new pod pulls the new push:
+
+```bash
+kubectl -n aiops rollout restart deploy/correlation-engine deploy/api deploy/dashboard
+kubectl -n plant rollout restart deploy/plant-sim deploy/tag-server
+kubectl -n fleet rollout restart deploy/plc-stamping
+```
+
+Fallback without the registry: `make import` imports into the k3s containerd with sudo. Then set
+the manifests back to `skn/<name>:v0.1` with `imagePullPolicy: IfNotPresent`.
 
 ## 5. Deploy the stack
 
 ```bash
 cd "$REPO"
 
-# 5.0 the 2E Secrets FIRST. The dashboard readiness probe fails closed without them (LOG-053).
+# 5.0 the 2E Secrets FIRST. The dashboard does not start without them (LOG-053).
+#     openssl makes the password hashes, so no apt install and no sudo. The passwords stay out
+#     of the shell history and the process list. A re-run is safe, but it makes a NEW operator
+#     token: then restart deploy/api and deploy/dashboard together.
 kubectl get ns aiops >/dev/null 2>&1 || kubectl create ns aiops
-sudo apt-get install -y apache2-utils   # htpasswd (once)
-htpasswd -nbB viewer   '<viewer-pass>'   > /tmp/htpasswd
-htpasswd -nbB operator '<operator-pass>' >> /tmp/htpasswd
-TOKEN=$(openssl rand -hex 24)
+umask 077; D=$(mktemp -d)
+read -rsp 'viewer password: ' VP; echo
+read -rsp 'operator password: ' OP; echo
+printf 'viewer:%s\noperator:%s\n' \
+  "$(printf '%s' "$VP" | openssl passwd -6 -stdin)" \
+  "$(printf '%s' "$OP" | openssl passwd -6 -stdin)" > "$D/htpasswd"
+unset VP OP
+openssl rand -hex 24 | tr -d '\n' > "$D/token"
 openssl req -x509 -newkey rsa:2048 -nodes -days 730 -subj "/CN=visr.local" \
-  -keyout /tmp/tls.key -out /tmp/tls.crt
-kubectl -n aiops create secret generic visr-auth \
-  --from-file=htpasswd=/tmp/htpasswd --from-literal=operator-token="$TOKEN"
-kubectl -n aiops create secret tls visr-tls --cert=/tmp/tls.crt --key=/tmp/tls.key
-rm /tmp/htpasswd /tmp/tls.key /tmp/tls.crt
+  -keyout "$D/tls.key" -out "$D/tls.crt" 2>/dev/null
+kubectl -n aiops create secret generic visr-auth --from-file=htpasswd="$D/htpasswd" \
+  --from-file=operator-token="$D/token" --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n aiops create secret tls visr-tls --cert="$D/tls.crt" --key="$D/tls.key" \
+  --dry-run=client -o yaml | kubectl apply -f -
+rm -rf "$D"
 
-# 5.1 telemetry + engine + dashboard via skctl (idempotent over an existing observability)
-./deploy/skctl up --components telemetry,engine,language,dashboard
-#   - installs/upgrades kube-prometheus-stack (+ loki; alloy may fail = known-ignorable) + caretta
+# 5.0b the 2H fleet Secrets (FLEET.md section 12). Random keys, no human passwords.
+#      enroll-key signs every PLC token. scada-write-token lets only the api write setpoints.
+#      Namespace fleet comes from deploy/fleet.yaml, so create it first if it is missing.
+kubectl get ns plant >/dev/null 2>&1 || kubectl create ns plant
+kubectl get ns fleet >/dev/null 2>&1 || kubectl create ns fleet
+umask 077; D=$(mktemp -d)
+openssl rand -hex 32 | tr -d '\n' > "$D/enroll-key"
+openssl rand -hex 24 | tr -d '\n' > "$D/scada-write-token"
+for ns in aiops plant; do
+  kubectl -n "$ns" create secret generic visr-fleet --from-file="$D/enroll-key" \
+    --from-file="$D/scada-write-token" --dry-run=client -o yaml | kubectl apply -f -
+done
+# the base PLC token = HMAC-SHA256(enroll-key, plc name), the same rule the api uses for new PLCs
+printf '%s' plc-stamping | openssl dgst -sha256 -hmac "$(cat "$D/enroll-key")" -r | cut -d' ' -f1 \
+  | tr -d '\n' > "$D/token"
+kubectl -n fleet create secret generic plc-stamping-token --from-file=token="$D/token" \
+  --dry-run=client -o yaml | kubectl apply -f -
+rm -rf "$D"
+# A re-run makes NEW keys. Then restart api, tag-server, and every PLC together.
+
+# 5.0c the historian Secret (LOG-076). The historian and the tag server read the database password
+#      from Secret plant/historian-auth. No manifest holds it. The script makes a random password.
+#      If the historian already runs, the script changes the password in the database first.
+#      deploy/golive.sh runs the same script, and a second run changes nothing.
+bash deploy/historian-auth.sh
+
+# 5.1 engine + dashboard via skctl. NO telemetry component on an existing install.
+./deploy/skctl up --components engine,language,dashboard
 #   - re-applies the aggregator ConfigMap from aggregator/queries.yaml  <- the plant query pack
 #   - deploys aggregator + correlation-engine + api + dashboard into aiops
+# The telemetry component is for a FRESH install only. skctl does not pin helm chart versions,
+# so on an existing install it upgrades kube-prometheus-stack past its CRDs and wipes the
+# Prometheus data. The box helm auto-updated to v4 (snap). The helm releases come back with k3s.
 
-# 5.2 the Grafana dashboards (d-solo panels embedded in VISR; sidecar reloads ~30s):
+# 5.2 the Grafana dashboards (d-solo panels in the console Trends tab; sidecar reloads ~30s):
 #     skn-psi = io+cpu+mem pressure · skn-plant = bus voltage / current draw / coolant temps
 kubectl apply -f deploy/grafana-psi-dashboard.yaml
 kubectl apply -f deploy/grafana-plant-dashboard.yaml
+
+# 5.2b Grafana serves from /grafana/ (LOG-062). The console is HTTPS, and a browser blocks a
+#      plain-HTTP frame inside it as mixed content, so nginx proxies /grafana/ on the console's own
+#      origin, behind the same login. Use kubectl set env, NOT a helm upgrade. The same values again
+#      change nothing. Direct access moves to http://<node>:30030/grafana/.
+kubectl -n observability set env deploy/prom-grafana -c grafana \
+  GF_SERVER_ROOT_URL='%(protocol)s://%(domain)s:%(http_port)s/grafana/' GF_SERVER_SERVE_FROM_SUB_PATH=true
+kubectl -n observability rollout status deploy/prom-grafana --timeout=180s
+curl -s http://127.0.0.1:30030/grafana/api/health        # expect "database": "ok"
 
 # 5.3 the plant: namespace, PVCs (bind to the claimRef'd PVs), sim, historian, ServiceMonitor
 kubectl apply -f plant/deploy.yaml
@@ -140,6 +243,15 @@ kubectl apply -f deploy/openplc.yaml
 #      delete the plant-sim ServiceMonitor ONLY after the tag values match the sim through a
 #      PS1 + PS5 run (LOG-055). Rollback = the reverse pair.
 kubectl apply -f scada/deploy.yaml
+
+# 5.3d the 2H virtual PLC fleet: namespace fleet, the api Role (fleet only), the base PLC
+#      plc-stamping (S7-1200 profile, controls press-1 and press-2), and the /metrics/fleet
+#      ServiceMonitor. plant-sim fails OPEN while plc-stamping is absent, so the order is free.
+kubectl apply -f deploy/fleet.yaml
+kubectl -n fleet rollout status deploy/plc-stamping --timeout=120s
+kubectl -n plant exec deploy/tag-server -- python -c \
+  "import urllib.request as u; print(u.urlopen('http://127.0.0.1:9300/fleet').read()[:300])"
+#   expect plc-stamping with "connected": true and GOOD tags
 
 # 5.4 verify storage stuck to the right pods: THE claimRef check
 kubectl get pvc -n plant
@@ -174,22 +286,30 @@ curl -s -X POST localhost:9200/reset
 
 # 6.5 dashboard (VISR)
 echo "https://<box-ip-or-tailscale>:30443"     # 30080 redirects here. Log in as viewer or operator.
-# Notes:
-#  - the MACHINES section is the PRIMARY view: plant assets grouped by rail + coolant loop,
-#    V/A/°C/throughput tiles + sparklines + 3 skn-plant Grafana trend embeds, fed by /api/plant
-#    (sim /state proxy), plus the SCADA tag browser (/api/tags). The Pods matrix is secondary.
-#  - the Scenarios console is the PS-series: PS1/PS2/PS5 Fire/Reset buttons hit
-#    /api/scenarios/PS*/trigger -> plant-sim /fault (operator login when 2E auth is enforced)
+# Notes (the operator console, LOG-062, one screen at 1920x1080 and 100 % zoom):
+#  - Assets (left) is the PRIMARY plant view: machines grouped by rail and coolant loop, fed by
+#    /api/plant (sim /state proxy). A click opens the machine in the Selected tab: trends plus its
+#    SCADA tags (/api/tags). The Edge tab holds the pod gauges. The Trends tab holds the Grafana
+#    panels through /grafana/ (step 5.2b).
+#  - Fault injection (left, bottom) is the PS-series from /api/scenarios (SCENARIOS.md): PS1 to PS6.
+#    Fire and Reset hit /api/scenarios/<id>/trigger and /reset. The api sends each id to its owner:
+#    plant-sim /fault, rogue-ews (PS4A), or the tag server /chaos (PS6). Operator login when 2E auth
+#    is enforced. Reset plant calls /api/scenarios/reset-all.
+#  - the Trends graphs stay blank until step 5.2b has run. The browser console then shows 404s
+#    from /grafana/, not a Mixed Content error.
 ```
 
 ## 7. What works now vs what's next (honest state)
 
 | Works after this runbook | Pending (the box session, `POC_SCRIPT.md` step 0) |
 |---|---|
-| 64Gi/5Gi volumes laid out and **claimRef-pinned** | **2A/2E box-verify:** PS0 silent, PS1 roots press-1, PS2 roots compressor-1, PS5 forecast card. Login wall, 401 without a token, audit rows. |
-| Plant physics live: PS1/PS2/PS5 injectable, cascades emerge | **OpenPLC box-verify:** headless program upload (`plc/entrypoint.sh`) and the trip latch re-confirm. Until then the sim runs open-loop. |
+| 64Gi/5Gi volumes laid out and **claimRef-pinned** | **Box-verify after the soak (`deploy/proof-run.sh`):** PS0 silent, PS1 roots press-1, Execute relief, PS5 forecast lead, PS2 roots compressor-1 with the loop hop, PS3 roots hmi-gw, PS4A and PS4B integrity findings, PS6 leak card then the blind SCADA view. `deploy/refusals.sh`: 401, 409, 403 with ledger rows. |
+| Plant physics live: PS1 to PS6 injectable (SCENARIOS.md), cascades emerge | **OpenPLC box-verify: DONE (LOG-060).** Headless upload compiled, PS5 tripped press-1 and furnace-1, the latch held, one reset cleared it. |
 | **2C′ (LOG-033):** rail/loop domain witnesses, `PLANT_SOURCES`, sag inversion, trip forecast. Env baked in `deploy/engine.yaml`. Fixtures green (`correlation/tests/test_plant.py`). | Tag-server stability watch, then the ServiceMonitor cutover pair (LOG-055) |
-| **2E front door (LOG-053):** TLS + basic auth, operator token gate, hash-chained audit ledger | LOG-035 soak (`soak/soak.sh`), then the recording |
-| **2F.2 tag server + tag browser (LOG-055):** tag DB, quality, historian ingest into `plant_tags` | **2G 3D plant floor** (FLOOR/GRAPH toggle) |
+| **2E front door (LOG-053):** TLS + basic auth, operator token gate, hash-chained audit ledger | **2H box-verify:** plc-stamping connected over S7comm, Add PLC shows six real phases, Load task swaps the cadence, Execute derates press-1 and the relief row lands |
+| **2F.2 tag server + tag browser (LOG-055):** tag DB, quality, historian ingest into `plant_tags` | LOG-035 soak (`soak/soak.sh`), then the recording |
+| **2G 3D plant floor (LOG-038):** FLOOR/EDGE toggle, N rails, PLC cabinets per cell | |
+| **2H virtual PLC fleet (LOG-058, `FLEET.md`):** vPLC runtime, S7comm and Modbus profiles, enrollment, run-time domains | |
+| **3D act loop verb 1 (LOG-058):** Execute derate with cite-or-die, action ledger, measured relief | |
 | Plant families ENABLED (engine.yaml). Rollback = drop them from `ENGINE_SIGNALS` | |
 | PLC trip loop in the sim (closed-loop when OpenPLC answers; trips latch, `/reset` pulses the reset word) | |

@@ -22,22 +22,24 @@
   .panel>.head .sub{font-weight:400;color:var(--text-weak);font-size:11px}
   .panel>.body{padding:10px;flex:1;min-height:0;overflow:auto}
   .stat{align-items:center;justify-content:center;text-align:center;padding:14px 8px}
-  .stat .v{font-size:28px;font-weight:600;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stat .v{font-size:28px;font-weight:600;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   .stat .l{font-size:11px;color:var(--text-weak);text-transform:uppercase;letter-spacing:.5px;margin-top:6px}
   table{width:100%;border-collapse:collapse;font-size:12px}
-  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap;vertical-align:top}
+  td.wr{white-space:normal;min-width:220px}
   th{color:var(--text-weak);font-weight:600;text-transform:uppercase;font-size:10.5px;letter-spacing:.4px}
   .chip{padding:1px 7px;border-radius:10px;font-size:11px;border:1px solid}
   .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle}
+  .sq{width:8px;height:8px;display:inline-block;margin-right:5px;vertical-align:middle}
   .muted{color:var(--text-weak)} .faint{color:var(--text-faint)}
   .ev{padding:4px 0;border-bottom:1px solid var(--border);font-size:12px;display:flex;gap:10px}
   .ev .ts{color:var(--text-faint);font-variant-numeric:tabular-nums}
   .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--text-weak)}
   .note{font-size:11px;color:var(--text-faint);line-height:1.5;margin-top:8px}
-  .ok{color:var(--green)} .warn{color:var(--orange)} .bad{color:var(--red)}
+  .ok{color:var(--green)} .warn{color:var(--orange)} .bad{color:var(--red)} .integ{color:var(--purple)}
   svg{display:block;width:100%;height:auto}
-  .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}.c3{grid-column:span 3}
-  @media(max-width:820px){.c8,.c6,.c4,.c3{grid-column:span 12}}
+  .c12{grid-column:span 12}.c8{grid-column:span 8}.c6{grid-column:span 6}.c4{grid-column:span 4}.c3{grid-column:span 3}.c2{grid-column:span 2}
+  @media(max-width:820px){.c8,.c6,.c4,.c3,.c2{grid-column:span 12}}
 </style>
 </head>
 <body>
@@ -50,15 +52,24 @@
 <script>
 const SOAK = __SOAK_DATA__;
 
-const PHASE_COLOR = {
-  baseline:"rgba(204,204,220,.10)", cooldown:"rgba(115,191,105,.10)",
-  PS1:"rgba(110,159,255,.32)", PS2:"rgba(255,152,48,.32)", PS5:"rgba(242,73,92,.32)"
-};
-const SCEN_COLOR = {PS1:"#6e9fff", PS2:"#ff9830", PS5:"#f2495c"};
+// One color per scenario id (SCENARIOS.md). Green stays for "ok" and the cooldown ribbon, and purple
+// stays for the integrity mark. An id with no color here draws in grey.
+const SCEN_COLOR = {PS1:"#6e9fff", PS2:"#ff9830", PS3:"#fade2a", PS4A:"#e06bd0", PS4B:"#c8a37a",
+                    PS5:"#f2495c", PS6:"#5bd0e0"};
+const OTHER = "#8e8e9a";
+const colorOf = s => SCEN_COLOR[s] || OTHER;
+function rgba(hex, a){
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;
+}
+const PHASE_COLOR = {baseline:"rgba(204,204,220,.10)", cooldown:"rgba(115,191,105,.10)"};
+const phaseColor = ph => PHASE_COLOR[ph] || rgba(colorOf(ph), .32);
+const INTEG = "#b877d9", FP = "#ff9830", BLIND = "rgba(204,204,220,.55)";
 const esc = s => String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const el = (h)=>{const d=document.createElement("div");d.innerHTML=h;return d.firstElementChild;};
 
-function pct(x){ return (x*100).toFixed(0)+"%"; }
+function pct(x){ return x==null ? "—" : (x*100).toFixed(0)+"%"; }
+function secs(x){ return x==null ? "—" : "~"+Math.round(x)+"s"; }
 function panel(cls, head, sub, bodyHTML){
   return `<div class="panel ${cls}"><div class="head"><span>${head}</span>${sub?`<span class="sub">${sub}</span>`:""}</div><div class="body">${bodyHTML}</div></div>`;
 }
@@ -71,45 +82,78 @@ document.getElementById("topmeta").innerHTML =
 let html = "";
 
 // ---- stat tiles ----
+const fpTile = S.quiet_samples ? `${S.fp_samples||0} / ${S.quiet_samples}` : "—";
 const tiles = [
-  ["Duration", S.duration_min>=60 ? (S.duration_min/60).toFixed(1)+" h" : S.duration_min+" min"],
-  ["Cycles", S.n_cycles],
-  ["Samples", S.n_samples],
-  ["Scenarios", esc(S.scenarios)],
+  ["c2", "Duration", S.duration_min>=60 ? (S.duration_min/60).toFixed(1)+" h" : S.duration_min+" min"],
+  ["c2", "Cycles", S.n_cycles],
+  ["c2", "Samples", S.n_samples],
+  ["c4", "Scenarios", esc(S.scenarios)],
+  ["c2", "False positives", fpTile],
 ];
-html += tiles.map(t=>`<div class="panel c3 stat"><div class="v">${t[1]}</div><div class="l">${t[0]}</div></div>`).join("");
+html += tiles.map(t=>`<div class="panel ${t[0]} stat"><div class="v" title="${t[2]}">${t[2]}</div><div class="l">${t[1]}</div></div>`).join("");
+
+// ---- warnings: an id with no rule, or with no samples, is listed, never dropped ----
+if((S.warnings||[]).length){
+  html += panel("c12", "Warnings", "", S.warnings.map(w=>`<div class="ev"><span class="warn">${esc(w)}</span></div>`).join(""));
+}
 
 // ---- per-scenario summary ----
 function verdictCell(s, d){
-  if(d.forecast){
-    const ok = d.oom_cycle_rate>0;
-    const eta = d.min_oom_eta_s!=null ? ` · best ETA ~${Math.round(d.min_oom_eta_s)}s` : "";
-    return `<span class="${ok?'ok':'bad'}">${ok?'forecast card fired':'no forecast card'} (${pct(d.oom_cycle_rate)} of cycles)${eta}</span>`;
+  if(d.kind==="unknown" || !d.kind) return `<span class="faint">not scored: no rule for this id</span>`;
+  const rate = d.kind==="root" ? d.hit_rate : d.hit_cycle_rate;
+  const cls = rate>=0.5?"ok":(rate>0?"warn":"bad");
+  let main;
+  if(d.kind==="root"){
+    main = `root ${esc(d.dominant_root)} · correct ${pct(d.hit_rate)}`;
+  } else if(d.kind==="integrity"){
+    main = d.hit_cycle_rate>0
+      ? `<span class="integ">${esc(d.expect)}</span> open in ${pct(d.hit_rate)} of samples (${pct(d.hit_cycle_rate)} of cycles)`
+      : `no ${esc(d.expect)} finding`;
+  } else if(d.kind==="forecast"){
+    main = d.hit_cycle_rate>0 ? `forecast card fired (${pct(d.hit_cycle_rate)} of cycles)` : `no ${esc(d.expect)} forecast card`;
+    if(d.min_eta_s!=null) main += ` · best ETA ${secs(d.min_eta_s)}`;
+  } else if(d.kind==="blind"){
+    main = `leak card ${pct(d.card_cycle_rate)} of cycles · SCADA view blind ${pct(d.blind_cycle_rate)} of cycles`;
+    if(d.min_eta_s!=null) main += ` · best ETA ${secs(d.min_eta_s)}`;
   }
-  const correct = d.correct_rate, cls = correct>=0.5?"ok":(correct>0?"warn":"bad");
-  return `<span class="${cls}">root ${esc(d.dominant_root)} · correct ${pct(correct)}</span>`;
+  let out = `<span class="${cls}">${main}</span>`;
+  const more = [];
+  if(d.channel_rate!=null) more.push(`names ${esc(d.channel)} in ${pct(d.channel_rate)} of hits`);
+  if(d.trip_cycle_rate!=null) more.push(`${esc(d.trip)} tripped in ${pct(d.trip_cycle_rate)} of cycles, median ${secs(d.median_trip_s)} after the fire`);
+  if(d.segment) more.push(`${esc(d.segment)} peak ρ ${d.peak_util!=null?d.peak_util.toFixed(2):"—"} · peak drop ${pct(d.peak_drop)}`);
+  if(d.kind!=="root" && d.dominant_n) more.push(`root ${esc(d.dominant_root)} in ${d.dominant_n} samples`);
+  if(more.length) out += `<div class="muted">${more.join("<br>")}</div>`;
+  if(d.fire_failed) out += `<div class="bad">trigger failed in ${d.fire_failed} cycle(s)</div>`;
+  return out;
+}
+function fpCell(d){
+  const qb = d.quiet_baseline||0, qc = d.quiet_cooldown||0;
+  if(!qb && !qc) return `<span class="faint">—</span>`;
+  const n = (d.fp_baseline||0) + (d.fp_cooldown||0);
+  return `<span class="${n?'warn':'ok'}">${n} / ${qb+qc}</span><div class="faint">baseline ${d.fp_baseline||0}/${qb} · cooldown ${d.fp_cooldown||0}/${qc}</div>`;
 }
 let rows = SOAK.scen_order.map(s=>{
   const d = SOAK.per_scenario[s] || {};
   const ttd = d.median_ttd_s!=null ? Math.round(d.median_ttd_s)+"s" : "—";
   return `<tr>
-    <td><span class="dot" style="background:${SCEN_COLOR[s]}"></span><b>${s}</b></td>
+    <td><span class="dot" style="background:${colorOf(s)}"></span><b>${esc(s)}</b></td>
     <td>${esc(d.expected)}</td>
-    <td>${verdictCell(s,d)}</td>
+    <td class="wr">${verdictCell(s,d)}</td>
     <td>${d.cycles||0}</td>
-    <td>${ttd}</td>
-    <td class="faint">${esc(d.note)}</td>
+    <td>${ttd}${d.fire_timed===false && d.median_ttd_s!=null ? '<div class="faint">from 1st sample</div>' : ''}</td>
+    <td>${fpCell(d)}</td>
+    <td class="faint wr">${esc(d.note)}</td>
   </tr>`;
 }).join("");
 html += panel("c12", "Per-scenario outcome", "real faults, real verdicts — gaps shown as-is",
-  `<table><thead><tr><th>Scenario</th><th>Expected root</th><th>Result</th><th>Cycles</th><th>Median time-to-detect</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>
-   <div class="note">"Correct" = share of in-fault samples whose top root equals the expected source. PS1 should be high. PS2 tests the young-baseline door. PS5 has no expected machine root: its success is the trip forecast card firing before the trip.</div>`);
+  `<table><thead><tr><th>Scenario</th><th>Expected</th><th>Result</th><th>Cycles</th><th>Median time-to-detect</th><th>False positives</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>
+   <div class="note">Each id has its own hit rule. PS1, PS2 and PS3: the top root equals the expected source ("correct" = share of in-fault samples). PS4A and PS4B: an open integrity finding of the expected kind. PS5: a trip forecast card. PS6: a leak card on tag-server, or /api/tags answers "unavailable" (the SCADA view is blind). Time-to-detect starts at the fire call. False positives count baseline and cooldown samples that show any root, integrity finding, or forecast card. A root can stay for a short time after a reset, so read the cooldown count with that in mind.${S.baseline_chiller_trips ? ` <span class="bad">chiller-1 tripped in ${S.baseline_chiller_trips} baseline samples.</span>` : ""}</div>`);
 
 // ---- timeline (SVG) ----
 const series = SOAK.series.filter(p=>p.epoch);
 function timelineSVG(){
   if(series.length<2) return `<div class="muted">not enough samples to chart</div>`;
-  const W=1240, H=200, padL=8, padR=8, top=8, ribbonH=22, chartTop=44, chartH=H-chartTop-22;
+  const W=1240, H=214, padL=8, padR=8, top=8, ribbonH=22, markY=46, chartTop=58, chartH=H-chartTop-22;
   const t0=series[0].epoch, t1=series[series.length-1].epoch, span=Math.max(1,t1-t0);
   const X = e => padL + (e-t0)/span*(W-padL-padR);
   const maxE = Math.max(1, ...series.map(p=>Math.max(p.n_edges, p.n_findings)));
@@ -118,17 +162,27 @@ function timelineSVG(){
   // phase ribbon
   for(let i=0;i<series.length-1;i++){
     const p=series[i], x=X(p.epoch), w=Math.max(1,X(series[i+1].epoch)-x);
-    s+=`<rect x="${x.toFixed(1)}" y="${top}" width="${w.toFixed(1)}" height="${ribbonH}" fill="${PHASE_COLOR[p.phase]||'transparent'}"/>`;
+    s+=`<rect x="${x.toFixed(1)}" y="${top}" width="${w.toFixed(1)}" height="${ribbonH}" fill="${phaseColor(p.phase)}"/>`;
+    if(p.blind) s+=`<rect x="${x.toFixed(1)}" y="${chartTop}" width="${w.toFixed(1)}" height="${chartH}" fill="rgba(204,204,220,.06)"/>`;
   }
   s+=`<text x="${padL}" y="${top+ribbonH-6}" font-size="10" fill="rgba(204,204,220,.55)">phase</text>`;
-  // detection dots (on the ribbon baseline)
   series.forEach(p=>{
+    const x = X(p.epoch);
+    // detection dots under the ribbon: a root (green = expected, red = not), or a non-root hit (green)
     if(p.root){
       const col = p.matched===true?"#73bf69":(p.matched===false?"#f2495c":"#6e9fff");
-      s+=`<circle cx="${X(p.epoch).toFixed(1)}" cy="${(top+ribbonH+5).toFixed(1)}" r="2.4" fill="${col}"/>`;
+      s+=`<circle cx="${x.toFixed(1)}" cy="${(top+ribbonH+5).toFixed(1)}" r="2.4" fill="${col}"/>`;
+    } else if(p.hit){
+      s+=`<circle cx="${x.toFixed(1)}" cy="${(top+ribbonH+5).toFixed(1)}" r="2.4" fill="#73bf69"/>`;
     }
+    // a false positive in a quiet window: an orange tick above the ribbon
+    if(p.fp) s+=`<rect x="${(x-1).toFixed(1)}" y="1" width="2" height="6" fill="${FP}"/>`;
+    // mark row: integrity finding (purple square), SCADA view blind (grey bar), chiller-1 trip (red ring)
+    if(p.integrity>0) s+=`<rect x="${(x-2.5).toFixed(1)}" y="${markY-2.5}" width="5" height="5" fill="${INTEG}"/>`;
+    if(p.blind) s+=`<rect x="${(x-1).toFixed(1)}" y="${markY+4}" width="2" height="5" fill="${BLIND}"/>`;
+    if(p.trip) s+=`<circle cx="${x.toFixed(1)}" cy="${markY-7}" r="2.2" fill="none" stroke="#f2495c" stroke-width="1"/>`;
     if(p.oom!=null){
-      s+=`<rect x="${(X(p.epoch)-1).toFixed(1)}" y="${chartTop}" width="2" height="${chartH}" fill="rgba(242,73,92,.5)"/>`;
+      s+=`<rect x="${(x-1).toFixed(1)}" y="${chartTop}" width="2" height="${chartH}" fill="rgba(242,73,92,.5)"/>`;
     }
   });
   // gridline + axis labels
@@ -149,20 +203,25 @@ function timelineSVG(){
   return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">${s}</svg>`;
 }
 const legend = `<div class="legend">
-  ${SOAK.scen_order.map(s=>`<span><span class="dot" style="background:${SCEN_COLOR[s]}"></span>${s}</span>`).join("")}
-  <span><span class="dot" style="background:#73bf69"></span>root = expected</span>
+  ${SOAK.scen_order.map(s=>`<span><span class="dot" style="background:${colorOf(s)}"></span>${esc(s)}</span>`).join("")}
+  <span><span class="dot" style="background:#73bf69"></span>root = expected, or a hit</span>
   <span><span class="dot" style="background:#f2495c"></span>root ≠ expected</span>
+  <span><span class="sq" style="background:${INTEG}"></span>integrity finding</span>
+  <span><span class="sq" style="background:${BLIND}"></span>SCADA view blind</span>
+  <span><span class="dot" style="border:1px solid #f2495c"></span>chiller-1 tripped</span>
+  <span style="color:${FP}">▮ false positive (baseline or cooldown)</span>
   <span style="color:#6e9fff">— accepted edges</span>
   <span style="color:#ff9830">— findings</span>
   <span style="color:#f2495c">| forecast card</span>
 </div>`;
-html += panel("c12", "Timeline", "phase ribbon · detections · edge & finding counts (UTC)",
+html += panel("c12", "Timeline", "phase ribbon · detections · integrity · edge & finding counts (UTC)",
   timelineSVG()+legend);
 
 // ---- event log ----
+const EV_CLS = {oom:"bad", forecast:"bad", integrity:"integ", blind:"warn", trip:"warn", fp:"warn", fail:"bad"};
 const evs = (SOAK.events||[]).slice().reverse();
 html += panel("c12", "Notable events", `${evs.length} shown (latest first)`,
-  evs.length ? evs.map(e=>`<div class="ev"><span class="ts">${esc((e.t||"").substr(11,8))}</span><span class="${e.kind==='oom'?'bad':''}">${esc(e.text)}</span></div>`).join("")
+  evs.length ? evs.map(e=>`<div class="ev"><span class="ts">${esc((e.t||"").substr(11,8))}</span><span class="${EV_CLS[e.kind]||''}">${esc(e.text)}</span></div>`).join("")
              : `<div class="muted">no detections recorded</div>`);
 
 document.getElementById("wrap").innerHTML = html;

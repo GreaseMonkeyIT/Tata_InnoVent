@@ -43,6 +43,7 @@ def incipient_findings(
     min_frac: float = DEFAULT_MIN_FRAC,
     signal: str = "mem",
     cls: str = "leak",
+    floors: dict[str, float | None] | None = None,
 ) -> list[dict]:
     """mem_vectors: {pod: working_set bytes vector}; limits: {pod: memory limit bytes}.
 
@@ -55,6 +56,10 @@ def incipient_findings(
     sitting below `min_frac` of the cap (a transient climb or a slow drift, not a real OOM risk),
     not genuinely trending (forecast_to_limit -> None: flat/plateau/noise), or with an ETA beyond
     the horizon are skipped. Sorted soonest-first.
+
+    floors: an optional per-pod baseline band (the engine's learned threshold for the same signal).
+    A pod whose recent level sits inside its band is skipped: a steady coolant temperature at 83 %
+    of the trip limit is normal, not a ramp. None, or a pod missing from floors, skips no pod.
     """
     out: list[dict] = []
     for pod, vec in mem_vectors.items():
@@ -68,6 +73,9 @@ def incipient_findings(
         if cur < min_frac * limit:
             continue  # not close enough to the cap to be a real OOM risk yet (drops the transient
                       # cooling-monitor-under-fio climb and the safety-interlock slow drift)
+        floor = (floors or {}).get(pod)
+        if floor is not None and float(np.median(x[-6:])) <= floor:
+            continue  # still inside its learned normal band: a steady level, not a ramp
         seg = _fit_segment(x, tail)                          # fit over the ACTIVE climb, not the diluted tail
         eta = detectors.forecast_to_limit(seg, float(limit), tail=len(seg))
         if eta is None or eta > horizon_s:

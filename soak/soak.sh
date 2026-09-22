@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
 # SiliconKnights: soak / stress-test recorder for the VISR plant.
 #
-# Cycles the PS-series plant faults (PS1, PS2, PS5) for a set duration. It samples the live causal
-# verdict every few seconds, then builds a self-contained HTML report that opens by double-click.
+# Cycles the PS scenario set (SCENARIOS.md) for a set duration. The default set is PS1 PS2 PS3 PS4A
+# PS4B PS5. It samples the live verdict every few seconds, then builds a self-contained HTML report
+# that opens by double-click.
 #
-# Nothing is faked: each fault fires through the API console route (POST /api/scenarios/<id>/trigger),
-# which perturbs the physics model in the plant sim. The recorder only watches /api/graph and writes
-# down what the engine decided, so a mis-root shows as-is.
+# Nothing is faked: each fault fires through the API console route (POST /api/scenarios/<id>/trigger).
+# The API sends it to the fault owner: plant-sim perturbs the physics model, rogue-ews writes one real
+# S7comm setpoint, and the tag server leaks real memory. The recorder only reads /api/graph,
+# /api/narrative, /api/scenarios, /api/plant and /api/tags, and writes down what VISR decided.
+# A mis-root shows as-is.
+#
+# PS6 stops a real service (the tag server runs out of memory). Run it only on its own: SCENARIOS=PS6.
 #
 # Run on the BOX (where kubectl talks to the cluster). Requires: bash, kubectl, curl, python3.
 #
-#   bash soak/soak.sh                 # 3h default, scenarios PS1 PS2 PS5
+#   bash soak/soak.sh                 # 3h default, scenarios PS1 PS2 PS3 PS4A PS4B PS5
 #   DURATION_H=1 bash soak/soak.sh    # shorter
+#   SCENARIOS=PS6 DURATION_H=1 bash soak/soak.sh        # the edge scenario, alone
+#   OBSERVE_PS3=240 COOLDOWN_PS3=200 bash soak/soak.sh  # per-id windows beat OBSERVE_S and COOLDOWN_S
 #   API_BASE=http://localhost:8088 bash soak/soak.sh    # use curl instead of the kubectl proxy
 #   API_BASE=http://localhost:8088 VISR_OPERATOR_TOKEN=<token> bash soak/soak.sh   # 2E auth enforced
 #
@@ -20,11 +27,17 @@ set -uo pipefail
 
 # ---- config (all env-overridable) --------------------------------------------------------------
 DURATION_H=${DURATION_H:-3}                 # total run length (hours)
-SCENARIOS=${SCENARIOS:-"PS1 PS2 PS5"}       # cycle order
+SCENARIOS=${SCENARIOS:-"PS1 PS2 PS3 PS4A PS4B PS5"}   # cycle order. PS6 runs alone.
 SAMPLE_S=${SAMPLE_S:-12}                     # seconds between verdict samples
 BASELINE_S=${BASELINE_S:-60}                 # quiet watch BEFORE each fire (confirm steady)
 OBSERVE_S=${OBSERVE_S:-180}                  # watch window WHILE a scenario is firing
 COOLDOWN_S=${COOLDOWN_S:-150}                # quiet watch AFTER reset (catch the self-clear)
+# Per-id windows: OBSERVE_<ID> and COOLDOWN_<ID> override the two above for that id.
+# PS2 needs time for the chiller relay to trip and the loop to heat (SCENARIOS.md 2.2).
+# PS6 needs time for the leak to reach the limit, the kill, and the restart (SCENARIOS.md 2.7).
+OBSERVE_PS2=${OBSERVE_PS2:-300}
+OBSERVE_PS6=${OBSERVE_PS6:-420}
+COOLDOWN_PS6=${COOLDOWN_PS6:-240}
 NARR_EVERY=${NARR_EVERY:-5}                  # capture /api/narrative every Nth sample (LLM-backed → sparse)
 AIOPS_NS=${AIOPS_NS:-aiops}
 API_SVC=${API_SVC:-api}
@@ -39,7 +52,12 @@ RUN_DIR="$OUT_ROOT/$RUN_ID"
 SAMPLES="$RUN_DIR/samples.jsonl"
 TIMELINE="$RUN_DIR/timeline.csv"
 LOG="$RUN_DIR/soak.log"
-mkdir -p "$RUN_DIR"
+TICK="$RUN_DIR/.tick"                        # one JSON body per endpoint, rewritten every sample
+mkdir -p "$RUN_DIR" "$TICK"
+
+# The ids are upper case (SCENARIOS.md 1). The API also accepts lower case, but the phase names,
+# the per-id env names and the report use upper case.
+SCENARIOS=$(echo "$SCENARIOS" | tr '[:lower:]' '[:upper:]')
 
 log(){ echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
@@ -63,23 +81,36 @@ api_post(){
   fi
 }
 
+FIRE_EPOCH=""; FIRE_OK=""
 fire(){   # $1 = scenario id → the same console route the dashboard Fire button uses
-  api_post "/api/scenarios/$1/trigger" >>"$LOG" || log "WARN: $1 trigger failed (see log)"
+  FIRE_EPOCH=$(date +%s); FIRE_OK=1
+  api_post "/api/scenarios/$1/trigger" >>"$LOG" || { FIRE_OK=0; log "WARN: $1 trigger failed (see log)"; }
 }
 
-clear_fault(){   # the sim's /reset clears every active plant fault; a short call, so the cadence holds
+clear_fault(){   # the API resets the owner of this id; a short call, so the cadence holds
   api_post "/api/scenarios/$1/reset" >>"$LOG" || log "WARN: $1 reset failed (see log)"
 }
 
-# sample for $1 seconds, tagging each row phase=$2 cycle=$3
+# window <OBSERVE|COOLDOWN> <id> → seconds. OBSERVE_<ID> or COOLDOWN_<ID> wins over the global value.
+window(){
+  local kind=$1 id=$2 v def
+  if [ "$kind" = OBSERVE ]; then def=$OBSERVE_S; else def=$COOLDOWN_S; fi
+  if [[ $id =~ ^[A-Z0-9_]+$ ]]; then v="${kind}_$id"; echo "${!v:-$def}"; else echo "$def"; fi
+}
+
+# sample for $1 seconds, tagging each row phase=$2 cycle=$3 scenario=$4
 sample_window(){
-  local secs=$1 phase=$2 cyc=$3 i=0 end
+  local secs=$1 phase=$2 cyc=$3 scen=$4 i=0 end
   end=$(( $(date +%s) + secs ))
   while [ "$(date +%s)" -lt "$end" ]; do
-    local g n=""
-    g=$(api_get /api/graph)
-    if [ $(( i % NARR_EVERY )) -eq 0 ]; then n=$(api_get /api/narrative); fi
-    GRAPH_JSON="$g" NARR_JSON="$n" PHASE="$phase" CYCLE="$cyc" \
+    api_get /api/graph > "$TICK/graph.json"
+    if [ $(( i % NARR_EVERY )) -eq 0 ]; then api_get /api/narrative > "$TICK/narr.json"; else : > "$TICK/narr.json"; fi
+    api_get /api/scenarios > "$TICK/scenarios.json"
+    api_get /api/plant > "$TICK/plant.json"
+    api_get /api/tags > "$TICK/tags.json"
+    GRAPH_FILE="$TICK/graph.json" NARR_FILE="$TICK/narr.json" SCEN_FILE="$TICK/scenarios.json" \
+      PLANT_FILE="$TICK/plant.json" TAGS_FILE="$TICK/tags.json" \
+      PHASE="$phase" CYCLE="$cyc" SCENARIO="$scen" FIRE_EPOCH="$FIRE_EPOCH" FIRE_OK="$FIRE_OK" \
       python3 "$SCRIPT_DIR/record.py" append "$SAMPLES" "$TIMELINE" 2>>"$LOG" || true
     i=$(( i + 1 ))
     sleep "$SAMPLE_S"
@@ -98,10 +129,14 @@ trap 'echo; log "stopping (signal) — finalizing"; build_report; exit 0' INT TE
 
 # ---- preflight ---------------------------------------------------------------------------------
 DURATION_S=$(( DURATION_H * 3600 ))
+WINDOWS=""
+for s in $SCENARIOS; do WINDOWS="$WINDOWS $s:$(window OBSERVE "$s"):$(window COOLDOWN "$s")"; done
 SCENARIOS="$SCENARIOS" DURATION_H="$DURATION_H" SAMPLE_S="$SAMPLE_S" OBSERVE_S="$OBSERVE_S" \
-  COOLDOWN_S="$COOLDOWN_S" python3 "$SCRIPT_DIR/record.py" meta "$RUN_DIR" 2>>"$LOG" || true
+  COOLDOWN_S="$COOLDOWN_S" BASELINE_S="$BASELINE_S" WINDOWS="$WINDOWS" \
+  python3 "$SCRIPT_DIR/record.py" meta "$RUN_DIR" 2>>"$LOG" || true
 
 log "soak $RUN_ID — duration ${DURATION_H}h, scenarios: $SCENARIOS, sample ${SAMPLE_S}s → $RUN_DIR"
+log "windows (id:observe_s:cooldown_s):$WINDOWS"
 if [ -z "$(api_get /api/health)" ]; then
   log "ERROR: API not reachable. Either run 'kubectl port-forward svc/api -n $AIOPS_NS 8088:8088'"
   log "       and re-run with API_BASE=http://localhost:8088, or check the kubectl proxy path."
@@ -113,6 +148,23 @@ if [ "$AUTH" = "enforced" ] && { [ -z "$API_BASE" ] || [ -z "$OPERATOR_TOKEN" ];
   log "       Re-run with API_BASE=http://localhost:8088 (port-forward) and VISR_OPERATOR_TOKEN set."
   exit 1
 fi
+# The catalogue check only warns. An id the API cannot fire is still sampled, and the report shows the gap.
+api_get /api/scenarios | IDS="$SCENARIOS" python3 -c '
+import json, os, sys
+try:
+    cat = {str(s.get("id", "")).upper(): s for s in json.load(sys.stdin)}
+except Exception:
+    print("WARN: /api/scenarios did not answer with a list. The ids are not checked.")
+    sys.exit()
+for sid in os.environ["IDS"].split():
+    if sid not in cat:
+        print("WARN: %s is not in the API catalogue. Its trigger will fail." % sid)
+    elif not cat[sid].get("triggerable"):
+        print("WARN: %s is not triggerable through the API." % sid)
+' 2>/dev/null | while IFS= read -r line; do log "$line"; done
+case " $SCENARIOS " in
+  *" PS6 "*) [ "$(echo "$SCENARIOS" | wc -w)" -gt 1 ] && log "WARN: PS6 stops the tag server. Run it alone (SCENARIOS=PS6)." ;;
+esac
 log "API reachable (auth: ${AUTH:-unknown}). PS0 must be silent (engine warm, LOG-035 soak) before you trust cycle 1."
 
 # ---- main loop ---------------------------------------------------------------------------------
@@ -122,13 +174,14 @@ while [ "$(date +%s)" -lt "$END" ]; do
   for s in $SCENARIOS; do
     [ "$(date +%s)" -lt "$END" ] || break
     log "cycle $cycle · baseline → $s"
-    sample_window "$BASELINE_S" "baseline" "$cycle"
+    FIRE_EPOCH=""; FIRE_OK=""
+    sample_window "$BASELINE_S" "baseline" "$cycle" "$s"
     log "cycle $cycle · FIRE $s"
     fire "$s"
-    sample_window "$OBSERVE_S" "$s" "$cycle"
+    sample_window "$(window OBSERVE "$s")" "$s" "$cycle" "$s"
     log "cycle $cycle · reset $s"
     clear_fault "$s"
-    sample_window "$COOLDOWN_S" "cooldown" "$cycle"
+    sample_window "$(window COOLDOWN "$s")" "cooldown" "$cycle" "$s"
   done
 done
 

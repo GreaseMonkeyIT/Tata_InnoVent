@@ -1,0 +1,20 @@
+{
+  "task": "packaging-cell",
+  "title": "Packaging cell sequencer",
+  "description": "Conveyor runs, the wrapper cycles 20 s on and 10 s off, the labeler follows.",
+  "st": "packaging-cell.st",
+  "profile_hint": "generic-iec",
+  "cell": {
+    "name": "packaging",
+    "rail_default": "psu-c",
+    "machines": [
+      {"prefix": "pack-conveyor", "kind": "conveyor", "i_base": 9.0, "cooled": false},
+      {"prefix": "pack-wrapper", "kind": "wrapper", "i_base": 14.0, "cooled": true, "tau": 50.0, "heat_k": 0.5},
+      {"prefix": "pack-labeler", "kind": "labeler", "i_base": 4.0, "cooled": false, "v_sensitive": true}
+    ]
+  },
+  "io_extra": [
+    {"asset": "SYS", "signal": "PACK_COUNT", "address": "%MW20", "unit": "count"},
+    {"asset": "SYS", "signal": "STEP", "address": "%MW21", "unit": "step"}
+  ]
+}

@@ -24,7 +24,7 @@ from engine.forecast import incipient_findings
 from engine.gate import Witness
 from engine.merge import merge_graphs
 from engine.pipeline import run_pass
-from engine.state import GraphMemory, MemoryConfig
+from engine.state import GraphMemory, MemoryConfig, set_verbatim_names
 
 WINDOW_URL = os.environ.get("WINDOW_URL", "http://aggregator.aiops.svc:9000/window")
 EVENTS_URL = os.environ.get("EVENTS_URL", "http://aggregator.aiops.svc:9000/events")
@@ -50,23 +50,99 @@ def _parse_map(env, default):
             (item.split(":", 1) for item in raw.split(",") if ":" in item)}
 
 PLANT_FAMILIES = _parse_map("PLANT_FAMILIES", "bus_voltage:rail,coolant_temp:loop")
+# A family may name more than one source, separated by "|" (heat_load|cooling_shortfall): each
+# member uses the first source signal it exports. The chiller exports no heat_load, but its lost
+# cooling is the loop's aggressor signal (SCENARIOS.md 4.2).
 PLANT_SOURCES  = _parse_map("PLANT_SOURCES", "bus_voltage:current_draw,coolant_temp:heat_load")
 PLANT_INVERT   = {k: float(v) for k, v in _parse_map("PLANT_INVERT", "bus_voltage:400").items()}
+# COMMON_MODE (SCENARIOS.md 4.5): the source-leads rule cannot root a cause ABOVE the plant,
+# because an external disturbance has no machine load leading it. When every member of one
+# declared medium deviates together and no member leads, the root is the medium itself.
+COMMON_MODE = os.environ.get("COMMON_MODE", "1").strip().lower() not in ("0", "false", "no")
+COMMON_MODE_MIN_MEMBERS = int(os.environ.get("COMMON_MODE_MIN_MEMBERS", "3"))
+COMMON_MODE_WINDOW_S = float(os.environ.get("COMMON_MODE_WINDOW_S", "15"))
 _DOMAINS_RAW = os.environ.get(
     "PLANT_DOMAINS",
     "rail:psu-a=press-1,press-2,cnc-1,qa-scanner-1,psu-a;"
     "rail:psu-b=conveyor-1,compressor-1,furnace-1,chiller-1,psu-b;"
     "loop:cool-1=press-1,press-2,cnc-1,furnace-1,cool-1")
-PLANT_DOMAINS: dict[str, dict[str, set]] = {}      # prefix -> {domain: {members}}
-for _d in _DOMAINS_RAW.split(";"):
-    if "=" not in _d:
-        continue
-    _name, _members = _d.split("=", 1)
-    _prefix = _name.split(":", 1)[0].strip()
-    PLANT_DOMAINS.setdefault(_prefix, {})[_name.strip()] = {
-        m.strip() for m in _members.split(",") if m.strip()}
+
+
+def _parse_domains(raw):
+    """'rail:psu-a=m1,m2;loop:x=m3' -> {prefix: {domain: {members}}}."""
+    out: dict[str, dict[str, set]] = {}
+    for d in raw.split(";"):
+        if "=" not in d:
+            continue
+        name, members = d.split("=", 1)
+        prefix = name.split(":", 1)[0].strip()
+        out.setdefault(prefix, {})[name.strip()] = {m.strip() for m in members.split(",") if m.strip()}
+    return out
+
+
+STATIC_DOMAINS = _parse_domains(_DOMAINS_RAW)       # declared in env: never removed at run time
+PLANT_DOMAINS: dict[str, dict[str, set]] = {}      # prefix -> {domain: {members}}, static + fetched
+PLANT_ENTITIES: set = set()
+
+# 2H (FLEET.md section 9): attesters publish domains at run time. plant-sim publishes the live rail and
+# loop members (cell machines included), the tag server publishes plc:<name> control domains. A
+# failed fetch keeps that source's last good answer, and a fetch never removes a static domain, so
+# a source outage can never widen or drop a witness.
+DOMAIN_SOURCES = [u.strip() for u in os.environ.get("DOMAIN_SOURCES", "").split(",") if u.strip()]
+_FETCHED: dict[str, dict[str, set]] = {}           # source url -> {domain: {members}} (last good)
+
+
+def _merge_domains(static, fetched_by_source):
+    merged = {p: {d: set(m) for d, m in doms.items()} for p, doms in static.items()}
+    for doms in fetched_by_source.values():
+        for name, members in doms.items():
+            prefix = name.split(":", 1)[0]
+            merged.setdefault(prefix, {}).setdefault(name, set()).update(members)
+    return merged
+
+
+def refresh_domains(fetch=None):
+    """Fetch every DOMAIN_SOURCES url and rebuild PLANT_DOMAINS and PLANT_ENTITIES.
+    `fetch(url)` returns the parsed JSON. Tests inject it."""
+    global PLANT_DOMAINS, PLANT_ENTITIES
+    fetch = fetch or (lambda url: _fetch(url, timeout=3))
+    for url in DOMAIN_SOURCES:
+        try:
+            doms = (fetch(url) or {}).get("domains") or {}
+            _FETCHED[url] = {str(k): {str(m) for m in (v or [])} for k, v in doms.items() if ":" in str(k)}
+        except Exception:
+            pass                                      # keep the last good answer for this source
+    PLANT_DOMAINS = _merge_domains(STATIC_DOMAINS, _FETCHED)
+    PLANT_ENTITIES = {m for doms in PLANT_DOMAINS.values() for mem in doms.values() for m in mem}
+    set_verbatim_names(PLANT_ENTITIES)
+
+
+PLANT_DOMAINS = _merge_domains(STATIC_DOMAINS, {})
 PLANT_ENTITIES = {m for doms in PLANT_DOMAINS.values() for mem in doms.values() for m in mem}
+set_verbatim_names(PLANT_ENTITIES)   # memory keys keep plant names whole (qa-scanner-1, not "qa")
 SIGNAL_SOURCES.update(PLANT_SOURCES)
+
+
+def sources_of(signal):
+    """The source signals of a victim family, in order of preference ("a|b" -> ["a", "b"])."""
+    return [s for s in (SIGNAL_SOURCES.get(signal) or "").split("|") if s]
+
+
+def common_mode_arg(signal):
+    """The common-mode settings for one plane-2 family, or None (SCENARIOS.md 4.5).
+
+    Plane-1 signals (psi_*) never get the rule: their domains are inferred (same node, shared
+    disk), not declared, so "the medium itself" is not an entity anyone can point at. Only a
+    declared plant medium has a name, a meter, and an operator who can act on it."""
+    prefix = PLANT_FAMILIES.get(signal)
+    if not COMMON_MODE or prefix is None:
+        return None
+    domains = PLANT_DOMAINS.get(prefix) or {}
+    if not domains:
+        return None
+    return {"domains": domains, "kind": prefix,
+            "min_members": COMMON_MODE_MIN_MEMBERS, "window_s": COMMON_MODE_WINDOW_S}
+
 
 FORECAST_SIGNAL = os.environ.get("FORECAST_SIGNAL", "mem")           # working_set bytes: the OOM ramp
 FORECAST_LIMIT  = os.environ.get("FORECAST_LIMIT", "mem_limit")      # memory limit (kube-state): the cap
@@ -82,6 +158,19 @@ PORT       = int(os.environ.get("ENGINE_PORT", "9100"))
 COPR_MIN   = float(os.environ.get("COPRESSURE_MIN", "0.10"))     # signal level that counts as "stalled"
 ANALYSIS_WINDOW = int(os.environ.get("ANALYSIS_WINDOW", "36"))   # samples (~3min): the WHOLE pass (detect+correlate+order) looks back over the recent disturbance, not the 15-min ring. Match to event timescale; not a resource limit.
 RESET_WINDOW    = int(os.environ.get("RESET_WINDOW", "24"))      # samples (~2min): an onset is a CURRENT incident only if the pod still deviates within this recent tail -> the verdict clears ~RESET_WINDOW after a storm ends, not when it scrolls out of the 15-min ring
+# The percentile of the recent tail that must clear a pod's baseline band. 90 flags a normal duty
+# cycle (a compressor ON for 60 s of every 300 s) as an incident in every ON window. 35 needs the
+# pod to stay out of band for most of the tail, so a duty cycle stays quiet and a stuck-on load
+# does not (engine replay, 2026-09-17: PS0 silent 180 of 180 passes, revised PS2 still rooted).
+GATE_Q          = float(os.environ.get("GATE_Q", "90"))
+# A baseline learns only from a window this full. A ring that the aggregator has just refilled is
+# padded with zeros, and learning from it stored every plant baseline as 0.0 on the box (24 h PS0
+# soak, 2026-09-17/18: 1 quiet line of 1,438).
+MIN_COVERAGE    = float(os.environ.get("BASELINE_MIN_COVERAGE", "0.9"))
+# Forecast a ramp only for a pod whose recent level sits above its learned band. Steady coolant
+# temperatures run at 75-85 % of the trip limit, so a fraction-of-limit rule alone gave trip cards
+# in a calm plant. Pairs whose signal has no engine memory (mem) are not affected.
+FORECAST_BASELINE_FLOOR = os.environ.get("FORECAST_BASELINE_FLOOR", "1") != "0"
 GRID_STEP_S = float(os.environ.get("POLL_S", "5"))               # aggregator scrape cadence = the time-alignment grid step (resample all pods onto a shared wall-clock axis)
 MEMORY_DB  = os.environ.get("MEMORY_DB", "/var/lib/skn/memory/l3-memory.db")
 STORAGE    = [s.strip() for s in os.environ.get(
@@ -105,7 +194,9 @@ def _config(signal):
         tau_family=float(os.environ.get("CASE_TAU_FAMILY", "0.60")),
         base_alpha=float(os.environ.get("BASE_ALPHA", "0.05")),
         dev_k=float(os.environ.get("DEV_K", "4.0")),
-        mad_floor=float(os.environ.get("MAD_FLOOR", "0.01")),
+        # a family in physical units can set its own floor (MAD_FLOOR_COOLANT_TEMP in deg C): a slow
+        # coolant wander of a few tenths of a degree is not an incident, and a trip ramp is ~20 deg C
+        mad_floor=float(os.environ.get(f"MAD_FLOOR_{signal.upper()}", os.environ.get("MAD_FLOOR", "0.01"))),
         base_min_n=int(os.environ.get("BASE_MIN_N", "12")),
     )
 
@@ -125,8 +216,8 @@ _lock = threading.Lock()
 _graph = merge_graphs({s: m.bootstrap_graph() for s, m in _memory.items()}, primary=PRIMARY)
 
 
-def _fetch(url):
-    with urllib.request.urlopen(url, timeout=10) as r:
+def _fetch(url, timeout=10):
+    with urllib.request.urlopen(url, timeout=timeout) as r:
         return json.load(r)
 
 
@@ -160,7 +251,7 @@ def build_inputs(window, events):
     """
     step, n = GRID_STEP_S, 180
     # victims + their source/aggressor signals + every ramp-to-limit pair's signal & limit
-    wanted = set(SIGNALS) | set(SIGNAL_SOURCES.values())
+    wanted = set(SIGNALS) | {src for sig in SIGNAL_SOURCES for src in sources_of(sig)}
     for sig, lim, _cls in FORECAST_PAIRS:
         wanted |= {sig, lim}
     raw = {sig: {} for sig in wanted}
@@ -180,7 +271,9 @@ def build_inputs(window, events):
 
     grid = [latest - step * (n - 1 - k) for k in range(n)]
 
-    def to_vectors(per_pod):                          # resample one signal's pods onto the shared grid
+    coverage = {}                                     # {signal: {pod: share of the grid with real samples}}
+
+    def to_vectors(per_pod, cov):                     # resample one signal's pods onto the shared grid
         out = {}
         for pod, pts in per_pod.items():
             if pts[-1][0] < latest - 2 * step:        # stale/dead pod -> drop (no recent data)
@@ -191,13 +284,32 @@ def build_inputs(window, events):
                     j += 1
                 if abs(pts[j][0] - gt) <= step:
                     vec[k] = pts[j][1]
-            if np.count_nonzero(~np.isnan(vec)) >= 12:  # real coverage; a gap == no activity == 0
+            real = int(np.count_nonzero(~np.isnan(vec)))
+            if real >= 12:                            # real coverage; a gap == no activity == 0
                 out[pod] = np.nan_to_num(vec, nan=0.0)
+                cov[pod] = real / n
         return out
 
-    vec_by_sig = {sig: to_vectors(raw[sig]) for sig in wanted}
+    vec_by_sig = {sig: to_vectors(raw[sig], coverage.setdefault(sig, {})) for sig in wanted}
     breach = sorted({e["pod"] for e in events if isinstance(e, dict) and e.get("kind") == "anomaly_candidate"})
-    return vec_by_sig, breach
+    return vec_by_sig, breach, coverage
+
+
+def source_vectors(signal, vec_by_sig):
+    """Merge a family's source signals into one {pod: vector}: each pod takes its first source."""
+    merged = {}
+    for src in sources_of(signal):
+        for pod, vec in (vec_by_sig.get(src) or {}).items():
+            merged.setdefault(pod, vec)
+    return merged or None
+
+
+def forecast_floors(signal, pods):
+    """Per-pod baseline band of a forecast signal that the engine also learns (coolant_temp), else {}."""
+    if not FORECAST_BASELINE_FLOOR or signal not in _memory:
+        return {}
+    mem = _memory[signal]
+    return {p: mem.baseline_threshold(workload(p)) for p in pods}
 
 
 def _witness_for(signal, vectors):
@@ -243,25 +355,34 @@ def loop():
     global _graph
     while True:
         try:
+            if DOMAIN_SOURCES:
+                refresh_domains()
             window = _fetch(WINDOW_URL)
             events = _fetch(EVENTS_URL)
-            vec_by_sig, breach = build_inputs(window, events)
+            vec_by_sig, breach, coverage = build_inputs(window, events)
             rendered = {}                                  # {signal: rendered graph} for the merge
             for sig in SIGNALS:
                 vectors = vec_by_sig.get(sig) or {}
                 if not vectors:
                     continue
                 mem = _memory[sig]
-                witness = _witness_for(sig, vectors)
-                src_sig = SIGNAL_SOURCES.get(sig)
-                write_vectors = (vec_by_sig.get(src_sig) or None) if src_sig else None
+                write_vectors = source_vectors(sig, vec_by_sig)
+                # a plant family pairs its source-only members too: the chiller publishes its lost
+                # cooling but no temperature, and it still shares the loop with the machines
+                pair_over = {**(write_vectors or {}), **vectors} if sig in PLANT_FAMILIES else vectors
+                witness = _witness_for(sig, pair_over)
                 # per-pod incident threshold from the learned steady-state baseline (None while
                 # still maturing) -> an onset is an incident only if it deviates from normal
                 baselines = {pod: mem.baseline_threshold(workload(pod)) for pod in vectors}
                 out = run_pass(vectors, witness, slo_breach=breach or None,
                                window=ANALYSIS_WINDOW, write_vectors=write_vectors,
-                               baselines=baselines, recent=RESET_WINDOW)
-                rendered[sig] = mem.observe(out, vectors, witness=witness, ts=time.time())
+                               baselines=baselines, recent=RESET_WINDOW, gate_q=GATE_Q,
+                               bare_src_must_deviate=sig in PLANT_FAMILIES,
+                               common_mode=common_mode_arg(sig))
+                cov = coverage.get(sig) or {}
+                learnable = {p: v for p, v in vectors.items() if cov.get(p, 0.0) >= MIN_COVERAGE}
+                rendered[sig] = mem.observe(out, vectors, witness=witness, ts=time.time(),
+                                            baseline_vectors=learnable)
             merged = (merge_graphs(rendered, primary=PRIMARY) if rendered else
                       {"findings": [], "edges": [], "root_cause_ranking": [],
                        "blast_radius": [], "meta": {"signals": SIGNALS}})
@@ -280,7 +401,8 @@ def loop():
                     only = next(iter(limits.values()))
                     limits = {p: limits.get(p, only) for p in sig_vec}
                 incip.extend(incipient_findings(sig_vec, limits, horizon_s=FORECAST_HORIZON_S,
-                                                min_frac=FORECAST_MIN_FRAC, signal=fsig, cls=fcls))
+                                                min_frac=FORECAST_MIN_FRAC, signal=fsig, cls=fcls,
+                                                floors=forecast_floors(fsig, sig_vec)))
             incip.sort(key=lambda f: f["eta_s"])
             merged["incipient"] = incip
             merged.setdefault("meta", {})["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

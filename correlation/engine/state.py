@@ -29,8 +29,21 @@ SCHEMA_VERSION = "l3-memory-v5"  # v5: + baselines (per-workload steady-state; i
 SOURCE_EVIDENCE = ("write",)
 
 
+_VERBATIM: set[str] = set()   # names that are not k8s pods (plant entities): kept whole
+
+
+def set_verbatim_names(names) -> None:
+    """Declare names that keep their form in memory keys. The service passes its plant entities,
+    so qa-scanner-1 keys as qa-scanner-1, the same name the service uses to read its baseline."""
+    _VERBATIM.clear()
+    _VERBATIM.update(str(n) for n in names)
+
+
 def stable_workload(pod: str) -> str:
-    """Drop ReplicaSet/pod suffixes: cooling-monitor-abc123-xyz -> cooling-monitor."""
+    """Drop ReplicaSet/pod suffixes: cooling-monitor-abc123-xyz -> cooling-monitor.
+    A declared plant entity keeps its name (see set_verbatim_names)."""
+    if pod in _VERBATIM:
+        return pod
     parts = pod.split("-")
     return "-".join(parts[:-2]) if len(parts) > 2 else pod
 
@@ -248,10 +261,12 @@ class GraphMemory:
         self.db.commit()
 
     def observe(self, graph: dict, vectors: dict[str, Any], witness: Any = None,
-                ts: float | None = None) -> dict:
-        """Update memory from a pure run_pass output and return the rendered graph."""
+                ts: float | None = None, baseline_vectors: dict[str, Any] | None = None) -> dict:
+        """Update memory from a pure run_pass output and return the rendered graph.
+        baseline_vectors: the vectors that may teach a baseline. None means all of `vectors`. The
+        service passes only the pods whose window is full, so a zero-padded ring teaches nothing."""
         ts = ts or time.time()
-        self.update_baselines(vectors, ts)
+        self.update_baselines(vectors if baseline_vectors is None else baseline_vectors, ts)
         current_edges = graph.get("edges", [])
         # Work in WORKLOAD space: pod names are ephemeral (new hash every restart).
         pods_present = {stable_workload(p) for p in vectors}

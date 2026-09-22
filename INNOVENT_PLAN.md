@@ -1,9 +1,10 @@
 # Tata Technologies InnoVent 2026: Project Plan
 **Team SiliconKnights · VISR, an edge causal-AIOps brain for industrial systems**
 
-> **Status (2026-09-14):** registration submitted on 2026-07-05 (LOG-050). Stage 2 is code-complete
-> locally (LOG-051 to LOG-055). The remaining Stage 2 work is ONE box session: deploy, verify,
-> soak, and record per `POC_SCRIPT.md`.
+> **Status (2026-09-15):** registration submitted on 2026-07-05 (LOG-050). Stage 2 is code-complete
+> locally (LOG-051 to LOG-055), plus the virtual PLC fleet and act loop verb 1 (Phase 2H, LOG-058).
+> **The Stage 2 PPT and demo video are due 2026-09-26.** Remaining: deploy and verify on the box,
+> soak, record per `POC_SCRIPT.md`, and the deck on the official template.
 > **Target category:** §3.2.2.5 **Edge AI for Connected, Secure & Intelligent Industrial Systems**.
 > **Repo:** `GreaseMonkeyIT/Tata_InnoVent`. One working folder (`Tata InnoVent`) on the laptop.
 > **Runs on:** the Linux desktop (single-node K3s, needs real-kernel PSI). Full decision history: `INNOVENT_LOG.md`.
@@ -15,12 +16,13 @@
 |---|---|
 | Entry | The team's own causal engine, reframed for industrial systems and reskinned as VISR (LOG-003). |
 | Demo substrate | A **physics-simulated plant**: DC rails with source impedance, a shared coolant loop, and 8 assets. Faults perturb the model, and the symptoms emerge (LOG-027 to LOG-029). |
-| Scenarios | **PS-series**: PS0 steady plant · PS1 rail-sag cascade · PS2 duty-cycle aggressor · PS5 coolant pump degradation (LOG-028). |
+| Scenarios | **PS-series** (`SCENARIOS.md`, LOG-068): PS0 steady plant · PS1 rail-sag cascade · PS2 power sag trips the chiller · PS3 control network storm · PS4A setpoint write with no record · PS4B current report contradicts the feeder · PS5 coolant pump degradation · PS6 the monitor runs out of memory. Each one is anchored on a real incident. |
 | Industrial data path | Physics → OpenPLC registers → Modbus → SCADA tag server → tag DB + TimescaleDB historian (LOG-055). |
 | Secure | TLS + basic auth front door, operator token gate, hash-chained audit ledger (LOG-053). |
 | Honesty rail | The engine is deterministic statistical inference behind a witness gate. The LLM narrator is a spokesperson only. Simulated values carry a simulation label. |
 | Reskin | Restrained Halo "VISR" look: clarity is the product, and Halo is the accent (~90/10). |
-| Repair agents | The act loop (explain → recommend → act) is Stage 3. |
+| Virtual PLC fleet | Soft PLCs with real S7comm and Modbus protocol profiles, Structured Text tasks, signed enrollment, real onboarding phases (LOG-058, `FLEET.md`). |
+| Act loop | Verb 1 `derate` shipped for Stage 2: cite-or-die proposal, human confirm, SCADA setpoint write, measured relief (LOG-058). More verbs and hardware rungs are Stage 3. |
 
 ## 1. Scope by stage
 - **Stage 1: Registration** (done 2026-07-05): deck, subtitled demo video, form.
@@ -38,8 +40,8 @@
 
 ## 3. Reskin: design system (restrained "VISR"), SHIPPED
 - **Font:** Industry (Fontfabric), self-hosted via next/font/local. Trial "Test" weights today. The licensed swap is open.
-- **Palette:** dark slate base · cyan `#36c5e0` single accent · meaning-colors red (source) / amber (victim) / teal `#5dcaa5` (healthy).
-- **Sections:** Boot · Causal Monitor (FLOOR and EDGE views) · Machines (+ SCADA tag browser) · Pods · Scenarios · Recommendations · Audit.
+- **Palette (LOG-062):** the Stage 2 deck colors, used sparsely on a near-black navy base. Teal `#12C6B3` is the normal state and the accent. Blue `#0000B3` fills operator commands only. Amber `#FF9C00` is warning, red `#F2495C` is alarm, and black `#000000` marks live data wells.
+- **Layout (LOG-062):** one static operator console, no page scroll. Boot overlay, then: Assets and Fault injection (left) · Map with FLOOR/EDGE and ISO/PLAN, plus the Selected, Fleet, Tags, Trends, and Edge tabs (center) · Verdict, Actions (+ inline Execute), and Event log (right).
 
 ## 4. Repair agents (Stage 3)
 The third loop step is **explain → recommend → act**. The system uses a closed action vocabulary,
@@ -52,7 +54,8 @@ act loop writes into the 2E audit ledger.
 - [x] Registration submitted (LOG-050).
 - [x] Stage 2 code-complete locally: Boot, 2A truth pass, 2E secure pass, PoC script, 2F tag server (LOG-051 to LOG-055).
 - [x] `claimRef` baked into `deploy/slowdisk.yaml` (LOG-054).
-- [ ] **Box session:** deploy LOG-051 to LOG-055, 2A/2E box-verify on the PS-series, OpenPLC latch re-confirm, tag-server cutover, LOG-035 soak, and the recording per `POC_SCRIPT.md`.
+- [x] Phase 2H virtual PLC fleet + act loop verb 1, local tests green (LOG-058).
+- [ ] **Box session (before 2026-09-26):** deploy LOG-051 to LOG-058, 2A/2E/2H box-verify on the PS-series, OpenPLC latch re-confirm, tag-server cutover, LOG-035 soak, and the recording per `POC_SCRIPT.md`.
 - [ ] Stage 2 deck on the official template: add a Solution Architecture slide, and back Novelty with prior-art search and benchmarks.
 - [ ] Swap the trial Industry "Test" weights for licensed files.
 - [ ] **Stage 3:** act loop, ESP32/PLC rungs, finals package.

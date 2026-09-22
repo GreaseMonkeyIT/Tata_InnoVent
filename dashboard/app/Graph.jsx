@@ -1,26 +1,20 @@
 "use client";
 import { useMemo, useRef, useEffect, useState } from "react";
-import dynamic from "next/dynamic";
+import ForceGraph3D from "react-force-graph-3d";
 import SpriteText from "three-spritetext";
+import { edgeColor, HEX } from "./lib/palette";
 
-// react-force-graph-3d is three.js/WebGL, so it renders client-only.
-const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), { ssr: false });
+// react-force-graph-3d is three.js/WebGL. MapPanel loads this whole module client-only
+// (next/dynamic, ssr: false), so the import stays static here. A next/dynamic wrapper around
+// ForceGraph3D itself would drop the ref, and zoomToFit and the pause would never run (LOG-062).
 
 // Node roles encode meaning: the source, the affected victims, everyone else.
+// Edge contention uses the shared ramp in lib/palette.js: gray, then amber, then red.
 const ROLE = {
-  root: { color: "#f2495c", val: 10 }, // red   — source / root cause
-  victim: { color: "#ff9830", val: 6 }, // amber — affected pod
-  normal: { color: "#5dcaa5", val: 3 }, // teal  — other workload
+  root: { color: HEX.red, val: 10 },    // red: source, root cause
+  victim: { color: HEX.amber, val: 6 }, // amber: affected pod
+  normal: { color: HEX.teal, val: 3 },  // teal: other workload
 };
-
-// Edge contention -> colour: pale grey at low, bright orange-red at max.
-function edgeColor(w) {
-  const t = Math.min(Math.max(w ?? 0, 0), 1);
-  const lo = [150, 158, 170];
-  const hi = [255, 80, 20];
-  const c = lo.map((v, i) => Math.round(v + (hi[i] - v) * t));
-  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
-}
 
 export default function Graph({ graph, topo }) {
   const fgRef = useRef();
@@ -131,7 +125,7 @@ export default function Graph({ graph, topo }) {
         width={size.w}
         height={size.h}
         graphData={data}
-        backgroundColor="#181b1f"
+        backgroundColor={HEX.void}
         showNavInfo={false}
         onEngineStop={() => {
           if (!fitted.current && fgRef.current) { fgRef.current.zoomToFit(500, 50); fitted.current = true; }
@@ -144,13 +138,13 @@ export default function Graph({ graph, topo }) {
         nodeThreeObjectExtend={true}
         nodeThreeObject={(n) => {
           const s = new SpriteText(n.id);
-          s.color = "#e6e6ea";
+          s.color = HEX.text;
           s.textHeight = 3.5;
           const r = Math.cbrt(ROLE[n.role].val) * 4;
           s.position.set(0, -(r + 3), 0);
           return s;
         }}
-        linkColor={(l) => (l.kind === "net" ? "#4b5159" : edgeColor(l.w))}
+        linkColor={(l) => (l.kind === "net" ? "#3a4150" : edgeColor(l.w))}
         linkWidth={(l) => (l.kind === "net" ? 0.4 : 0.8 + l.w * 3)}
         linkOpacity={0.6}
         linkDirectionalArrowLength={3}

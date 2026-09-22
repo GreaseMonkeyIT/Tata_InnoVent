@@ -40,6 +40,23 @@ RULES/
 frames/
 design_frames/
 LabVIEW_CLAD/
+# field research with presentation notes about the jury (2026-09-17). The repo is PUBLIC.
+FIELD_RESEARCH.md
+# session handoff: same category. It carries jury odds and competitor notes (LOG-072).
+# Delete this line to publish it.
+HANDOFF.md
+
+# --- local data files (LOG-076). The repo is PUBLIC. No data file from outside the project enters
+#     git, and no tracked file describes one. The plant plane runs on the physics sim only.
+#     The leading slash keeps the /data/ rule at the repo root. A code folder named data/ stays tracked.
+#     The *.xlsx rule is a second guard for a spreadsheet outside /data/.
+/data/
+industry_data/
+*.ttrecx
+*.xlsx
+
+# --- college lab material, not ours to publish (LOG-064) ---
+mechatronics_lab_manual.pdf
 
 # NOTE — dashboard/app/fonts/IndustryTest-*.otf are Fontfabric TRIAL weights. They are
 # COMMITTED so a fresh clone can build the dashboard image (next/font/local needs the

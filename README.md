@@ -14,10 +14,13 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 | Path | What |
 |---|---|
 | `plant/` · `plc/` · `scada/` | Plant physics sim, OpenPLC trip program, SCADA tag server + historian writer |
+| `vplc/` | Virtual PLC runtime: Structured Text tasks, S7comm and Modbus TCP protocol profiles (2H) |
+| `FLEET.md` | Design and interface contract of the virtual PLC fleet and the act loop |
+| `SCENARIOS.md` | The PS fault set (PS0 to PS6), its real-incident anchors, and its interface contract |
 | `aggregator/` · `correlation/` | L2 telemetry window, L3 deterministic causal engine |
 | `api/` · `dashboard/` | L4 API (operator gate + audit ledger), VISR dashboard |
 | `deploy/` | K3s manifests, Helm values, `skctl` bootstrap |
-| `soak/` | Soak recorder: cycles PS1/PS2/PS5 and builds an HTML evidence report |
+| `soak/` | Soak recorder: cycles the PS set and builds an HTML evidence report with a false-positive count |
 | `PIVOT_SETUP.md` | Box bring-up runbook (single-node K3s) |
 | `POC_SCRIPT.md` | Stage 2 PoC recording script |
 | `INNOVENT_PLAN.md` | Current state at a glance |
@@ -27,6 +30,17 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 ## Run it
 
 - **Box bring-up** (single-node K3s): follow `PIVOT_SETUP.md`.
-- **Tests**: `make test`, or `python -m pytest -q` inside `correlation/`, `plant/`, `api/`, or `scada/`.
-- **Fire a fault**: dashboard → Scenarios → PS1 (rail-sag cascade) · PS2 (duty-cycle aggressor) ·
-  PS5 (coolant ramp-to-trip).
+- **Tests**: `make test`, or `python -m pytest -q` inside `correlation/`, `plant/`, `api/`, `scada/`, or `vplc/`.
+- **The console** is one screen: Assets and Fault injection on the left, the map and the detail tabs
+  in the center, the verdict, actions, and event log on the right. `dashboard/README.md` has the map.
+- **Fire a fault**: console → Fault injection. Each row names the real incident it is anchored on:
+  PS1 rail-sag cascade · PS2 power sag trips the chiller · PS3 control network storm · PS4A setpoint
+  write with no record · PS4B current report contradicts the feeder · PS5 coolant ramp-to-trip ·
+  PS6 the monitor runs out of memory. `SCENARIOS.md` is the contract for the set.
+- **Show the refusals**: `bash deploy/refusals.sh` on the box. The api refuses a fire without a token
+  (401), an execute with a stale proposal (409), and a delete of the base PLC (403), and each refusal
+  writes a ledger row.
+- **Add a virtual PLC**: console → Fleet tab → Add PLC. Pick a task and a protocol profile, then watch
+  the six onboarding phases arrive. A virtual PLC is a protocol profile, not vendor firmware.
+- **Act on a verdict**: console → Actions → Execute, then Confirm and execute inside the card. SCADA
+  writes one setpoint over the PLC protocol, and the event log records the citation and the measured relief.

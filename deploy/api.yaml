@@ -12,11 +12,11 @@ spec:
     metadata:
       labels: { app: api, tier: aiops }
     spec:
-      serviceAccountName: api   # SA kept for future bounded RBAC (no Role binds to it today)
+      serviceAccountName: api   # deploy/fleet.yaml binds Role fleet-manager to it (namespace fleet only)
       containers:
         - name: api
-          image: skn/api:v0.1
-          imagePullPolicy: IfNotPresent
+          image: localhost:5000/skn/api:v0.1
+          imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
           ports: [{ containerPort: 8088 }]
           env:
             - { name: ENGINE_URL,     value: "http://correlation-engine.aiops.svc:9100" }
@@ -32,8 +32,25 @@ spec:
             - name: VISR_OPERATOR_TOKEN
               valueFrom: { secretKeyRef: { name: visr-auth, key: operator-token, optional: true } }
             - { name: AUDIT_PATH,     value: "/data/audit.jsonl" }
+            # 2H fleet + 3D act loop (FLEET.md section 10). Both keys come from Secret visr-fleet.
+            # Without it, fleet changes and setpoint writes fail closed and /api/fleet says so.
+            - name: FLEET_ENROLL_KEY
+              valueFrom: { secretKeyRef: { name: visr-fleet, key: enroll-key, optional: true } }
+            - name: SCADA_WRITE_TOKEN
+              valueFrom: { secretKeyRef: { name: visr-fleet, key: scada-write-token, optional: true } }
+            - { name: SCADA_URL,         value: "http://tag-server.plant.svc.cluster.local:9300" }
+            - { name: VPLC_IMAGE,        value: "localhost:5000/skn/vplc:v0.1" }
+            - { name: TASKS_DIR,         value: "/tasks" }
+            - { name: DERATE_TARGET_PCT, value: "55" }
+            - { name: RELIEF_CHECK_S,    value: "60" }
+            # SCENARIOS.md 5: the PS4A injector, and the integrity checks (a pass every RECONCILE_S s).
+            # INTEGRITY_BACKGROUND "0" stops the checks. The PS4A and PS6 faults use SCADA_WRITE_TOKEN.
+            - { name: EWS_URL,              value: "http://rogue-ews.plant.svc.cluster.local:8090" }
+            - { name: INTEGRITY_BACKGROUND, value: "1" }
+            - { name: RECONCILE_S,          value: "5" }
           volumeMounts:
             - { name: audit, mountPath: /data }
+            - { name: tasks, mountPath: /tasks, readOnly: true }
           readinessProbe:
             httpGet: { path: /healthz, port: 8088 }
             initialDelaySeconds: 3
@@ -45,6 +62,8 @@ spec:
         # promoting the ledger to a PVC is a noted roadmap step, not a silent claim.
         - name: audit
           emptyDir: {}
+        - name: tasks        # the vPLC task library, created by `skctl up --components engine`
+          configMap: { name: vplc-tasks, optional: true }
 ---
 apiVersion: v1
 kind: Service
@@ -57,8 +76,9 @@ spec:
   selector: { app: api }
   ports: [{ name: http, port: 8088, targetPort: 8088, nodePort: 30088 }]
 ---
-# The api ServiceAccount. No Role binds to it today. PS-series faults are HTTP calls to
-# plant-sim:9200, so they need no RBAC. The Stage-3 act loop will bind its bounded Role here.
+# The api ServiceAccount. deploy/fleet.yaml binds the Role fleet-manager to it, in namespace fleet
+# only (2H). PS-series faults are HTTP calls to plant-sim:9200, rogue-ews:8090, and tag-server:9300.
+# They need no RBAC.
 apiVersion: v1
 kind: ServiceAccount
 metadata: { name: api, namespace: aiops }

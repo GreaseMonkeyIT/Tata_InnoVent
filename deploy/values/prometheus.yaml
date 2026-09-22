@@ -10,6 +10,9 @@ grafana:
     datasources:
       label: grafana_datasource_skn   # load ONLY this stack's datasources; ignores loki-stack's default-Loki configmap (the two-defaults crashloop). Provision Loki here as non-default when we wire the logs panel.
   grafana.ini:
+    server:                      # LOG-062: the HTTPS console proxies Grafana at /grafana/ (no mixed content)
+      root_url: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+      serve_from_sub_path: true
     security:
       allow_embedding: true      # let the dashboard page iframe Grafana panels (d-solo)
     users:

@@ -17,8 +17,8 @@ spec:
     spec:
       containers:
       - name: openplc
-        image: skn/openplc:v0.1
-        imagePullPolicy: IfNotPresent
+        image: localhost:5000/skn/openplc:v0.1
+        imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
         ports:
         - { containerPort: 502,  name: modbus }
         - { containerPort: 8080, name: web }

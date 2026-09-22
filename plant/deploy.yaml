@@ -42,13 +42,21 @@ spec:
     spec:
       containers:
       - name: plant-sim
-        image: skn/plant-sim:v0.1
-        imagePullPolicy: IfNotPresent
+        image: localhost:5000/skn/plant-sim:v0.1
+        imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
         env:
           # 2F field wiring: sensors -> OpenPLC %MW words, trip coils -> contactors. The sim
           # runs OPEN-LOOP (identical to pre-2F) while this host is unreachable, so the plant
           # never depends on the PLC pod existing.
           - { name: PLC_HOST, value: "openplc.plant.svc" }
+          # 2H cells (FLEET.md 7): the base PLC plc-stamping commands press-1 and press-2 over its
+          # field port. Format: cell|host:port|failopen|machine,machine;... The cell is fail-open:
+          # while the PLC is unreachable, the presses run at full speed as before. An empty value
+          # removes every base cell.
+          - { name: BASE_CELLS, value: "stamping|plc-stamping.fleet.svc.cluster.local:5020|failopen|press-1,press-2" }
+          # SCENARIOS.md 2.3: the field network segment (a queue model) that the cell links cross.
+          # Format: name|talkers|capacity frames per second|buffer. OpenPLC stays off the segment.
+          - { name: FIELD_SEGMENTS, value: "field-1|hmi-gw|1000|50" }
         ports: [{ containerPort: 9200, name: metrics }]
         resources:
           requests: { cpu: 50m,  memory: 64Mi }
@@ -105,7 +113,11 @@ spec:
       - name: timescaledb
         image: timescale/timescaledb:latest-pg16
         env:
-        - { name: POSTGRES_PASSWORD, value: plant-historian }
+        # LOG-076: the password lives in Secret plant/historian-auth (deploy/historian-auth.sh).
+        # POSTGRES_PASSWORD acts only when the data folder is empty. A running database keeps its
+        # password, so the script changes it in the database before it writes the Secret.
+        - name: POSTGRES_PASSWORD
+          valueFrom: { secretKeyRef: { name: historian-auth, key: password } }
         - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
         ports: [{ containerPort: 5432 }]
         resources:

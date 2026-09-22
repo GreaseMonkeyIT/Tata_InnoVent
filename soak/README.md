@@ -1,6 +1,6 @@
 # Soak / stress-test recorder
 
-This harness cycles the PS-series plant faults (PS1, PS2, PS5) for a few hours. It samples the live
+This harness cycles the PS fault set (SCENARIOS.md: PS1 PS2 PS3 PS4A PS4B PS5) for a few hours. It samples the live
 causal verdict every few seconds and builds a **self-contained HTML report** that opens by
 double-click.
 
@@ -26,7 +26,8 @@ python3**. It needs no extra packages and no internet.
 ## Run it
 
 1. Warm the stack first. **PS0 must be silent** (`/api/graph` shows `findings: []`) before you trust
-   cycle 1. After a restart, run the long PS0 soak from `POC_SCRIPT.md` step 0.3.
+   cycle 1. After a restart, run the long PS0 soak from `POC_SCRIPT.md` step 0.3. This harness fires
+   faults, so it cannot run that soak. `deploy/factory-up.sh` starts a PS0 watcher that fires nothing.
 2. If the API enforces 2E auth, forward the API port and export the operator token:
 
    ```bash
@@ -38,7 +39,7 @@ python3**. It needs no extra packages and no internet.
 3. Start the soak from the repo root:
 
    ```bash
-   bash soak/soak.sh                  # 3 hours, scenarios PS1 PS2 PS5, sample every 12s
+   bash soak/soak.sh                  # 3 hours, scenarios PS1 PS2 PS3 PS4A PS4B PS5, sample every 12s
    ```
 
 4. Stop early with **Ctrl-C** if you need to. The script still builds the report from the captured
@@ -54,7 +55,7 @@ check stops the run.
 | Var | Default | Meaning |
 |---|---|---|
 | `DURATION_H` | `3` | Total run length (hours). |
-| `SCENARIOS` | `"PS1 PS2 PS5"` | Which scenarios to cycle, in order. |
+| `SCENARIOS` | `"PS1 PS2 PS3 PS4A PS4B PS5"` | Which scenarios to cycle, in order. Run PS6 on its own (`SCENARIOS=PS6`): it OOM-kills the tag server. |
 | `SAMPLE_S` | `12` | Seconds between verdict samples. |
 | `BASELINE_S` / `OBSERVE_S` / `COOLDOWN_S` | `60` / `180` / `150` | Watch windows before the fire, during the fault, and after the reset. |
 | `NARR_EVERY` | `5` | Capture `/api/narrative` every Nth sample (it is LLM-backed, so the script keeps it sparse). |

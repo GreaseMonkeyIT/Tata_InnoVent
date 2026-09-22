@@ -1,0 +1,111 @@
+# 2H virtual PLC fleet (FLEET.md section 12). Apply after the Secrets block in PIVOT_SETUP.md step 5.0b.
+#   - namespace fleet, where every virtual PLC runs
+#   - a Role that lets ONLY the api ServiceAccount manage PLC objects in fleet (least privilege)
+#   - the base PLC plc-stamping: the process controller of press-1 and press-2 (Siemens S7-1200
+#     profile, task stamping-line). OpenPLC stays the separate trip interlock, as in a real plant.
+#   - a ServiceMonitor for the tag server path /metrics/fleet (vplc_* and scada_* only, never plant_*)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fleet
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fleet-manager
+  namespace: fleet
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "secrets"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: api-fleet-manager
+  namespace: fleet
+subjects:
+  - kind: ServiceAccount
+    name: api
+    namespace: aiops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fleet-manager
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plc-stamping
+  namespace: fleet
+  labels: { app: vplc, visr/plc: plc-stamping, visr/profile: siemens-s7-1200, visr/managed: static }
+spec:
+  replicas: 1
+  selector: { matchLabels: { visr/plc: plc-stamping } }
+  template:
+    metadata:
+      labels: { app: vplc, visr/plc: plc-stamping, visr/profile: siemens-s7-1200, visr/managed: static }
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: vplc
+          image: localhost:5000/skn/vplc:v0.1
+          imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          env:
+            - { name: PLC_NAME, value: "plc-stamping" }
+            - { name: PROFILE, value: "siemens-s7-1200" }
+            - { name: TASK_NAME, value: "stamping-line" }     # the baked library task
+            - { name: TASK_DIR, value: "/task" }              # a loaded task (ConfigMap) takes priority
+            - { name: TZ, value: "Asia/Kolkata" }
+            - name: DEVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: plc-stamping-token, key: token } }
+          ports:
+            - { name: s7comm, containerPort: 102 }
+            - { name: field, containerPort: 5020 }
+            - { name: control, containerPort: 8080 }
+          volumeMounts:
+            - { name: task, mountPath: /task, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 25m, memory: 48Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+      volumes:
+        - name: task
+          configMap: { name: plc-stamping-task, optional: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plc-stamping
+  namespace: fleet
+  labels: { app: vplc, visr/plc: plc-stamping }
+spec:
+  selector: { visr/plc: plc-stamping }
+  ports:
+    - { name: s7comm, port: 102, targetPort: 102 }
+    - { name: field, port: 5020, targetPort: 5020 }
+    - { name: control, port: 8080, targetPort: 8080 }
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: tag-server-fleet
+  namespace: plant
+  labels: { release: prom }
+spec:
+  selector: { matchLabels: { app: tag-server } }
+  namespaceSelector: { matchNames: [plant] }
+  endpoints:
+    - port: metrics
+      path: /metrics/fleet
+      interval: 5s
+      honorLabels: true      # keep namespace="fleet", pod="<plc>" from the tag server

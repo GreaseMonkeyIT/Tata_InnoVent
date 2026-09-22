@@ -9,6 +9,7 @@ import itertools
 import numpy as np
 
 from . import detectors
+from .common_mode import apply_common_mode
 from .gate import R_ADJ, SOURCE_COUPLING_KINDS, TEMPORAL_TOL_S, Witness, accept_edge
 from .lagcorr import adjacent_support, best_directed, lag_profile
 from .ranking import blast_radius, build_graph, rank_root_causes
@@ -54,6 +55,9 @@ def run_pass(
     write_vectors: dict[str, np.ndarray] | None = None,
     baselines: dict[str, float | None] | None = None,
     recent: int | None = None,
+    gate_q: float = 90.0,
+    bare_src_must_deviate: bool = False,
+    common_mode: dict | None = None,
 ) -> dict:
     """One correlation pass.
 
@@ -62,6 +66,8 @@ def run_pass(
     witness: physical relations from A3/kube-state
     slo_breach: symptom pods to seed root-cause ranking (defaults to pods with onsets)
     caps: optional {pod: limit} for saturation classification
+    common_mode: {domains, min_members, window_s, kind} enables the common-mode rule
+                 (SCENARIOS.md 4.5). None (the default) keeps the old behaviour exactly.
     """
     caps = caps or {}
     # Detect over the FULL ring -- search the whole stored series for a disturbance
@@ -94,8 +100,10 @@ def run_pass(
                 # cooled is no longer a live incident (the verdict resets ~recent samples after it
                 # ends, instead of when it scrolls out of the full ring), while detection still
                 # scanned the whole ring for the onset. recent=None (fixtures) judges all of vec.
+                # gate_q (the service's GATE_Q) sets how much of the tail must clear the band. A
+                # low quantile keeps a normal duty cycle quiet, because its ON share stays short.
                 gate_vec = vec[-recent:] if recent else vec
-                if float(np.percentile(gate_vec, 90)) <= thr:
+                if float(np.percentile(gate_vec, gate_q)) <= thr:
                     continue  # within the pod's normal band -> steady state
         raw_onsets[pod] = ons
 
@@ -175,6 +183,9 @@ def run_pass(
             continue
         d = best_directed(cvec[a], cvec[b])
         src, dst = (a, b) if d["forward"] else (b, a)
+        if bare_src_must_deviate and src not in active:
+            continue  # a plant member that is not deviating cannot lead a bare correlation edge:
+                      # with no source evidence, it would become a root without any symptom of its own
         edge = accept_edge(src, dst, d["r"], d["lag_s"], d["profile"], witness, onset_s)
         if edge:
             edges.append(edge)
@@ -211,6 +222,16 @@ def run_pass(
             if pair not in chosen or _edge_pref(e) > _edge_pref(chosen[pair]):
                 chosen[pair] = e
         edges = sorted(chosen.values(), key=lambda e: (e["src"], e["dst"]))
+
+    # SCENARIOS.md 4.5: the medium leads when nothing inside it does. An external disturbance
+    # has no aggressor inside the plant, so the source-leads gate above cannot express it. This
+    # only ADDS edges. It never removes or reverses one the gate accepted.
+    if common_mode and common_mode.get("domains"):
+        edges = apply_common_mode(
+            common_mode["domains"], findings, onset_s, edges, cvec, write_onset_s,
+            min_members=common_mode.get("min_members", 3),
+            window_s=common_mode.get("window_s", 15.0),
+            kind=common_mode.get("kind", "rail"))
 
     g = build_graph(edges)
     seeds = slo_breach or sorted(active)

@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: aggregator
-          image: skn/aggregator:v0.1
-          imagePullPolicy: IfNotPresent
+          image: localhost:5000/skn/aggregator:v0.1
+          imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
           ports: [{ containerPort: 9000 }]
           env:
             - { name: PROM_URL,     value: "http://prom-kube-prometheus-stack-prometheus.observability.svc:9090" }

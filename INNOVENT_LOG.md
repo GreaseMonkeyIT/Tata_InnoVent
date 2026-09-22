@@ -884,3 +884,490 @@ against a mock API passes the token path, the refusal path, and the report rende
 **Box block (operator, next box session):** the working path is now `~/Tata_InnoVent`. Run
 `chmod +x deploy/skctl soak/*.sh plc/*.sh` after the sync. Confirm that `ls ~/Tata_InnoVent` shows no
 `ABB_Accelerator_Proto/`. Earlier log entries stay unchanged (append-only).
+
+**LOG-058 · 2026-09-15 · Phase 2H: the virtual PLC fleet and act loop verb 1, built and tested locally.**
+**Operator decisions (2026-09-14 and 2026-09-15):** build the entirety of the remaining items plus a
+capability to simulate virtual PLCs, load them with tasks, and see them come online. The judges said
+the most complete product has the best chance (108 teams to about 10). The college lab PLCs (S7-200,
+S7-1200, Micro820, in-charge approval received) wait until after the Virtual PoC. **The Stage 2 PPT
+and the demo video are due 2026-09-26.** The box gets a local image registry so deploys need no sudo.
+Leftover old-bench releases (beyla, factory) may be removed.
+**Design:** `FLEET.md` is the interface contract. A virtual PLC is a soft-PLC runtime with a vendor
+protocol profile, not vendor firmware. The protocols are real frames. plant-sim keeps all physics.
+The base stamping cell (press-1, press-2) gets a process PLC, `plc-stamping` (S7-1200 profile).
+OpenPLC stays the separate trip interlock. The stamping cell fails open, so the plant behaves as
+before when its PLC is absent.
+**Built:** `vplc/` (Structured Text subset compiler, measured scan loop, S7comm DB1 and Modbus TCP
+servers, field port, control HTTP, signed enrollment, 4 tasks) · `plant/` cells, rail `psu-c`, field
+wiring, `/cells`, `/domains` · `scada/` fleet registry, drivers, enrollment, quality, setpoint writes,
+`/metrics/fleet` · `correlation/service.py` run-time domains (`DOMAIN_SOURCES`) · `api/` fleet routes
+over a Role in namespace `fleet`, act loop (cite-or-die proposal, 409 on a changed verdict, relief
+row after 60 s), narrator controller line · `dashboard/` Fleet section, Execute and ledger, drive rows,
+N-rail floor with PLC cabinets, sixth Boot probe · `deploy/fleet.yaml`, registry manifests,
+`make push`, PIVOT_SETUP steps 4, 5.0b, 5.3d.
+**Resume blockers fixed on the way:** `api/Dockerfile` did not copy `security.py` (the new api image
+would crash-loop). The dashboard readiness probe hit basic auth and got 401 (new `/healthz` path).
+pymodbus was unpinned in the tag server. Dependencies are now pinned to the versions proven on the box.
+**Verified locally:** tests correlation 60, plant 20, api 24, scada 59, vplc 41, all green. A
+process-level smoke test ran a vPLC on the S7 profile and one on the Micro820 profile with plant-sim
+and the tag server: 18 of 18 checks passed. Both PLCs enrolled and polled GOOD (RTT 0.27 ms over
+S7comm, 1.95 ms over Modbus). A DERATE write of 55 cut press-1 from 42.9 A to 23.1 A. Task hot-load
+and the compile-error refusal both worked. `next build` passes, and the dev preview renders the
+Fleet cards, the six phases, the Execute dialog, and three rails.
+**Box state:** registry on 127.0.0.1:5000 with all 8 images pushed. k3s still paused. Pending
+operator sudo: `registries.yaml`, reboot, `systemctl enable --now k3s`, then the 2E Secrets.
+**Next:** deploy, 2A/2E/2H box-verify, the overnight soak with `plc-stamping` running, rehearse,
+record per `POC_SCRIPT.md`, then the deck on the official template.
+
+**LOG-059 · 2026-09-15 · Session summary written (`HANDOFF.md`), go-live scripted, frontend change set for the next session.**
+**Operator decisions:** the frontend changes in the next context window. Log and note down everything
+in a summary now, then take everything live on forge over Tailscale.
+**Summary:** `HANDOFF.md` records the dates (Stage 2 PPT and video due 2026-09-26), the operator
+decisions, the Phase 2H build and its proof, the resume fixes, every box fact, the college lab facts,
+the open items, the risks, and the process notes. The next session starts from it.
+**Go-live, scripted:** `deploy/resume.sh` is the one operator step (sudo and the dashboard
+passwords): the registry mirror file, k3s start, node wait, the 2E and 2H Secrets. `deploy/golive.sh`
+needs no sudo: old-bench cleanup, every manifest in order, restarts onto the registry images, and
+checks of the front door, the plant, OpenPLC, plc-stamping over S7comm, SCADA, the engine, and the
+api. `PIVOT_SETUP.md` gains the "Resume after a pause" section.
+**Box facts found:** a non-interactive SSH shell does not set `KUBECONFIG`, so kubectl reads the
+root-only k3s config. User linger is off, so `systemd-run --user` jobs stop with the SSH session
+(use `screen`). The registry holds all 8 images. k3s stays paused until the operator runs `resume.sh`.
+
+**LOG-060 · 2026-09-15 · The stack is LIVE on forge: go-live 0 failures, fleet and OpenPLC latch verified on the box.**
+**Sequence:** the operator ran `deploy/resume.sh` (registry mirror, k3s start, node Ready, the 2E and 2H
+Secrets). It started `deploy/golive.sh`, which finished with **0 failed checks** in about 45 s: beyla
+release and the chaos namespace removed, every manifest applied, all 8 Deployments rolled onto the
+registry images, login wall 401, `/healthz` 200, http 301, api auth enforced, anonymous fire 401,
+stamping cell closed-loop, OpenPLC closed-loop, tag server GOOD, plc-stamping enrolled over S7comm
+with 23 of 23 tags GOOD, engine graph up, `/api/fleet` RUN, `/api/tags` from SCADA, Caretta topology.
+**Checked after settling:** every pod Running (alloy CrashLoop is the known ignorable one). The
+aggregator and openplc pods report `docker.io/skn/...` names, but their specs pull
+`localhost:5000/skn/...` and the digests match: containerd shows the July alias of the same image.
+Over Tailscale from the laptop: `https://100.93.123.48:30443/healthz` 200, `/` 401, `:30080` 301.
+**2H live test (actor `claude-verify`, operator token from the Secret):** `POST /api/fleet/plcs`
+created `plc-pack-1` (Micro820 profile, packaging-cell, rail psu-c). Phases: requested +0.0 s, pod
++0.2 s, runtime +1.2 s, enrolled +2.8 s, SCADA GOOD +5.9 s (Modbus RTT 7.3 ms, 32 of 32 tags),
+engine window +15.6 s. The cell ran closed-loop, its three machines drew current, psu-c sat at 386.5 V.
+Load task `packaging-cell-rush` answered 200. The tag server published `plc:plc-pack-1`. The audit
+chain stayed intact. `plc-pack-1` stays running for the operator to see. **Remove it before the soak.**
+**OpenPLC latch re-confirm (LOG-050 item 4, open since July): PASS.** PS5 fired. press-1 and furnace-1
+reached 78 C in about 50 s. The forecast card led the trip (press-1 ETA 2.4 s, furnace-1 7.2 s,
+press-2 27.5 s). The PLC set both trip coils (SCADA read 1.0), the contactors opened, and the trips
+stayed latched for 20 s while the fault stayed active and the machines cooled. One reset cleared both.
+**Not verified yet:** PS1 roots press-1 and the Execute beat (both need matured baselines), PS2,
+PS0 silence. The engine is noisy after the restart on July baselines (root compressor-1, 20
+findings). That is expected: wipe the engine memory and soak before any verdict counts.
+
+**LOG-061 · 2026-09-15 · The college lab track is dropped.**
+**Operator update:** the Mechatronics lab setup is too limiting (one Micro820 with one experiment
+would read as weak). A plan to feed outside data into the plant plane followed. LOG-076 closed that
+plan: the plant plane runs on the physics sim only.
+**Guard added:** `.gitignore` gains `industry_data/` and `*.ttrecx`. The repo is public, and no data
+file from outside the project enters git.
+(Edited 2026-09-22, LOG-076: the data details are removed.)
+
+**LOG-062 · 2026-09-16 · The dashboard becomes a single-screen operator console on the Stage 2 palette. Live on forge.**
+**Operator brief (2026-09-15):** keep the infographics. (1) Adopt the Stage 2 deck palette (#0000B3,
+#12C6B3, #FF9C00, #000000) sparsely, with color theory, and keep the calm VISR look. (2) Replace the
+scrolling page: a SCADA-like system needs buttons, panels, and a map on one static screen, with EVE
+Online and FTL as references, a few scrolling sub-panels, nothing obscured, and no sensory overload.
+**Operator decisions:** build two layout prototypes first. The operator picked **A** (map in the
+center, panels on both flanks) over B (wide map, bottom deck). Teal marks the normal state. The fonts
+stay (Industry for display, the system sans for text). The Grafana graphs return through `/grafana/`.
+**Found while planning:** since the HTTPS front door (LOG-060), the six Grafana iframes pointed at
+`http://<box>:30030`. A browser blocks a plain-HTTP frame inside an HTTPS page as mixed content, so
+those graphs were blank on the live console.
+**Color roles:** grounds are near-black shades of the Tata blue hue (60/30/10). Teal is the normal
+state and the accent. Blue fills operator commands, the brand plate, and the active tab only: on black
+it has about 1.5:1 contrast, so it never carries text. Amber is warning. Red (#F2495C, kept) is alarm,
+the 180° complement of the teal. Black marks live data wells. Every status also has a shape (● ▲ ■ ⌀).
+**Console (layout A, 1920×1080 at 100 %):** command bar lamps · left: Assets (rows per machine by rail
+and loop, ISA-101 band bars) and Fault injection · center: the map (FLOOR or EDGE, ISO or PLAN camera,
+click to select, teal corner brackets, forecast machines amber) over the Selected, Fleet, Tags, Trends,
+and Edge tabs · right: Verdict (STEADY, FORECAST with trip ETAs, ROOT CAUSE with a chain line), Actions,
+Event log. No page scroll. Compact sizes below 1600×860, a stacked fallback below 1280×700.
+**Nothing covers the console:** Execute confirms inside its Actions card, Add PLC is a form inside the
+Fleet tab, and Remove needs a second click within 5 s. The floor camera frames the machines for any
+panel shape. `page.jsx` split into `lib/` hooks and one component per panel. `Machines.jsx` removed.
+**Fixed on the way (older bugs):** `Graph.jsx` passed a ref through a `next/dynamic` wrapper that drops
+refs, so the EDGE graph never ran zoomToFit or its off-screen pause. `Floor.jsx` used the deprecated
+`THREE.Clock`.
+**Grafana route:** nginx proxies `/grafana/` to `prom-grafana.observability.svc` behind the same login.
+Grafana got `GF_SERVER_ROOT_URL` (`/grafana/` sub-path) and `GF_SERVER_SERVE_FROM_SUB_PATH=true` by
+`kubectl set env`, not helm. `deploy/golive.sh` re-applies both and checks them.
+`deploy/values/prometheus.yaml` carries them for a fresh install.
+**Verified locally:** `next build` passes. In the dev preview, 1920×970 and 1366×700 have no page
+scroll. Row clicks and map clicks select assets, a cabinet click opens its PLC card, ISO and PLAN switch,
+the inline confirmations render, and the Remove arm expires. No JS errors or React warnings.
+**Verified on forge:** all 35 changed files matched by sha256 over Syncthing. `make push
+ONLY="dashboard"` passed, and the rollout reached Ready. `/` 401, `/healthz` 200, http 301, and
+`/grafana/` 401 from the box and over Tailscale. Grafana answers `/grafana/api/health` (database ok),
+both `d-solo` panels 200, `appSubUrl` /grafana. The new golive checks pass. A POST query with the
+proxy's Host and Origin headers reaches Grafana's query layer, so no origin check blocks the panels.
+**Not verified yet:** the authenticated view in a browser (Claude does not type the console passwords).
+The operator logs in and confirms the console and the Trends graphs.
+**Docs updated:** `dashboard/README.md`, `README.md`, `INNOVENT_PLAN.md`, `POC_SCRIPT.md` (every beat
+location, six Boot probes, inline confirmation), `PIVOT_SETUP.md` (step 5.2b, section 6.5), `HANDOFF.md`.
+Nothing is committed.
+
+**LOG-063 · 2026-09-16 · The floor map gets a normal orbit camera. Live on forge.**
+**Operator report (after the first live login):** the drag direction was inverted, and a drag past a
+certain angle also zoomed in.
+**Cause:** the hand-rolled camera added the drag distance to the azimuth, so the scene moved against the
+cursor. It also re-framed the hall's bounding box after every rotation step (LOG-062), so the zoom changed
+while the operator rotated.
+**Fix:** `Floor.jsx` uses three.js OrbitControls (from the `three` package, no new dependency). Drag
+rotates with the cursor, right-drag pans, and the wheel zooms (0.5 to 5). A rotation never changes the
+zoom. The polar angle stays between almost straight down and about 12° above the slab. The frustum keeps
+its height in world units, so a panel resize never zooms. ISO and PLAN are presets that aim and frame the
+camera once. A second click on the active preset resets the view. A new plant layout (Add PLC)
+re-frames the camera only when the operator has not moved it. Picking now reacts to a left click only.
+**Verified locally:** `next build` passes. In the dev preview, a drag rotates with the cursor, and machine
+sizes stay the same through the rotation. The wheel zooms, a drag never selects, a click still selects,
+ISO resets, PLAN frames the schematic, and a plane toggle keeps the preset. No JS errors or warnings.
+**Docs updated:** `dashboard/README.md`, `POC_SCRIPT.md` beat 2.1.
+
+**LOG-064 · 2026-09-16 · The college lab reference PLC models leave the code. The factory bring-up on forge waits for an operator go-ahead.**
+**Operator directive:** remove the reference PLC models (Micro820, S7-200, and similar) and make sure the
+code works without them. Then bring the factory up on forge.
+**Removed:** the `ab-micro820` profile (`vplc/profiles.py`, `api/fleet.py`, the dashboard mock) and the
+`bottle-filling` task, which copied the S7-200 lab experiment. The packaging tasks now hint
+`generic-iec`. Two profiles stay: `siemens-s7-1200` (S7comm, used by `plc-stamping`) and `generic-iec`
+(Modbus TCP). The lab PLC facts left `HANDOFF.md` section 6.1 and `INNOVENT_MASTER_PLAN.md` (2H, 3B, D3).
+(Edited 2026-09-22, LOG-076: a data plan is removed.)
+**Tests:** the tests that used the removed items now use `generic-iec`, `packaging-cell`, and
+`stamping-line`. The 409 check for a different cell layout now loads `stamping-line` onto a packaging
+PLC. A new assertion checks that the runtime refuses an unknown profile at boot. Results: correlation 60,
+plant 20, api 24, scada 59, vplc 39 (was 41, the two bottle-filling tests are gone). `next build` passes.
+**Forge:** Syncthing delivered all 21 changed files (sha256 match), and the two task files are gone there
+too. `make images` built vplc, api, dashboard, and tag-server into the local Docker cache. In those
+images, the vplc has 3 tasks and 2 profiles, the api lists 2 profiles, and the dashboard bundle has no
+Micro820 string. Nothing was pushed, and no pod changed.
+**Found before the bring-up:** `plc-pack-1` (the LOG-060 rehearsal PLC) still runs on `ab-micro820`. The
+new vplc image refuses that profile at boot, so a restart on it would crash-loop. Remove the PLC before
+the vplc push. With no fault fired, the engine named compressor-1 as root (0.41) with 8 findings. A clean
+bring-up needs the LOG-035 procedure: engine memory backup and wipe, then a quiet PS0 soak.
+**Blocked:** the auto-mode permission classifier stopped the API removal of `plc-pack-1` (the operator
+token read from the `visr-auth` Secret, then DELETE). The rest of the bring-up changes live workloads
+too, so it waits for the operator's go-ahead (`HANDOFF.md` section 0, item 3).
+**Docs updated:** `FLEET.md`, `vplc/README.md`, `POC_SCRIPT.md` (beat 2b.2), `INNOVENT_MASTER_PLAN.md`,
+`HANDOFF.md`. Nothing is committed.
+
+**LOG-065 · 2026-09-16 · `deploy/factory-up.sh`: the factory bring-up becomes one operator command. Shutdown facts for forge.**
+**Operator:** "go" for the four bring-up steps: remove `plc-pack-1`, push and run golive, back up and
+wipe the engine memory, soak PS0. The operator also asked whether forge may shut down after the task.
+**Blocked again:** after the go, the permission classifier refused the API removal of `plc-pack-1` a
+second time. Claude does not work around it. The operator runs the bring-up.
+**Built:** `deploy/factory-up.sh` (no sudo). Step 1 removes every UI-created PLC through the api. Step 2
+pushes the images (`ONLY`, and `PUSH=0` skips it). Step 3 runs `golive.sh` and stops on a failed check.
+Step 4 stops the engine, copies the memory from a maintenance pod to `~/visr-backups`, compares the file
+count and the byte count, wipes, and starts the engine. An exit trap starts the engine on every failure
+path, and `WIPE=0` skips the step. Step 5 starts the PS0 watcher in the screen session `visr-ps0`. It
+writes one read-only verdict line per minute (QUIET or NOISY) to `/var/tmp/visr-ps0-soak.log`.
+**Found:** the old wipe in `PIVOT_SETUP.md` step 2 (rm, then a rolling restart) can keep old state. The
+engine holds its SQLite files open and creates some of them on first use. The old and the new pod overlap
+during a rolling restart, so the old pod can write into the new files. Step 2 now stops the engine first.
+**Checked:** `bash -n` passes on the laptop and on forge, the file has LF line endings, and the forge copy
+matches by sha256. The script has not run yet.
+**Forge shutdown facts:** k3s and docker are enabled at boot, the registry container restarts always,
+Wake-on-LAN is on for `eno1`, and no reboot is pending. All state sits on disk volumes, so a shutdown is
+safe for the data. A restart makes the engine re-learn, so a PS0 soak runs again after power-on.
+**Docs updated:** `PIVOT_SETUP.md` (Resume step 4 and step 2), `HANDOFF.md` (section 0 items 3 and 6,
+section 5), `POC_SCRIPT.md` (step 0.3), `soak/README.md`. Nothing is committed.
+
+**LOG-066 · 2026-09-17 · First factory-up run (WIPE=0): plc-pack-1 removed, new images live, one golive check flaked.**
+**Run:** the operator started `factory-up.sh` with `WIPE=0` at 00:03. Forge shuts down tonight, so the wipe
+and the soak run after the next power-on. Step 1 removed `plc-pack-1` through the api, and the fleet now
+holds only `plc-stamping`. Step 2 pushed vplc, api, dashboard, and tag-server. Step 3 ran `golive.sh`: 27
+of 28 checks passed, including plc-stamping over S7comm with GOOD tags on the new vplc image.
+**Flake:** the login wall check ran once, right after the dashboard rollout, and did not get 401. The
+NodePort can route to the old pod for a few seconds. Two minutes later the wall answered 401 from the
+box, the LAN, and Tailscale, and `/healthz` answered 200. The script stopped at that check, so the PS0
+watcher did not start. A shutdown follows, so the watcher is not needed tonight.
+**Fix:** `golive.sh` now retries the three dashboard front-door checks for up to 60 s, like the plant checks.
+**Next on forge:** after power-on, run `factory-up.sh` with `PUSH=0` (golive, wipe, soak).
+
+**LOG-067 · 2026-09-17 · Stage 2 deck, first full draft on the official template (local, gitignored).**
+**Operator directive:** start the Stage 2 PPT tonight while forge is off, per the Stage 2 rules. Screenshots
+from the earlier demo work may stand in for now.
+**Files (all in the gitignored `Design_PPT/`):** `SiliconKnights_Tata_VISR_Stage2.pptx` (15 slides),
+`stage2_build.py` (builds the deck from the template), `stage2_charts.py` (charts from the plant model),
+`stage2_assets/` (images), `stage2_render.ps1` and `stage2_sheet.py` (PowerPoint renders for QA), and
+`SiliconKnights_Tata_VISR_Stage2_overview.png`.
+**Rules kept:** the builder starts from `InnoVent-27_Stage_2_Presentation_Template.pptx` and keeps the logos
+and footers. It removes the guidelines slide and the content checklist slide. Every visible run is Arial.
+Titles are 28 pt, body text 16 to 18 pt, captions 10 to 12 pt, in the four brand colors on white.
+**Slides:** cover, team, problem (with the downtime cost and the market size), objective and approach (with a
+comparison against alternatives and the phases), solution overview, solution architecture (a new slide, not in
+the template), technical implementation, novelty: prior art, novelty: competitor benchmark (a new slide),
+challenges, results, demonstration, project plan, closing, additional information (honesty notes and sources).
+Every slide has speaker notes: about 1,280 spoken words, 9.8 min at 130 words a minute.
+**Evidence used:** measured results only, with the place and month on each card (LOG-046, LOG-058, LOG-060).
+The PS1 chart comes from `plant/sim/main.py` stepped on the laptop: press-1 42.9 to 85.3 A, rail A 360.3 to
+344.3 V, which matches the box figures. The console images are the LOG-062 previews on mock data. Their
+MOCK badge shows, and the captions say so.
+**Research (web, 2026-09-17):** Siemens True Cost of Downtime 2024 ($1.4 trillion a year, $2.3 million an hour
+in automotive). MarketsandMarkets, March 2026 (USD 13.89 billion in 2026 to 23.79 billion in 2031, 11.4 %
+CAGR). ISA-18.2 and EEMUA 191 alarm rates. Prior art: Bauer et al. 2007, Schleburg et al. 2013, MicroRCA 2020,
+Dynatrace Davis AI. Competitors: Siemens Senseye with Maintenance Copilot, GE Vernova SmartSignal. The
+benchmark rates a cell only when public documentation supports it. Otherwise it shows a dash.
+**Checked:** the pptx skill validator passes against the template. PowerPoint rendered all 15 slides, and a
+visual pass fixed text overflow, the half-circle symbol angles, number-unit line breaks, and a duplicate-part
+save bug (add slides before deleting any).
+**Still open (amber chips in the deck):** the college name, the team leader, each member's branch, role and
+photo, mentor or user feedback, the demo video link. After the soak: live console captures to replace the mock
+images, PS0 silence, PS1 time to verdict, and the Execute relief row. Operator decision: mention the earlier
+accelerator finalist status or not.
+
+**LOG-068 · 2026-09-17 to 19 · The PS set grows to seven failure families, and the engine learns to stay quiet.**
+**Why:** the operator said the deck built the whole pitch around PS1 and felt thin, and that the Secure part of the
+track had no real story. Field research (web, 2026-09-17) mapped real incidents to the ways a plant fails between
+machines. The research notes sit in the gitignored `FIELD_RESEARCH.md`, because they hold presentation notes.
+**The set (`SCENARIOS.md`, the new contract):** PS1 rail-sag cascade (Milford Haven 1994), PS2 power sag trips the
+chiller (Azure Australia East 2023: a chiller-1 overload relay trips on sustained undervoltage and cuts the coolant
+flow), PS3 control network storm (Browns Ferry 2006: an M/M/1/K segment model on the real Modbus field link),
+PS4A setpoint write with no record (Stuxnet, FrostyGoop: the `rogue-ews` pod writes press-1 DERATE over S7comm),
+PS4B current report contradicts the feeder (Buncefield: the vPLC AMPS word replays while the real current rises),
+PS5 coolant pump degradation (LG Polymers 2020), PS6 the monitor runs out of memory (Toyota 2023, 2003 blackout:
+a real leak in the tag server, then an OOM kill and a blind SCADA view).
+**Secure:** the api runs two integrity checks every 5 s (`api/integrity.py`): a writable setpoint that changes with
+no signed ledger row or write intent, and a rail whose feeder meter does not balance the PLC-reported currents.
+Findings go to `/api/integrity`, the `integrity` key of `/api/graph`, and ledger rows with actor `visr` (`unsigned`,
+`balance`). The act loop blocks an asset whose controller channel is under suspicion. Refusals now write rows for
+the 403 static delete and the two 409s. `deploy/refusals.sh` shows 401, 409 and 403 on camera.
+**The soak found a real engine bug (17-18 Sep, box):** 1 quiet line in 1,438. Every plant baseline was stored as
+median 0.0 and MAD 0.0: the engine restarted while the aggregator ring was nearly empty, learned the zero padding,
+and the storm rule then locked it. A 90th-percentile gate also flagged every normal compressor ON window. Fixes in
+the engine: learn only from windows 90 % full (`BASELINE_MIN_COVERAGE`), gate quantile 35 (`GATE_Q`), plant names
+kept whole in memory keys (qa-scanner-1 was stored as "qa"), multi-source families (`heat_load|cooling_shortfall`),
+a witness over source-only members, a forecast floor at the learned band, bare edges only from deviating plant
+members, and a 0.3 °C MAD floor for coolant. The box also scraped cAdvisor twice: the `mem` query now pins
+`job="cadvisor-fast"` (the tag server showed 63 MiB against a real 31 MiB).
+**Verified offline (2026-09-19):** the real plant physics through the real service loop, engine started before the
+ring filled. PS0 silent 180 of 180 passes for the last 30 min. Roots: PS1 press-1 (about 80 s), PS2 compressor-1
+through rail psu-b and loop cool-1 (40 of 42), PS3 hmi-gw, PS5 chiller-1 (52 of 60), PS4B press-1. After a reset
+the true root clears in 2 to 5 min, with no wrong roots. Tests: correlation 69, plant 35, api 56, scada 63, vplc 43
+(266). `next build` passes. The console reads the catalogue, shows the integrity and blind bands, walks the two-hop
+chain, and has mock variants chain, network, integrity and blind.
+**Deck v2 (gitignored `Design_PPT/`):** 17 slides. New: "Seven ways a plant fails between machines" and "Secure by
+design" (ISA/IEC 62443-3-3 FR1 to FR7, built today and next). The problem slide leads with Milford Haven,
+LG Polymers, Toyota and JLR. Results use the 17 Sep go-live numbers.
+**Not yet on the box:** every new scenario, the engine fixes, and the refusal rows. Next: `factory-up.sh` (push the
+six changed images, wipe, soak), then `deploy/proof-run.sh` and `deploy/refusals.sh` for the evidence.
+**Box check before the deploy (2026-09-19 17:05):** forge ran the old images, and no screen session was open. The
+`alloy` pod had restarted 5,049 times in 98 days. Its config used semicolons, which Alloy syntax does not allow,
+so the config never loaded. LOG-008 called this ignorable, but the engine now watches `observability`, so a pod in
+a restart loop there adds noise to a soak. Fixed in `deploy/values/alloy.yaml` (one attribute per line).
+`factory-up.sh` step 2b upgrades the release at its installed chart version (1.10.0), and step 5 moves the old soak
+log aside so that the new log holds one soak only.
+
+**LOG-069 · 2026-09-19 · The new build is live on the box, and the PS0 soak passes.**
+**Run:** the operator started `factory-up.sh` (run 3, defaults) at 17:35. It pushed the six changed images and
+upgraded alloy. It then ran golive (36 of 36 PASS, the new checks included), backed up the engine memory
+(`~/visr-backups/engine-memory-20260919-173823.tar`, 70 MB), wiped it, and started the watcher at 17:39. The running
+pods use the pushed digests. Alloy now runs, and Loki gets pod logs. The alloy status check gave a false WARN: the
+upgrade changed only the ConfigMap, so `rollout status` read the old stuck state. Step 2b now restarts alloy first.
+**Soak:** the first 15 lines were NOISY (up to 47 findings, roots Prometheus, OpenPLC and the historian) while the
+restart wave left the window. Every line from 17:54:23 is QUIET: no finding, root, forecast card or integrity
+finding, and no chiller trip. At 21:35 the count was 221 QUIET of 236 lines, 3 h 40 min unbroken. The 24 h soak of
+17-18 Sep had 1 QUIET line in 1,438, so the zero-baseline fix holds on the box. The engine stored 7 cases from the
+restart wave (4 to 11). They do not break the silence. The saved verdict graphs of the proof run
+show if a scenario matches one of them (`meta.case_id`).
+**Next:** `deploy/proof-run.sh` then `deploy/refusals.sh` in one screen session. `proof-run.sh` now copies the
+watcher log to its evidence folder, adds the soak numbers to the summary, and marks its start and end in the
+watcher log.
+
+**LOG-070 · 2026-09-19 · First box proof run: seven checks pass, three scenarios lose a race with the thermal trips.**
+**Run:** `proof-run.sh` then `refusals.sh`, 21:52 to 22:27 (34 min), evidence in `/var/tmp/visr-proof-20260919-215235`.
+**Pass on the box:** the PS0 soak before the run (238 QUIET of 253 lines, QUIET from 17:54:23, 3 h 58 min), no token
+401, stale id 409, base PLC delete 403, audit chain intact (29 rows). PS3 root hmi-gw after 81.2 s. PS4A unsigned
+write after 39.1 s, and Caretta named the client `rogue-ews`. PS4B current balance after 15.0 s (gap 18.22 A). PS6
+leak card after 105.2 s, blind SCADA view after 203.5 s, SCADA back 3.0 s later.
+**Fail or not valid:** PS1 named press-1 after 90.5 s, but press-1 had tripped at 78 C about 77 s after the fault
+(friction 1.9: 42.9 to 85.3 A, rail 360 to 344 V, heat to 78 C). Execute went to a stopped press, so the relief
+row (0.2 to 0.23 A) proves nothing, and the verdict had cleared before the reset (0.0 s). PS2 named compressor-1
+after about 80 s with the chiller relay tripped, but the loop hop through chiller-1 never showed at the same time:
+OpenPLC tripped the loop machines first, and the root moved to cnc-1, then chiller-1. PS5 fired only 60 s after
+the PS1 reset: the first card (press-2, 18 s) was not for the first machine to trip (furnace-1, 40 s). The
+narrator timed out: no model was loaded, and the 6.1 GB model does not fit the 4 GB GPU.
+**Cause:** the soak fix `GATE_Q=35` holds a verdict until a signal stays out of band for most of 2 min, so a root
+needs about 80 s. Since July the thermal time constants were 30 to 90 s, so OpenPLC trips a hot machine in 40 to
+95 s. The offline replay did not show this, because it runs no OpenPLC trip coil.
+**Diagnosis tools (scratchpad):** a per-family probe on the real sim and the real service loop, with the OpenPLC
+78 C latch emulated and the engine clock on simulated time. It reproduces the box: press-1 trips at +71 s, root at
++80 s.
+**Fix (laptop, not yet on the box):** (1) `plant/sim/main.py`: thermal time constants x3 (press-1 120 s, press-2
+165 s, cnc-1 90 s, furnace-1 270 s). The temperature noise now scales with sqrt(40 s / tau), so the stationary spread
+stays about 0.22 C. Steady temperatures do not change. (2) `correlation/engine/merge.py`: a held edge votes for root
+only when its source is a finding of the same signal. A bus-voltage finding on cnc-1 had let a held coolant edge
+cnc-1 -> press-1 vote, and the merged root flipped to cnc-1 while both signals ranked press-1. New test
+`test_merge_memory_edge_does_not_vote_for_another_signals_finding` (fails on the old merge). (3) Catalogue
+`expect_s`: PS1 90, PS2 150, PS3 90, PS6 120. (4) `deploy/proof-run.sh`: calm before PS5, lead time per machine
+(its own card against its own trip), cards on machines that did not trip, a timeline file per fault, a graph on a
+failed check, a flag when Execute reaches a tripped press, and a 40 s narrator timeout. A dry run on a fake api
+passes. Tests: correlation 70, plant 35, api 56.
+**Offline with the fix (candidate copy, probe):** PS0 840 of 840 passes quiet over 2 h 20 min. PS1: root press-1 at
++80 s, trip card at +20 s, trip at +219 s when nobody acts. Execute at +100 s: 85.2 to 45.0 A, rail 344.5 to 359.7 V,
+no trip. PS2: root compressor-1 at +20 s, the loop hop at +130 s, the first trip at +160 s. PS5: root chiller-1 at
++80 s. Lead per machine: furnace-1 86 s, press-1 117 s, press-2 306 s. One false card: cnc-1 settles at about 66 C,
+below the trip. After machines trip, the root still moves among the tripped machines (known limit).
+
+**LOG-071 · 2026-09-20 · Second box proof run: six of seven scenarios and every refusal pass.**
+**Deploy:** factory-up run 4 (2026-09-19 23:20, defaults) put the LOG-070 fix on the box: golive 36 of 36, alloy
+restarted cleanly, memory wiped. The PS0 soak was NOISY for its first 15 lines, then QUIET on every line from
+23:40:11 (105 lines). The slower thermal constants did not make PS0 noisy. The operator armed a screen that
+waited for 120 watcher lines with the last 30 QUIET, then ran `proof-run.sh` and `refusals.sh` (01:24 to 02:12).
+**Evidence** (`/var/tmp/visr-proof-20260920-012448`): PS1 root press-1 after 74.4 s on bus voltage (write, rail,
+temporal), trip card after 34.2 s, and no trip. Execute reached a running press: press-1 85.3 to 45.01 A, rail
+psu-a 344.2 to 359.44 V after 60 s. PS1 verdict clear 285.5 s after the reset. PS5 (after a calm verdict):
+furnace-1 card 32.5 s, trip 112.7 s, lead 80.2 s. press-1 card 22.1 s, trip 133.0 s, lead 110.9 s. Cards on
+press-2 and cnc-1 had no trip in the watch window. PS3 root hmi-gw after 81.3 s (write, net, temporal). PS4A
+unsigned write after 39.1 s (DERATE 100 to 30, client `rogue-ews`). PS4B current balance after 15.1 s (feeder
+133.08 A, reported 114.5 A, gap 18.58 A). PS6 leak card after 93.2 s, blind SCADA view after 203.7 s, back 3.0 s
+later. Refusals 401, 409, 403. Audit chain intact (29 rows). The narrator answered from the model this time.
+**PS2 still fails:** root compressor-1 after 81 s, chiller relay trip at about 90 s, loop flow 120 to 53 L/min.
+furnace-1 tripped at 196 s and press-1 at 220 s. The trips unloaded rail B, so the sag and the compressor root
+ended at about 250 s, before the loop hop showed (301 s, root chiller-1). The two hops never showed together.
+
+**LOG-072 · 2026-09-20 · The plant gets a supply above its rails, and the engine learns to look above the plant.**
+**Why:** a plant meters its distribution board far more often than it exposes a PLC there, so VISR must be able
+to root a cause above the plant. (Edited 2026-09-22, LOG-076: the data details are removed.)
+**The gap:** `Rail.step` used a constant source voltage, so every sag in the model started inside the plant and
+the engine could never root an external cause. PS2 also carried the wrong anchor. Azure Australia East 2023 was
+an external supply disturbance, and PS2 is a stuck-on compressor.
+**Built:** a `Supply` object `incomer-1` above every rail. `Rail.v_nom` is the fixed rating that every threshold
+and band uses, `v_in` is the live board voltage, and `v_src` stays a read-only alias so the console, `/state`, and
+the tests need no change. `Supply.step` draws no random numbers from the global stream, so at nominal the rail
+noise is unchanged. New fault PS7, three metrics, `/state.supply`, and `rail:incomer-1` in `/domains`. New engine
+rule in `correlation/engine/common_mode.py`: when every member of a declared medium deviates together and no
+member leads, the root is the medium. `COMMON_MODE=0` turns it off. PS2 keeps its mechanism and states honestly
+that it reproduces the Azure cascade and not the trigger. PS7 reproduces the trigger.
+**Measured (laptop):** plant 39 tests pass, correlation 79 pass. A dip to 0.85 drops every rail together, `psu-c`
+by the board's own 60.0 V, and the chiller relay trips inside 100 s from every cycle phase tested. `cnc-1`
+throughput falls to 72.7 %, which matches the fixed-rating formula (73.8) and rules out a live-board threshold
+(86.8), so the brownout branch stays alive under a dip.
+**PS7 does not pass yet.** New `correlation/tests/replay_offline.py` drives the real plant model on the engine's
+5 s grid through the real `run_pass`: PS1 PASS, PS2 PASS, PS7 FAIL with root `press-1`. The common-mode rule
+fires and puts `incomer-1` above `psu-a` and `psu-c`, and `incomer-1 -> psu-b` forms on its own with a real 5 s
+lag. A constant-power machine still answers the dip with more current, so the source path builds twelve false
+aggressor edges and `press-1` outranks the board. The fix is an explained-load test in `_writer_edge`: a source
+edge must not form when the source's current rise is fully explained by the voltage drop it is supposed to be
+causing. That path carries PS1, PS2, and PS4B, so it gets its own change and its own regression run.
+**Scope kept out:** the sub-second event channel. The aggregator polls every 5 s and the engine resamples onto a
+5 s grid, so a sub-second dip leaves no sample. PS7 uses a held dip, which the grid does see. The event channel
+and the meter as a separate instrument on its own protocol are later work.
+**Data handling:** the repo is PUBLIC. This change adds `*.xlsx` and `mechatronics_lab_manual.pdf` to
+`.gitignore`, so a bare spreadsheet or the lab manual at the repo root cannot enter git.
+**Files:** `SCENARIOS.md` (2.2 anchor note, new 2.8, 3.1 to 3.3, 4.1, 4.2, new 4.5, 8, 10, 11), `FLEET.md` (7, 9,
+11), `plant/sim/main.py`, `plant/tests/test_physics.py`, `plant/tests/test_cells.py`, `correlation/service.py`,
+`correlation/engine/pipeline.py`, `correlation/engine/common_mode.py`, `correlation/tests/test_common_mode.py`,
+`correlation/tests/replay_offline.py`, `deploy/engine.yaml`, `aggregator/queries.yaml`, `.gitignore`.
+
+**LOG-073 · 2026-09-20 · PS2: the thermal latch was eating the rail hop. Residual flow goes to 0.60.**
+**Why the box failed PS2 (LOG-071):** the two hops must be up in the same poll. They were not. At
+`CHILLER_RESIDUAL_FLOW=0.45` the loop fell to 54 L/min after the chiller relay tripped, three cooled machines
+reached the 78.0 C latch in `plc/program.st`, and their contactors opened. That unloaded rail B, the sag went
+away, and the rail hop died at about 250 s, before the loop hop settled at 301 s.
+**New tool:** `correlation/tests/ps2_lab.py`. `replay_offline.py` runs one pass of one family and answers who
+the root is. PS2 never failed on the root. It failed on timing. The lab runs both plant families through the
+real GraphMemory, the real learned baselines, the real merge, and the real forecaster, one pass every 20 s,
+and it emulates the OpenPLC 78 C latch. It scores `deploy/proof-run.sh`'s own PS2 predicate, so the number it
+reports is the number the box checks. Each setting needs its own process, because `service._memory` is a live
+SQLite store and a second trial inherits the first trial's baselines.
+**Measured, one process per setting:**
+
+| residual | first pass | window | machines that latched | max temp |
+|---|---|---|---|---|
+| 0.45 (old) | t+60 | 120 s | press-1, press-2, furnace-1 | 78.0 |
+| 0.50 | t+60 | 140 s | press-1, furnace-1 | 77.5 |
+| 0.55 | t+60 | 160 s | furnace-1 | 78.0 |
+| **0.60 (new)** | **t+60** | **180 s** | **furnace-1** | **77.7** |
+| 0.65 | t+60 | 180 s | furnace-1 | 77.8 |
+| 0.70 | t+60 | 180 s | none | 76.5 |
+| 0.75 | t+80 | 160 s | none | 74.0 |
+
+**Decision:** `CHILLER_RESIDUAL_FLOW` 0.45 to 0.60. It sits at the start of the plateau, it cuts the latches
+from three machines to one, and it keeps that one real trip, so the trip forecast still predicts an event that
+arrives. Above 0.70 nothing latches and the cards promise a trip that never comes. Every plant test passes
+with the new value. Two assertions moved with it: the PS2 flow band (54 to 72) and the PS7 flow bound.
+**What this does NOT prove.** The lab runs two signals. The box runs six, with `psi_io` primary, and the merge
+across six can move the root. PS2 PASSES in the lab even at 0.45, so the lab reproduces the mechanism and not
+the box verdict. The table measures the improvement between settings. Only a box proof run settles PS2, and
+forge is offline.
+**The second candidate, the curve-fit forecaster, is not a PS2 fix.** It changes the trip ETA, not whether the
+two hops coincide. Cards already fire in the lab, four at the first passing poll. It stays on the list as a
+separate improvement.
+
+**LOG-074 · 2026-09-21 · `/data/` is now gitignored.**
+**Why:** the operator made a `data/` folder at the repo root for local files. The repo is PUBLIC, and
+`.gitignore` did not cover `data/`, so one `git add -A` would have published the folder. The Sep 26
+recording stays on the physics model. (Edited 2026-09-22, LOG-076: the data details are removed.)
+**Change:** `.gitignore` carries `/data/`. The leading slash keeps the rule at the repo root, so a code
+folder named `data/` stays tracked.
+**Files:** `.gitignore`.
+
+**LOG-075 · 2026-09-21 · The sim review before the code freeze: six fixes, and no verdict moves.**
+**Why:** the operator asked for a full pass over the plant model before the sim code is locked for the Sep 26
+recording. Each suspect was first reproduced on the real model with a scratchpad script, then fixed with a test.
+**Fixed:**
+1. A repeat fault did damage. The API sends `/fault/<id>` on every console click. A second PS4B apply recorded
+   the replay from the faulted current (truth 61.3 A, vPLC word 61.3 A), so the evidence was gone. Now
+   `inject_fault` changes nothing for an active fault and answers 200 "already active".
+2. Throughput froze under the brownout line. A machine that the voltage does not slow recovered only while its
+   rail was above 368 V. Rail A idles at 360 V, so press-1 ran at 42.8 A with 2 % throughput after a trip
+   whenever its PLC link was down. It now climbs back 2 points per tick at any voltage.
+3. An idle 4 A labeler read below 0 A on 19 of 3,000 ticks. The current now has a floor of 0 A.
+4. `loop()` took its step from the wall clock with no cap. A 120 s stall would integrate as one step. The
+   thermal model then overshoots, and in a compressor window the chiller relay gains more than its trip heat.
+   `tick_dt` now caps the step at 5 s, and a cell machine needs a `tau` of 10 s or more.
+5. A plant-sim restart put every cooled machine back at 35 C, so the engine saw a warm-up ramp of up to 20 min
+   on four machines. A cooled base machine now starts at its healthy steady temperature.
+6. The HTTP server ran one request at a time with no read timeout. One silent connection could freeze
+   `/metrics` and the liveness probe. It now runs one thread per request with a 10 s timeout, like the tag server.
+**Doc fix:** SCENARIOS.md 2.8 said that the PS7 dip ramps over 3 s. The supply slews at 133 V/s, so the 60 V dip
+lands within one tick. The text now says so.
+**Kept on purpose:** rail A under the brownout line (cnc-1 and qa-scanner-1 at about 89 % with no fault),
+`plant_heat_load_watts` as a heat index, and a plant with no planned stops. SCENARIOS.md 2.9 lists them.
+**Measured (laptop):** plant 45 pass (6 new) plus the 2 known pymodbus errors. Correlation 79 pass. The offline
+replay gives PS1 PASS, PS2 PASS, PS7 FAIL, the same as before. The PS2 lab at 0.60 gives the LOG-073 row
+exactly: first pass t+60, a 180 s window, furnace-1 latched, 77.7 C.
+**Freeze:** the sim code is frozen from here. The box still runs the old image. The next factory-up must carry
+LOG-073 and LOG-075, then a soak and a proof run.
+**Files:** `plant/sim/main.py`, `plant/tests/test_physics.py`, `plant/tests/test_scenarios.py`,
+`plant/tests/test_cells.py`, `SCENARIOS.md` (2.8, new 2.9, 10), `FLEET.md` (13).
+
+**LOG-076 · 2026-09-22 · No outside data in the repo, and the historian password leaves the manifests.**
+**What was wrong (a Claude error):** the outside data files never entered git, but a written summary of them
+did. The 2026-09-20 commit carried that summary in LOG-061, LOG-072, `SCENARIOS.md` (the PS7 row, 2.8, 11), and
+a `.gitignore` comment. The uncommitted LOG-074, `SCENARIOS.md` 2.9, and one sim comment did the same.
+`.gitignore` kept the files out, but nothing checked what the docs said about them.
+**Decision (operator):** the project stays on the sim. The plant plane runs on the physics model only, and it
+needs no field logs. The outside-data plan from LOG-061 is closed.
+**Removed:** every data detail from `INNOVENT_LOG.md` (LOG-061, 064, 072, 074), `SCENARIOS.md`,
+`INNOVENT_MASTER_PLAN.md`, `.gitignore`, `plant/sim/main.py`, and `correlation/engine/common_mode.py`. Each
+edited log entry says so. The sim and engine edits change comments only. An AST compare shows the same code,
+so the LOG-075 freeze holds.
+**GitHub:** the 2026-09-20 commit leaves `main`. `main` goes back to its parent, and one new commit carries
+LOG-058 to LOG-076.
+**The historian password:** GitGuardian flagged the 2026-09-20 push for a "Generic Database Assignment". The
+match was the historian password in `scada/deploy.yaml`. The same value sat in `scada/tagserver.py` and
+`plant/deploy.yaml`, and it is in the public history back to the first commit. The database has no NodePort,
+so the risk is low. The value is public, so it must change.
+**Change:** a new Secret `plant/historian-auth` holds the password. The new script `deploy/historian-auth.sh`
+makes it, and `deploy/golive.sh` runs the script in step 0, before any apply. When the Secret is missing, the
+script makes a random password, sets it in the running historian through the local socket, and then writes
+the Secret. The historian reads `POSTGRES_PASSWORD` from the Secret. The tag server DSN carries no password,
+and libpq reads `PGPASSWORD` from the same Secret. No manifest or source file holds a database password now.
+**Box effect at the next factory-up:** golive step 0 changes the password once. The apply restarts the
+historian pod, and its data stays on the volume. Until the tag server restarts in step 3, the historian takes
+no new rows. Step 5 then checks that the tag server writes the historian again. That line is INFO only,
+because no PS verdict reads the historian. After that run, the old value in the history opens nothing.
+**Rule from now on:** before a commit, search the staged diff for data details and credentials. No tracked
+file describes an outside data file.
+**Measured (laptop):** plant 45 pass, correlation 79, api 38, scada 53, vplc 32. The errors are the known gaps
+in this interpreter (`pymodbus`, `snap7`, `fastapi`). `bash -n` passes on both scripts. The script has not
+run on the box yet.
+**Files:** `INNOVENT_LOG.md`, `SCENARIOS.md`, `INNOVENT_MASTER_PLAN.md`, `PIVOT_SETUP.md` (5.0c), `.gitignore`,
+`plant/sim/main.py`, `correlation/engine/common_mode.py`, `plant/deploy.yaml`, `scada/deploy.yaml`,
+`scada/tagserver.py`, `deploy/golive.sh`, new `deploy/historian-auth.sh`. Local only: `HANDOFF.md`.

@@ -10,8 +10,9 @@
 # the api NodePort gets. X-Remote-User attributes every audited action to the logged-in user.
 #
 # Deploy prereqs (fail-closed: nginx will not start without them — create the Secrets FIRST):
-#   visr-auth Secret: htpasswd (apr1) + operator-token   |   visr-tls Secret: self-signed pair
-# The paste-ready block lives in INNOVENT_LOG (2E entry).
+#   visr-auth Secret: htpasswd ($6$ or $apr1$ from `openssl passwd`) + operator-token
+#   visr-tls Secret: self-signed pair
+# The paste-ready block is in PIVOT_SETUP.md step 5.0.
 
 map $remote_user $visr_token {
   default  "";
@@ -36,6 +37,15 @@ server {
   auth_basic           "VISR — operator console";
   auth_basic_user_file /etc/nginx/auth/htpasswd;
 
+  # Kubelet readiness probe. It sends no credentials, so this one path skips basic auth.
+  # It returns a fixed string and no data.
+  location = /healthz {
+    auth_basic off;
+    access_log off;
+    default_type text/plain;
+    return 200 "ok\n";
+  }
+
   # Single-origin: proxy the API to the in-cluster gateway so the browser needs no CORS and no
   # second exposed port. A transient 502 just means the api pod isn't ready yet.
   location /api/ {
@@ -43,6 +53,23 @@ server {
     proxy_set_header Host $host;
     proxy_set_header X-Remote-User $remote_user;   # audit attribution (who acted)
     proxy_set_header X-Auth-Token  $visr_token;    # operator role -> action token; viewer -> ""
+  }
+
+  # LOG-062: the Trends tab embeds Grafana panels through this TLS origin. A browser blocks a
+  # plain-HTTP frame inside the HTTPS console as mixed content, so the frames never point at the
+  # Grafana NodePort. Grafana serves from the /grafana/ sub-path (GF_SERVER_SERVE_FROM_SUB_PATH,
+  # set by deploy/golive.sh), so nginx passes the path through unchanged. The login wall above
+  # applies here too. $http_host keeps the port, so Grafana's origin check matches the browser.
+  location /grafana/ {
+    proxy_pass http://prom-grafana.observability.svc.cluster.local:80;
+    proxy_set_header Host $http_host;
+  }
+  location /grafana/api/live/ {
+    proxy_pass http://prom-grafana.observability.svc.cluster.local:80;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $http_host;
   }
 
   # Static export: serve the requested file, its exported .html, or fall back to the app shell.

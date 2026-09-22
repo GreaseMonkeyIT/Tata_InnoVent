@@ -23,9 +23,18 @@ def merge_graphs(per_signal: dict[str, dict], primary: str | None = None) -> dic
     label is the active signal instead."""
     edges: list[dict] = []
     findings: list[dict] = []
+    voting: list[dict] = []        # the edges that may vote for root (see the 2A note below)
     for sig, g in per_signal.items():
+        own = {f["pod"] for f in g.get("findings", []) or []}
         for e in g.get("edges", []) or []:
-            edges.append({**e, "signal": e.get("signal", sig)})
+            tagged = {**e, "signal": e.get("signal", sig)}
+            edges.append(tagged)
+            # 2A backbone fix (mirrors state._render): a memory-held edge renders, but it VOTES
+            # for root only when its source is a current finding of the SAME signal. A finding on
+            # another signal must not wake it: a bus-voltage finding on cnc-1 let a held coolant
+            # edge cnc-1 -> press-1 out-vote live evidence, and PS1 blamed cnc-1 (2026-09-19).
+            if e.get("source") != "memory" or e["src"] in own:
+                voting.append(tagged)
         for f in g.get("findings", []) or []:
             findings.append({**f, "signal": f.get("signal", sig)})
 
@@ -35,13 +44,7 @@ def merge_graphs(per_signal: dict[str, dict], primary: str | None = None) -> dic
     ranking: list[dict] = []
     blast: list[dict] = []
     if edges and findings:
-        # 2A backbone fix (mirrors state._render): a memory-held edge renders but only VOTES
-        # for root when its source is itself a current finding -- memory alone must never
-        # out-vote live evidence.
-        finding_pods = {f["pod"] for f in findings}
-        rank_edges = [e for e in edges
-                      if e.get("source") != "memory" or e["src"] in finding_pods]
-        g = build_graph(rank_edges)
+        g = build_graph(voting)
         # Seed ONLY with findings that actually sit on the causal graph. A finding on one signal
         # (e.g. a CPU burst with no CPU edge yet) must not seed ranking over another signal's
         # steady-backbone edges -- rank_root_causes falls back to all nodes on an empty seed set,

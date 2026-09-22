@@ -19,21 +19,38 @@ spec:
     spec:
       containers:
       - name: tag-server
-        image: skn/tag-server:v0.1
-        imagePullPolicy: IfNotPresent
+        image: localhost:5000/skn/tag-server:v0.1
+        imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
         env:
           - { name: PLC_HOST, value: "openplc.plant.svc" }
           - { name: PLC_PORT, value: "502" }
           # must match the sim's PLC_MW_BASE (REGISTER_MAP.md: verify once on the box)
           - { name: PLC_MW_BASE, value: "1024" }
-          - { name: HISTORIAN_DSN, value: "host=historian-db.plant.svc dbname=postgres user=postgres password=plant-historian" }
+          # LOG-076: the DSN carries no password. libpq reads PGPASSWORD from Secret plant/historian-auth,
+          # which deploy/historian-auth.sh makes (deploy/golive.sh runs it first).
+          - { name: HISTORIAN_DSN, value: "host=historian-db.plant.svc dbname=postgres user=postgres" }
+          - name: PGPASSWORD
+            valueFrom: { secretKeyRef: { name: historian-auth, key: password } }
           - { name: TZ, value: "Asia/Kolkata" }
+          # FLEET.md 8: vPLC enrollment key and the SCADA write token. When the Secret or a key
+          # is missing, the variable stays empty and that path fails closed (no enrollment, no writes).
+          - name: FLEET_ENROLL_KEY
+            valueFrom: { secretKeyRef: { name: visr-fleet, key: enroll-key, optional: true } }
+          - name: SCADA_WRITE_TOKEN
+            valueFrom: { secretKeyRef: { name: visr-fleet, key: scada-write-token, optional: true } }
         ports: [{ containerPort: 9300, name: metrics }]
         resources:
           requests: { cpu: 50m,  memory: 64Mi }
           limits:   { cpu: 200m, memory: 128Mi }
         readinessProbe: { httpGet: { path: /healthz, port: 9300 } }
-        livenessProbe:  { httpGet: { path: /healthz, port: 9300 } }
+        # PS6 (SCENARIOS 2.7) drives the working set toward the 128Mi limit. Under that pressure
+        # a single slow /healthz must not read as Unhealthy and restart the pod before the OOM
+        # kill, or the evidence changes from "out of memory" to "probe failed". A wider timeout
+        # and failure count keep the OOM kill as the payoff.
+        livenessProbe:
+          httpGet: { path: /healthz, port: 9300 }
+          timeoutSeconds: 3
+          failureThreshold: 6
 ---
 apiVersion: v1
 kind: Service

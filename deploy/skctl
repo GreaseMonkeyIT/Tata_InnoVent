@@ -36,6 +36,10 @@ up() {
     kubectl -n aiops create configmap aggregator-queries \
       --from-file=queries.yaml="$HERE/../aggregator/queries.yaml" \
       --dry-run=client -o yaml | kubectl apply -f -
+    # 2H: the task library for the api fleet endpoints (FLEET.md section 12)
+    kubectl -n aiops create configmap vplc-tasks \
+      --from-file="$HERE/../vplc/tasks" \
+      --dry-run=client -o yaml | kubectl apply -f -
     kubectl apply -f "$HERE/aggregator.yaml"
     kubectl apply -f "$HERE/engine.yaml"
     kubectl apply -f "$HERE/api.yaml"

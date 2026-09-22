@@ -107,6 +107,33 @@ def test_merge_memory_edge_votes_when_its_source_deviates():
     assert out["root_cause_ranking"] and out["root_cause_ranking"][0]["pod"] == "cooling-monitor"
 
 
+def test_merge_memory_edge_does_not_vote_for_another_signals_finding():
+    """PS1 on 2026-09-19: cnc-1 had a bus-voltage finding (the rail sag reaches every member), and
+    a held coolant edge cnc-1 -> press-1 then voted, so the merged root flipped to cnc-1 while
+    both signals ranked press-1. A held edge votes only for a finding of its own signal."""
+    def e(src, dst, source="live", evidence=("write", "rail")):
+        return {"src": src, "dst": dst, "r": 0.99, "lag_s": 5, "confidence": 0.6,
+                "evidence": list(evidence), "state": "active", "source": source}
+    bus = {"findings": [{"pod": p, "class": "shift", "onset_s": 800.0, "severity": 1.0}
+                        for p in ("press-1", "press-2", "cnc-1", "psu-a", "qa-scanner-1")],
+           "edges": [e("press-1", "cnc-1"), e("press-1", "press-2"), e("press-1", "psu-a"),
+                     e("press-1", "qa-scanner-1"), e("press-2", "cnc-1"), e("press-2", "psu-a"),
+                     e("press-2", "qa-scanner-1"), e("cnc-1", "psu-a"), e("cnc-1", "qa-scanner-1"),
+                     e("psu-a", "qa-scanner-1")],
+           "meta": {}}
+    coolant = {"findings": [{"pod": "press-1", "class": "shift", "onset_s": 820.0, "severity": 1.0}],
+               "edges": [e("press-1", "press-2", evidence=("stat", "loop")),
+                         e("cnc-1", "press-1", source="memory", evidence=("stat", "loop")),
+                         e("cnc-1", "press-2", source="memory", evidence=("stat", "loop"))],
+               "meta": {}}
+    out = merge_graphs({"bus_voltage": bus, "coolant_temp": coolant})
+    ranking = out["root_cause_ranking"]
+    assert ranking[0]["pod"] == "press-1"
+    assert ranking[0]["score"] > 0.6
+    # the held coolant edges still render: memory stays visible, it just cannot vote here
+    assert any(x["source"] == "memory" and x["src"] == "cnc-1" for x in out["edges"])
+
+
 def test_merge_cross_signal_keeps_both_edges():
     cpu = {
         "findings": [{"pod": "analytics-batch", "class": "burst", "onset_s": 50.0, "severity": 0.8},

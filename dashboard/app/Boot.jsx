@@ -17,6 +17,9 @@ const CHECKS = [
     detail: (j) => `${j?.meta?.pods ?? "—"} pods · ${j?.meta?.accepted_edges ?? 0} edges accepted` },
   { id: "plant", label: "plant sim", path: "/api/plant",
     detail: (j) => `${Object.keys(j?.devices || {}).length} assets · ${Object.keys(j?.rails || {}).length} rails · physics-simulated` },
+  { id: "fleet", label: "plc fleet", path: "/api/fleet",
+    detail: (j) => j?.source === "unavailable" ? "unavailable"
+      : `${j?.plcs?.length ?? 0} virtual PLCs · ${(j?.plcs || []).filter((p) => p.state === "RUN").length} RUN · enroll ${j?.enroll || "?"}` },
 ];
 
 const withTimeout = (p, ms) =>
@@ -89,7 +92,7 @@ export default function Boot({ getJSON, onDone }) {
         </div>
         <div className="boot-foot">
           <span>{foot}</span>
-          {phase === "done" && <button className="btn cyan" onClick={leave}>enter dashboard</button>}
+          {phase === "done" && <button className="btn cmd" onClick={leave}>enter console</button>}
         </div>
       </div>
     </div>
