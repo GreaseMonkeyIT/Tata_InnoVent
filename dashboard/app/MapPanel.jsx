@@ -3,6 +3,7 @@ import dynamic from "next/dynamic";
 import Panel from "./Panel";
 import Glyph from "./Glyph";
 import Floor from "./Floor";
+import { scenarioName } from "./lib/format";
 
 // The 3D causal graph is WebGL (it touches window), so it renders client-only.
 const Graph = dynamic(() => import("./Graph"), { ssr: false });
@@ -37,7 +38,7 @@ export default function MapPanel({ d, plane, setPlane, view, setView, sel, onPic
           : <div className="graph3d"><Graph graph={d.derived.edgeGraph} topo={d.topo} /></div>}
         {faults.length > 0 && (
           <div className="map-banner">
-            {faults.map((f) => <span key={f}><Glyph st="strained" size={9} />{f} injected · simulated fault</span>)}
+            {faults.map((f) => <span key={f}><Glyph st="strained" size={9} />{scenarioName(f)} injected · simulated fault</span>)}
           </div>
         )}
         <div className="map-cap">

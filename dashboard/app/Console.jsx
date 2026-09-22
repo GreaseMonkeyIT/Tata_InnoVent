@@ -59,7 +59,7 @@ export default function Console({ d }) {
         <Panel id="assets" title="Assets" meta={plantCount ? `${plantCount} machines · simulated` : "simulated plant"}>
           <Assets plant={d.plant} hist={hist} sel={sel} onSelect={(id) => onPick("asset", id)} statusOf={d.derived.statusOf} />
         </Panel>
-        <Panel id="faults" title="Fault injection" meta="sim"
+        <Panel id="faults" title="Fault injection" meta="scenarios · sim"
           tools={<button className="btn sm warn" onClick={d.resetAll} disabled={d.pending.__all} title="Clear every active plant fault and reset the PLC trip">{d.pending.__all ? "resetting…" : "Reset plant"}</button>}>
           <FaultInjection d={d} />
         </Panel>

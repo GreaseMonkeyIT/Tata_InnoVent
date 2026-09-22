@@ -7,6 +7,9 @@ section 4.4), the second box proof run (LOG-071) passed PS0, PS1 with Execute, P
 refusals. PS2 still fails: its two hops do not show at the same time. The code follows this file. If the code and
 this file disagree, fix one of them in the same change.
 
+**Box, 2026-09-22 (LOG-078):** the images with LOG-073 to LOG-077 went live at 14:08, and a new PS0 soak
+started. PS2 gets its first box run with `CHILLER_RESIDUAL_FLOW=0.60` in the next proof run.
+
 **Supply boundary (2026-09-20, this change).** The plant had no supply above its rails. `Rail.step` used a
 constant source voltage, so every sag in the model started inside the plant. A power quality meter at the
 distribution board measures the supply above the plant load, and that measurement separates an external cause
@@ -37,6 +40,8 @@ anchor. The plant plane is a physics model and says so. The inference on top of 
 | PS7 | The supply dips and the plant loses cooling | plant-sim | plant | Azure Australia East, 2023: an external supply disturbance tripped the chillers. | Root `incomer-1`, never a machine. Chain: supply `incomer-1`, then every rail, then `chiller-1` trips, then loop `cool-1`, then the cooled machines. |
 
 **IDs:** upper case, `^PS[0-9]+[A-Z]?$`. The API and plant-sim change a lower-case id to upper case.
+**Display names (LOG-078):** the console and the deck show "Scenario 1" for PS1. The fault rows show the
+number only. The API, the scripts, the ledger, and this file keep the PS IDs.
 
 **Refusals beat:** not a PS id. The API refuses a state change with 401, 403, or 409 and writes a ledger row.
 `deploy/refusals.sh` shows all three (section 9).
@@ -492,7 +497,8 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
 ## 7. Console behavior
 
 - **Fault injection:** rows come from `GET /api/scenarios`. The current three rows are the fallback when the call
-  fails. Each row shows the name and the mechanism. The live row also shows the anchor in faint text.
+  fails. Each row shows the scenario number, the name, and the mechanism. The live row also shows the anchor
+  in faint text. The map banner and the event log say "Scenario 1" (`scenarioName` in `lib/format.js`).
   **Reset plant** calls `reset-all`. The post-fire message uses `expect_s`.
 - **Verdict:** an integrity block above the state band when `graph.integrity` has open findings. The block does not
   replace a root. A blind band takes priority when `/api/tags` answers `source: "unavailable"`:

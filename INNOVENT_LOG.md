@@ -1371,3 +1371,98 @@ run on the box yet.
 **Files:** `INNOVENT_LOG.md`, `SCENARIOS.md`, `INNOVENT_MASTER_PLAN.md`, `PIVOT_SETUP.md` (5.0c), `.gitignore`,
 `plant/sim/main.py`, `correlation/engine/common_mode.py`, `plant/deploy.yaml`, `scada/deploy.yaml`,
 `scada/tagserver.py`, `deploy/golive.sh`, new `deploy/historian-auth.sh`. Local only: `HANDOFF.md`.
+
+**LOG-077 · 2026-09-22 · The OpenPLC web login leaves the vendor default, and the REST API goes off.**
+**Why:** `plc/entrypoint.sh` logged in to the OpenPLC web UI with the vendor default login to upload
+`plc/program.st`. NodePort 30081 shows that web UI on the LAN and on Tailscale. Anyone who reached it could
+log in with the public default, then stop the PLC or replace the trip program. The OpenPLC latch is the
+trip interlock for PS1, PS2, and PS5. GitGuardian already flagged one credential in this repo (LOG-076).
+**Found on the box (read-only):** the box built the running image on 2026-07-04 from upstream commit `b5d4135`.
+It keeps the web users in table `Users` of `webserver/openplc.db`, with the password as plain text. The
+only user is `openplc`, with the vendor default. The same build also starts a REST API on HTTPS port 8443.
+Its user database is empty after each pod start. While it is empty, `/api/create-user` needs no login, and
+a REST user can stop the PLC or replace the program. No Service lists port 8443, so only pods and the node
+can reach it. The runtime control socket (port 43628) listens on 127.0.0.1 only.
+**Decisions (operator):** NodePort 30081 stays open for the demo, behind the new password. The REST API
+goes off, so the web UI login is the only way to change the program.
+**Change:**
+1. The new script `deploy/openplc-auth.sh` makes Secret `plant/openplc-auth` with a random 48-character
+   password when the Secret does not exist. `deploy/golive.sh` runs it in step 0. A second run changes nothing.
+2. `deploy/openplc.yaml` mounts the Secret at `/etc/openplc-auth`. The mount is optional, with mode 0400.
+3. `plc/entrypoint.sh` writes the Secret value into the user table before the web server starts, so the
+   vendor default never opens a session. Then it logs in with that value, uploads, compiles, and starts
+   the program. At the end it checks that the dashboard shows `plant_trips` in Running.
+4. Without a usable Secret, the entrypoint sets a random password for that pod only. The trip loop starts,
+   and nobody can log in to the web UI. When the table change fails, the entrypoint writes a FAIL line.
+   It then logs in with the vendor default, so the trip loop still starts. The password goes in through
+   stdin only, so no command line and no log line holds it.
+5. The new script `plc/rest-off.sh` removes the line that starts the REST API from `webserver.py` at build
+   time. It stops the build when the file does not look as expected or does not parse.
+6. The new script `deploy/openplc-rollout.sh` has four modes. `test` builds the new image on top of the
+   running image, with no source build, and checks it in a throwaway container. `deploy` stops during a
+   soak, a proof run, an active fault, or a trip. Then it keeps the old image as `skn/openplc:pre-log077`,
+   pushes, applies, restarts, and verifies. It rolls back when the trip loop does not close with
+   `plant_trips`. `rollback` puts the old image back. `probe` prints four words for `golive.sh`.
+7. `deploy/golive.sh` step 5 has five new checks: NodePort 30081 answers, the web UI refuses the vendor
+   default, the Secret password logs in, the dashboard shows `plant_trips`, and nothing answers on port 8443.
+   A failed check gives an INFO line and does not stop the run. No PS verdict reads the web UI.
+**Box effect at the next factory-up:** factory-up does not build the openplc image. Golive step 0 writes the
+Secret, and the apply adds the mount. The old image does not read either, so the trip loop does not change.
+The five new checks give INFO lines until the rollout.
+**Measured (box, no change to k3s, the registry, or the images):** the running image ran in throwaway
+containers with no network. Each container got the new entrypoint and `rest-off.sh` through a mount.
+- With the Secret: the probe gave `200 302 plant_trips 000`. The table held one user with a 48-character
+  password, and no user had the vendor default. No process command line, process environment, or log line
+  held the password. The bring-up took 12 s.
+- Without the Secret, and with an unusable Secret value: WARN lines, a random password, `plant_trips` in
+  Running, and nothing on port 8443.
+- The open ports were 102, 502, 8080, 44818, and the local control socket. Nothing answered on port 8443.
+- `rest-off.sh` gave the same result on a second run. `bash -n` passes on the five changed scripts.
+**Not done:** the rollout. The box still runs the image from 2026-07-04 with the vendor default login on
+NodePort 30081. The operator runs `deploy/openplc-rollout.sh` after the Stage 2 recording, or before it
+after a go. Never run it during a soak, a proof run, or a recording. A PLC restart clears every latched trip
+and opens the trip loop for about one minute.
+**Still open:** Modbus :502, S7comm :102, and EtherNet/IP :44818 have no login in their protocols. So any pod
+in the cluster can write PLC data words. A NetworkPolicy can limit that later. The web UI is plain HTTP, so
+a login from the LAN sends the password unencrypted.
+**Files:** `plc/entrypoint.sh`, `plc/Dockerfile`, new `plc/rest-off.sh`, `plc/OPENPLC.md`,
+`deploy/openplc.yaml`, `deploy/golive.sh`, new `deploy/openplc-auth.sh`, new `deploy/openplc-rollout.sh`,
+`PIVOT_SETUP.md` (4.1, 5.0d, 5.3b, 7), `INNOVENT_LOG.md`.
+
+**LOG-078 · 2026-09-22 · The console and the deck say "Scenario 1", and the locked code goes live on forge.**
+**Naming (operator decision):** a judge can read "PS1" as "problem statement 1". The deck and the console
+now say "Scenario 1". The fault rows show the number only. The map banner, the event log, and the message
+after a fire say "Scenario 1". The API, the scripts, the ledger, the tests, and `SCENARIOS.md` keep the PS
+IDs. Only the display changes (`scenarioNo` and `scenarioName` in `dashboard/app/lib/format.js`).
+`next build` passes. On the mock data in the browser, the rows read 0 to 6 and the event log reads
+"Scenario 1".
+**Deck (local, `Design_PPT/`):** the families table header is "Scenario". Every slide, every note, and the
+chart use "Scenario" with a no-break space before the number. The plan follows the sim-only decision
+(LOG-076): next come Scenario 2 on the box and a supply-dip scenario, and October to November adds the
+hardware rung. The deck has no ABB mention and no feedback chip. The team chips stay until the team sends
+its details. The audit reports 0 problems, and the template validator passes.
+**Recording script:** `POC_SCRIPT.md` uses the new names. Its prep now follows factory-up, the soak, and
+the proof run.
+**Workflow (operator):** no branches in the repo. Every change goes into the main folder. The LOG-077 work
+came from a separate worktree session. Its files went into the main folder byte for byte, and then the
+worktree and its local branch were removed. Neither reached GitHub.
+**Deploy (forge, 2026-09-22, operator go):** forge had all 171 source files of the laptop (hash check).
+One screen session, `visr-ship`, ran `deploy/openplc-rollout.sh deploy` and then `deploy/factory-up.sh`
+with the defaults.
+- OpenPLC rollout, 14:03 to 14:04: the throwaway test and the live pod both gave the probe
+  `200 302 plant_trips 000`. The web UI refuses the vendor default, takes the Secret password, runs
+  `plant_trips`, and nothing answers on port 8443. The old image stays as `skn/openplc:pre-log077`.
+- Factory-up, 14:04 to 14:09: the build made new correlation-engine, dashboard, plant-sim, and tag-server
+  images from the new source. The api and vplc code did not change, so their images stayed. Golive gave
+  42 PASS, 0 FAIL, and 0 INFO lines. Step 0 changed the historian password in the running database and
+  wrote Secret `plant/historian-auth`. The apply restarted the historian pod once, and the tag server
+  writes the historian again. The five OpenPLC checks of LOG-077 pass on the live pod.
+- The engine memory backup is `~/visr-backups/engine-memory-20260922-140759.tar`. After the wipe, the PS0
+  watcher runs in screen `visr-ps0` from 14:08:56, for 24 h. Its first line was NOISY with the restart
+  churn, as on 2026-09-19.
+**Next:** the soak passes when the last 30 watcher lines are QUIET. Then `deploy/proof-run.sh` and
+`deploy/refusals.sh` run, and the deck gets the new numbers. The recording is on 2026-09-24.
+**Files:** `dashboard/app/lib/format.js`, `dashboard/app/FaultInjection.jsx`, `dashboard/app/EventLog.jsx`,
+`dashboard/app/MapPanel.jsx`, `dashboard/app/Console.jsx`, `dashboard/app/lib/useConsoleData.js`,
+`dashboard/README.md`, `SCENARIOS.md` (section 1 IDs, section 7), `POC_SCRIPT.md`, `INNOVENT_LOG.md`.
+Local only: `Design_PPT/stage2_build.py`, `Design_PPT/stage2_charts.py`, `HANDOFF.md`.

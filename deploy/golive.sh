@@ -41,6 +41,9 @@ done
 # LOG-076: the historian password moved out of the manifests into Secret plant/historian-auth.
 # The script makes it once and changes the password in a running historian. Later runs change nothing.
 bash deploy/historian-auth.sh || { echo "deploy/historian-auth.sh failed. The manifests were not applied."; exit 1; }
+# LOG-077: the OpenPLC web password moved from the vendor default into Secret plant/openplc-auth.
+# The script makes the Secret once. plc/entrypoint.sh sets the password at each OpenPLC pod start.
+bash deploy/openplc-auth.sh || { echo "deploy/openplc-auth.sh failed. The manifests were not applied."; exit 1; }
 curl -sf -m 5 http://127.0.0.1:5000/v2/_catalog >/dev/null || { echo "the registry on 127.0.0.1:5000 does not answer"; exit 1; }
 chmod +x deploy/skctl deploy/*.sh soak/*.sh plc/*.sh 2>/dev/null || true
 pass "node Ready, Secrets present, registry up"
@@ -93,6 +96,20 @@ wait_for "plant-sim answers /state" 60 pyget plant plant-sim http://127.0.0.1:92
 wait_for "rail psu-c exists" 30 pyget plant plant-sim http://127.0.0.1:9200/state "'psu-c' in d['rails']"
 wait_for "stamping cell closed-loop with plc-stamping" 120 pyget plant plant-sim http://127.0.0.1:9200/cells "d['cells']['stamping']['mode'] == 'closed-loop'"
 wait_for "OpenPLC trip loop closed-loop" 240 pyget plant plant-sim http://127.0.0.1:9200/state "d['plc']['mode'] == 'closed-loop'"
+# LOG-077: the OpenPLC web UI stays on NodePort 30081, it takes only the Secret password, and nothing
+# answers on the REST API port 8443. No PS verdict reads the web UI, so these checks report and do not
+# stop the run. An image from before LOG-077 gives INFO lines here until deploy/openplc-rollout.sh deploy.
+[ "$(code http://127.0.0.1:30081/login)" = 200 ] && pass "OpenPLC web UI answers on NodePort 30081" \
+  || echo "INFO the OpenPLC web UI does not answer on NodePort 30081"
+read -r p_dflt p_secret p_prog p_rest <<< "$(bash deploy/openplc-rollout.sh probe)"
+[ "${p_dflt:-}" = 200 ] && pass "OpenPLC refuses the vendor default login" \
+  || echo "INFO OpenPLC answers ${p_dflt:-nothing} to the vendor default login, not 200 (refused). LOG-077 image not deployed?"
+[ "${p_secret:-}" = 302 ] && pass "OpenPLC takes the password from Secret plant/openplc-auth" \
+  || echo "INFO OpenPLC answers ${p_secret:-nothing} to the Secret password, not 302 (taken)"
+[ "${p_prog:-}" = plant_trips ] && pass "the OpenPLC dashboard shows plant_trips in Running" \
+  || echo "INFO the OpenPLC dashboard check gave ${p_prog:-nothing}, not plant_trips (it needs the Secret login)"
+[ "${p_rest:-}" = 000 ] && pass "nothing answers on the OpenPLC REST API port 8443" \
+  || echo "INFO the OpenPLC REST API port 8443 answers ${p_rest:-nothing}. LOG-077 image not deployed?"
 wait_for "tag server reads OpenPLC" 120 pyget plant tag-server http://127.0.0.1:9300/tags "d['plc_connected']"
 # LOG-076: the historian password comes from Secret plant/historian-auth. No PS verdict reads the
 # historian, so this check reports and does not stop the run.

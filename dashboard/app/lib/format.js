@@ -11,6 +11,11 @@ export const pctOf = (use, req, lim) => { const d = lim || req; return d ? (use 
 // A reading as the operator says it: 30 not 30.0, 61.25 as 61.3. SCADA sends floats, the ledger ints.
 export const num = (v) => (v == null || Number.isNaN(Number(v)) ? "?" : String(Math.round(Number(v) * 10) / 10));
 
+// A scenario as the console and the deck name it (operator decision 2026-09-22, LOG-078): PS1 shows
+// as "Scenario 1", and the ID column shows "1". The API, the scripts, and the docs keep the PS IDs.
+export const scenarioNo = (id) => String(id ?? "").replace(/^PS(?=\d)/, "");
+export const scenarioName = (id) => (/^PS\d/.test(String(id ?? "")) ? `Scenario ${scenarioNo(id)}` : id);
+
 const IST = { timeZone: "Asia/Kolkata", hour12: false };   // 24 h, as a control room reads time
 export const istTime = (d) => d.toLocaleTimeString("en-IN", IST);
 export const istTs = (ts) => istTime(new Date(ts * 1000));

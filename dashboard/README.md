@@ -16,7 +16,7 @@ The layout reads left to right in the order of the engine pipeline:
 | Region | Panels |
 |---|---|
 | Top | **Command bar**: the VISR plate and lamps for engine, aggregator, PLC link, historian, fleet, auth, and the audit chain |
-| Left column | **Assets** (machines grouped by rail and coolant loop) and **Fault injection** (PS0 to PS6 from `/api/scenarios`, each with its incident anchor, and Reset plant for every fault owner) |
+| Left column | **Assets** (machines grouped by rail and coolant loop) and **Fault injection** (scenarios 0 to 6 from `/api/scenarios`, shown by number, each with its incident anchor, and Reset plant for every fault owner). The console says "Scenario 1" where the API says PS1 (LOG-078) |
 | Center | **Map** (FLOOR or EDGE, ISO or PLAN camera) and the detail tabs: **Selected**, **Fleet**, **Tags**, **Trends**, **Edge** |
 | Right column | **Verdict** (STEADY, FORECAST, or ROOT CAUSE), **Actions** (Execute, holding, advisory), **Event log** (the audit ledger) |
 

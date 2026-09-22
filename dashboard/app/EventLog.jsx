@@ -1,5 +1,5 @@
 "use client";
-import { istTs, ledgerText } from "./lib/format";
+import { istTs, ledgerText, scenarioName } from "./lib/format";
 
 // Event log: the 2E hash-chained audit ledger, newest first. It holds every state-changing action
 // (fire, reset, execute, relief, restore, fleet changes) and every denied attempt, with the
@@ -21,7 +21,7 @@ export default function EventLog({ audit }) {
         <div key={e.hash || i} className={`ev-row${isBad(e.status) ? " bad" : ""}`}>
           <span className="t">{istTs(e.ts)}</span>
           <span className={`verb ${verbCls(e)}`}>{e.verb}</span>
-          <span className="tgt">{e.target}</span>
+          <span className="tgt">{scenarioName(e.target)}</span>
           <span className="st">{e.status}</span>
           <span className="who">{e.actor}</span>
           <span className="dt" title={ledgerText(e)}>{ledgerText(e)}</span>

@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone --depth 1 https://github.com/thiagoralves/OpenPLC_v3.git /OpenPLC_v3
 WORKDIR /OpenPLC_v3
 RUN ./install.sh docker
+# LOG-077: the REST API (HTTPS, port 8443) is off. rest-off.sh gives the reason and checks the edit.
+# On the box, deploy/openplc-rollout.sh builds these steps on top of the running image instead (no source build).
+COPY rest-off.sh /rest-off.sh
+RUN sh /rest-off.sh
 COPY program.st /program.st
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

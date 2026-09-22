@@ -1,7 +1,11 @@
-# OpenPLC (2F, LOG-033): real IEC 61131-3 runtime in the plant namespace.
-# Modbus TCP slave :502 (the sim's field wiring) + web UI :8080 (NodePort 30081 — show the
-# judges the live program). The sim tolerates this pod's absence (open-loop), so this deploy
-# can land/fail independently of everything else.
+# OpenPLC (2F, LOG-033): the IEC 61131-3 runtime in the plant namespace. It is the trip interlock.
+# Modbus TCP slave :502 is the field wiring of the sim. The web UI :8080 is on NodePort 30081 (LAN and
+# Tailscale), so the demo can show the live program. The operator kept that NodePort open (LOG-077).
+# Web login (LOG-077): user openplc with the password from Secret plant/openplc-auth. deploy/openplc-auth.sh
+# makes the Secret, and plc/entrypoint.sh sets the password before the web server starts. The vendor
+# default login does not work. The Secret volume is optional: without the Secret the trip loop starts as
+# usual, but nobody can log in to the web UI. The image has the REST API (port 8443) off (plc/rest-off.sh).
+# The sim runs open-loop while this pod is absent, so this deploy can succeed or fail on its own.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,9 +30,14 @@ spec:
           httpGet: { path: /login, port: 8080 }
           initialDelaySeconds: 10
           periodSeconds: 10
+        volumeMounts:
+        - { name: openplc-auth, mountPath: /etc/openplc-auth, readOnly: true }
         resources:
           requests: { cpu: 100m, memory: 128Mi }
           limits:   { cpu: 500m, memory: 384Mi }
+      volumes:
+      - name: openplc-auth
+        secret: { secretName: openplc-auth, optional: true, defaultMode: 0400 }
 ---
 apiVersion: v1
 kind: Service

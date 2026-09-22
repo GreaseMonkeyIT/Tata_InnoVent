@@ -1,11 +1,13 @@
 "use client";
 import Glyph from "./Glyph";
+import { scenarioNo } from "./lib/format";
 
 // Fault injection: the PS-series scenarios (SCENARIOS.md). A plant fault perturbs the plant MODEL,
 // and the symptoms emerge from the physics. PS4A and PS6 act on real processes instead: a rogue
 // engineering workstation writes a PLC setpoint, and the tag server leaks memory. The row state
 // comes from each fault owner through the api catalogue, never from a click, so it stays true
 // across reloads. The live row also names the real incident that the scenario is anchored on.
+// The ID column shows the scenario number only ("1" for PS1, LOG-078). The panel header says "scenarios".
 const FALLBACK = [
   { id: "PS1", name: "Rail-sag cascade", mechanism: "press-1 bearing friction → amps up → rail A sags → cnc-1 and qa-scanner-1 degrade" },
   { id: "PS2", name: "Power sag trips the chiller", mechanism: "compressor-1 stuck on → rail B sags → chiller-1 overload trips → coolant flow drops" },
@@ -25,7 +27,7 @@ export default function FaultInjection({ d }) {
     <div className="faults-list">
       <div className={`fi-row ps0${calm ? " calm" : ""}`}>
         <Glyph st={calm ? "ok" : "idle"} />
-        <span className="fi-id">PS0</span>
+        <span className="fi-id">0</span>
         <div className="fi-b"><div className="fi-nm">Steady plant</div><div className="fi-ds">no fault · baselines mature · the engine stays silent</div></div>
         <span className="fi-st">{calm ? "now" : ""}</span>
       </div>
@@ -36,7 +38,7 @@ export default function FaultInjection({ d }) {
         return (
           <div key={s.id} className={`fi-row${on ? " live" : ""}`} title={[s.mechanism, s.anchor].filter(Boolean).join("\n")}>
             <Glyph st={on ? "strained" : unknown ? "busy" : "idle"} />
-            <span className="fi-id">{s.id}</span>
+            <span className="fi-id">{scenarioNo(s.id)}</span>
             <div className="fi-b">
               <div className="fi-nm">{s.name}</div>
               <div className="fi-ds">{on ? "injected · " : unknown ? "owner not answering · " : ""}{s.mechanism}</div>

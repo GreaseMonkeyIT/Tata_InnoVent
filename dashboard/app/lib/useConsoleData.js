@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getJSON } from "./api";
-import { RES_WORD, pctOf } from "./format";
+import { RES_WORD, pctOf, scenarioName } from "./format";
 
 // All console data in one hook: the polling loops, the operator actions, and the values derived
 // from the verdict. Every panel reads the same snapshot, so two panels never disagree.
@@ -99,7 +99,7 @@ export default function useConsoleData() {
   // stays correct across reloads. Nothing is set optimistically.
   async function scenario(sid, action) {
     setPending((p) => ({ ...p, [sid]: true }));
-    setFired(`${action === "reset" ? "resetting" : "firing"} ${sid}…`);
+    setFired(`${action === "reset" ? "resetting" : "firing"} ${scenarioName(sid)}…`);
     // the catalogue says how long each fault takes to show (PS2 waits for the relay, PS6 for a leak)
     const expect = (scenarios || []).find((s) => s.id === sid)?.expect_s;
     try {
@@ -107,7 +107,7 @@ export default function useConsoleData() {
       const j = await r.json().catch(() => ({}));
       const why = r.status === 401 ? "operator login required" : j.detail || j.status || r.statusText || "";
       setFired(r.ok
-        ? `${sid} ${action === "reset" ? "reset · the floor clears in about 5 s, the verdict in 1 to 3 min" : `fired · expect the verdict in about ${expect || 90} s`} (${new Date().toLocaleTimeString()})`
+        ? `${scenarioName(sid)} ${action === "reset" ? "reset · the floor clears in about 5 s, the verdict in 1 to 3 min" : `fired · expect the verdict in about ${expect || 90} s`} (${new Date().toLocaleTimeString()})`
         : `error ${r.status}: ${why}`);
       getJSON("/api/plant").then(setPlant).catch(() => {});
       getJSON("/api/scenarios").then((x) => Array.isArray(x) && setScenarios(x)).catch(() => {});

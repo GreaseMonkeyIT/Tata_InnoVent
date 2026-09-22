@@ -141,6 +141,8 @@ curl -s http://127.0.0.1:5000/v2/_catalog
 # openplc is a SLOW source build (~10-15 min). Skip it when the cached image has the upload fix
 # (LOG-036): this prints 1 or more when the fix is present.
 docker run --rm --entrypoint grep skn/openplc:v0.1 -c prog_file /entrypoint.sh
+# On an existing box, change the openplc image with deploy/openplc-rollout.sh, not make push (LOG-077).
+# The script builds on top of the running image in seconds, so the OpenPLC runtime stays the same.
 # historian uses the public timescale/timescaledb:latest-pg16. k3s pulls it on first schedule.
 ```
 
@@ -208,6 +210,14 @@ rm -rf "$D"
 #      deploy/golive.sh runs the same script, and a second run changes nothing.
 bash deploy/historian-auth.sh
 
+# 5.0d the OpenPLC web Secret (LOG-077). The OpenPLC web UI login is user openplc with the password
+#      from Secret plant/openplc-auth. The script makes a random password when the Secret does not exist.
+#      It does not touch the running pod. plc/entrypoint.sh sets the password at each pod start, before
+#      the web server starts, so the vendor default login never works. deploy/golive.sh runs the same
+#      script, and a second run changes nothing. Read the password for a web UI login:
+#      kubectl -n plant get secret openplc-auth -o jsonpath='{.data.password}' | base64 -d; echo
+bash deploy/openplc-auth.sh
+
 # 5.1 engine + dashboard via skctl. NO telemetry component on an existing install.
 ./deploy/skctl up --components engine,language,dashboard
 #   - re-applies the aggregator ConfigMap from aggregator/queries.yaml  <- the plant query pack
@@ -234,8 +244,13 @@ curl -s http://127.0.0.1:30030/grafana/api/health        # expect "database": "o
 kubectl apply -f plant/deploy.yaml
 
 # 5.3b the PLC (2F, optional: the sim runs open-loop without it): Modbus :502, web UI :30081
-#      (login openplc/openplc). If the headless program upload fails, upload plc/program.st
-#      once via the web UI per pod restart. See plc/REGISTER_MAP.md + plc/entrypoint.sh.
+#      on the LAN and Tailscale. Log in as user openplc with the password from step 5.0d (LOG-077).
+#      The pod mounts Secret plant/openplc-auth. Without the Secret the trip loop still starts, but
+#      nobody can log in. The image has the REST API (port 8443) off. If the headless program upload
+#      fails, upload plc/program.st once via the web UI per pod restart. See plc/OPENPLC.md.
+#      Check the login and the program: bash deploy/openplc-rollout.sh probe
+#      prints "200 302 plant_trips 000" (vendor default refused, Secret login taken, program runs,
+#      nothing on port 8443). An image from before LOG-077 gives other words: see step 4.1.
 kubectl apply -f deploy/openplc.yaml
 
 # 5.3c the SCADA tag server (2F.2): read-only Modbus client -> tag DB + historian + /tags.
@@ -313,3 +328,4 @@ echo "https://<box-ip-or-tailscale>:30443"     # 30080 redirects here. Log in as
 | **3D act loop verb 1 (LOG-058):** Execute derate with cite-or-die, action ledger, measured relief | |
 | Plant families ENABLED (engine.yaml). Rollback = drop them from `ENGINE_SIGNALS` | |
 | PLC trip loop in the sim (closed-loop when OpenPLC answers; trips latch, `/reset` pulses the reset word) | |
+| **OpenPLC web login from Secret `plant/openplc-auth`, REST API off (LOG-077):** tested on the box in throwaway containers only | **LOG-077 rollout:** `deploy/openplc-rollout.sh test`, then `deploy`. Never during a soak, a proof run, or a recording. |
