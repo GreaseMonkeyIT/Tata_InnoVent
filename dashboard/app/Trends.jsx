@@ -23,7 +23,7 @@ export default function Trends() {
           <button className={set === "plant" ? "on" : ""} onClick={() => setSet("plant")}>plant</button>
           <button className={set === "edge" ? "on" : ""} onClick={() => setSet("edge")}>edge · psi</button>
         </div>
-        <span className="lbl">grafana over prometheus · last 15 min · 12 h retained</span>
+        <span className="lbl">last 15 min</span>
       </div>
       <div className="gframes">
         {s.panels.map((p) => (

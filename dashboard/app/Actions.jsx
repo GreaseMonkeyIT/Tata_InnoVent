@@ -9,7 +9,7 @@ export default function Actions({ d }) {
   const loopItems = (d.actions?.proposals?.length || 0) + (d.actions?.active?.length || 0);
   return (
     <>
-      {loopItems > 0 && <div className="lbl act-grp">act loop · a human confirms every write</div>}
+      {loopItems > 0 && <div className="lbl act-grp">act</div>}
       <ActLoop actions={d.actions} onChanged={d.fleetChanged} />
       {adv.length > 0 && <div className="lbl act-grp">advisory</div>}
       {adv.map((a) => (
@@ -18,12 +18,11 @@ export default function Actions({ d }) {
           <div className="b">
             <div className="nm">{a.name}</div>
             <div className="ds">{a.detail}</div>
-            <div className="ct"><b>cites:</b> {a.cites}</div>
           </div>
         </div>
       ))}
       {!loopItems && !adv.length && (
-        <div className="empty">{d.recs?.source === "unavailable" ? "Prometheus unavailable" : "no actions · every workload is right-sized"}</div>
+        <div className="empty">{d.recs?.source === "unavailable" ? "Prometheus unavailable" : "no actions"}</div>
       )}
     </>
   );

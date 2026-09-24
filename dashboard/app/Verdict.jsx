@@ -8,7 +8,6 @@ import { RES_WORD, mib, istTime, num } from "./lib/format";
 // apply (SCENARIOS.md 7): INTEGRITY (a PLC report or a setpoint contradicts the physics or the
 // ledger) and BLIND (the SCADA view is down, so the console says so instead of looking calm).
 // The engine decides the verdict. The narrator only words it.
-const SRC = { llm: "narrator", fallback: "template", forecast: "deterministic forecast", steady: "deterministic" };
 
 function Meter({ v, st = "" }) {
   const pct = Math.round(Math.max(0, Math.min(1, v ?? 0)) * 100);
@@ -20,11 +19,11 @@ function integrityText(f) {
   const tag = String(f.tag || "").split(".").slice(-2).join(".");
   if (f.kind === "unsigned_write") {
     const who = f.clients?.length ? ` · client ${f.clients.join(", ")}` : "";
-    return `${tag} ${num(f.from)}→${num(f.to)} with no signed ledger row${f.reason === "out of range" ? " (out of range)" : ""}${who}`;
+    return `${tag} ${num(f.from)}→${num(f.to)} unsigned${f.reason === "out of range" ? " · out of range" : ""}${who}`;
   }
   if (f.kind === "current_balance") {
-    const ch = f.channel ? ` · ${String(f.channel).split(".").slice(-2).join(".")} does not match` : "";
-    return `rail ${f.rail}: feeder ${num(f.feeder_amps)} A, PLCs report ${num(f.reported_amps)} A (gap ${num(f.gap_amps)} A)${ch}`;
+    const ch = f.channel ? ` · ${String(f.channel).split(".").slice(-2).join(".")}` : "";
+    return `rail ${f.rail} · feeder ${num(f.feeder_amps)} A · PLC ${num(f.reported_amps)} A · gap ${num(f.gap_amps)} A${ch}`;
   }
   return f.kind;
 }
@@ -38,8 +37,13 @@ export default function Verdict({ d }) {
   // The chain stays on the root's own plane. Domain witnesses never join the plant and the pods.
   const samePlane = (pod) => plantSet.has(pod) === plantSet.has(root?.pod);
   const victims = blast.filter((b) => !chainNodes.has(b.pod) && !mediaNames.has(b.pod) && samePlane(b.pod));
+  // The number is not a probability (LOG-086). With a root edge it is the link strength: a running
+  // average that moves 40 % toward 1 each pass the engine sees the link again, and loses 10 % each
+  // pass it does not. Without an edge it is the root's share of the candidate scores, which is 1.00
+  // whenever only one candidate is left.
   const conf = rootEdge?.confidence ?? root?.score;
-  const label = { root: "root cause", forecast: "forecast", steady: "steady", wait: "waiting for the engine", error: "engine error" }[state];
+  const confEdge = rootEdge?.confidence != null;
+  const label = { root: "root cause", forecast: "forecast", steady: "steady", wait: "connecting", error: "engine error" }[state];
   const glyph = { root: "hot", forecast: "strained", steady: "ok", wait: "idle", error: "hot" }[state];
   const blind = scada?.source === "unavailable";
 
@@ -48,12 +52,12 @@ export default function Verdict({ d }) {
       {blind && (
         <div className="vd-band blind">
           <Glyph st="idle" size={10} />
-          <span>SCADA view blind · last good {d.tagsOkAt ? istTime(d.tagsOkAt) : "unknown"} · physics tap live</span>
+          <span>SCADA blind · last good {d.tagsOkAt ? istTime(d.tagsOkAt) : "?"}</span>
         </div>
       )}
       {integrity.length > 0 && (
         <div className="vd-band integrity">
-          <div className="vd-bh"><Glyph st="alarm" size={10} /><span>integrity · a report contradicts the physics or the ledger</span></div>
+          <div className="vd-bh"><Glyph st="alarm" size={10} /><span>integrity</span></div>
           {integrity.map((f) => <div key={f.id} className="vd-bi">{integrityText(f)}</div>)}
         </div>
       )}
@@ -64,13 +68,16 @@ export default function Verdict({ d }) {
         {state === "root" && root.onset_s != null && <span className="vd-t">detected in &lt;{Math.ceil(root.onset_s)} s</span>}
       </div>
 
-      {state === "error" && <p className="vd-narr">The engine reported an error: {graph.meta.error || "unknown"}. The last verdict is not current.</p>}
+      {state === "error" && <p className="vd-narr">{graph.meta.error || "engine error"} · last verdict not current</p>}
 
       {state === "root" && (
         <>
           <div className="vd-who">{root.pod}</div>
           {typeof conf === "number" && (
-            <div className="vd-kv mid"><span className="lbl">confidence</span><Meter v={conf} /><b>{conf.toFixed(2)}</b></div>
+            <div className="vd-kv mid" title={confEdge
+              ? "link strength: how steadily the engine has seen this cause-and-effect link, pass after pass. Not a probability."
+              : "root share: this machine's part of the candidate scores. 1.00 means no other candidate is left. Not a probability."}>
+              <span className="lbl">{confEdge ? "strength" : "share"}</span><Meter v={conf} /><b>{conf.toFixed(2)}</b></div>
           )}
           {rootEdge?.evidence?.length ? (
             <div className="vd-kv"><span className="lbl">evidence</span>
@@ -90,7 +97,7 @@ export default function Verdict({ d }) {
               <i>→</i>
               {victims.length
                 ? victims.map((b) => <span key={b.pod} className="c-vic">{b.pod}{b.eta_s ? <small> ~{Math.round(b.eta_s)} s</small> : null}</span>)
-                : <span className="faint">no victims yet</span>}
+                : <span className="faint">—</span>}
             </div>
           </div>
         </>
@@ -114,10 +121,7 @@ export default function Verdict({ d }) {
         </div>
       )}
 
-      {state !== "error" && <p className="vd-narr">{narr?.text || (state === "wait" ? "…" : "No causal contention detected.")}</p>}
-      {narr?.source && state !== "error" && (
-        <div className="vd-src">verdict text · {SRC[narr.source] || narr.source}{narr.model ? ` · ${narr.model}` : ""}</div>
-      )}
+      {state !== "error" && <p className="vd-narr">{narr?.text || (state === "wait" ? "…" : "")}</p>}
     </div>
   );
 }

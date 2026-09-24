@@ -29,11 +29,11 @@ export const RES_WORD = {
 // and the relief the API measured after it (FLEET.md section 10).
 export function ledgerText(e) {
   const ev = e.evidence || {};
-  if (e.verb === "execute" && ev.tag) return `${ev.tag} ${ev.from}→${ev.to} % · cites ${ev.root || "?"} · ${(ev.evidence || []).join("+")}`;
+  if (e.verb === "execute" && ev.tag) return `${ev.tag} ${ev.from}→${ev.to} %`;
   if (e.verb === "relief") {
     const v = ev.volts_before != null && ev.volts_after != null ? `rail ${ev.rail} ${ev.volts_before.toFixed(1)}→${ev.volts_after.toFixed(1)} V` : "";
     const a = ev.amps_before != null && ev.amps_after != null ? `${e.target} ${ev.amps_before.toFixed(1)}→${ev.amps_after.toFixed(1)} A` : "";
-    return `measured after ${ev.after_s ?? "?"} s · ${[a, v].filter(Boolean).join(" · ")}`;
+    return [a, v].filter(Boolean).join(" · ");
   }
   if (e.verb === "restore" && ev.tag) return `${ev.tag} ${num(ev.from)}→${num(ev.to)} %${ev.reason ? ` · ${ev.reason}` : ""}`;
   // SCENARIOS.md 5.2: the integrity checks write these rows themselves, as actor visr
@@ -42,8 +42,8 @@ export function ledgerText(e) {
     return `${ev.tag || "?"} ${num(ev.from)}→${num(ev.to)} · ${ev.reason || "no ledger row"}${who}`;
   }
   if (e.verb === "balance") {
-    return `rail ${ev.rail} feeder ${num(ev.feeder_amps)} A vs reported ${num(ev.reported_amps)} A${ev.channel ? ` · ${ev.channel}` : ""}`;
+    return `rail ${ev.rail} feeder ${num(ev.feeder_amps)} A · PLC ${num(ev.reported_amps)} A`;
   }
-  if (ev.root) return `root ${ev.root} · ${(ev.evidence || []).join("+")}`;
+  if (ev.root) return `root ${ev.root}`;
   return "";
 }

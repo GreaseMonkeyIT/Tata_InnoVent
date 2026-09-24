@@ -1,13 +1,14 @@
 // VISR palette for code that cannot read CSS variables (three.js materials, SVG strokes).
-// Keep these values in step with the tokens in globals.css. Color roles (LOG-062):
-// teal = normal and the VISR accent, blue = operator command (fill only), amber = warning,
-// red = alarm, black = a live data well. Grounds are near-black shades of the Tata blue hue.
+// Keep these values in step with the tokens in globals.css. Color roles (LOG-080): only status
+// markers take a color, teal = normal, amber = warning, red = alarm. Everything else is gray
+// (normal = sparklines, bands, card edges). Blue = operator command (fill only), black = a data well.
 export const HEX = {
   void: "#000000",
   bg: "#0a0d14",
   panel: "#11151f",
   text: "#d2d6e4",
   teal: "#12c6b3",
+  normal: "#8a93a6",
   blue: "#0000b3",
   blueEdge: "#5a5fe6",
   amber: "#ff9c00",
@@ -15,7 +16,7 @@ export const HEX = {
 };
 
 // Status word -> CSS color. The Glyph component adds the shape (ISA-101 redundant coding).
-export const ST_COLOR = { hot: "var(--red)", strained: "var(--amber)", ok: "var(--teal)" };
+export const ST_COLOR = { hot: "var(--red)", strained: "var(--amber)", ok: "var(--normal)" };
 
 // Contention ramp for conduits and graph edges: gray at low weight, amber at half, red at full.
 // It uses the same scale as the status colors, so a heavy edge reads as an alarm.

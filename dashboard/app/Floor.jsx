@@ -25,12 +25,13 @@ const SIZE = [
 const sizeOf = (n) => (SIZE.find(([re]) => re.test(n)) || [null, { w: 72, d: 52, h: 50 }])[1];
 
 // Console palette (LOG-062): the hall sits in the black map well, with navy-gray neutral blocks.
-// The coolant pipe is a deep shade of the deck teal. Meaning-colors mark status only.
+// The coolant pipe is a deep shade of the deck teal. Status lamps are the only colored marks:
+// teal normal, amber warning, red alarm (LOG-080). The selection brackets use the command blue edge.
 const hex = (s) => parseInt(s.slice(1), 16);
 const C = {
   bg: hex(HEX.void), slab: 0x0d1017, lane: 0x252c3a, wall: 0x141924, window: 0x22304a,
   body: 0x434b5a, bodyTripped: 0x23272f, wire: 0x373e4c, pipe: 0x0a4a44,
-  red: hex(HEX.red), amber: hex(HEX.amber), teal: hex(HEX.teal), text: HEX.text,
+  red: hex(HEX.red), amber: hex(HEX.amber), teal: hex(HEX.teal), sel: hex(HEX.blueEdge), text: HEX.text,
 };
 const GAP = 50, PSU_W = 34, BUS_Y = 122, ROW_Z = 62, PIPE_Y = 3;
 
@@ -78,7 +79,7 @@ function layout(plant) {
 }
 
 // The console map (LOG-062): a click on a machine, a PSU cabinet, the coolant pump, or a PLC
-// cabinet calls onPick(kind, id), and teal corner brackets on the slab mark the selected asset.
+// cabinet calls onPick(kind, id), and blue corner brackets on the slab mark the selected asset.
 // `view` is a camera preset request { mode: "iso" | "plan", n }. Each new n aims and frames the
 // camera for that preset, so a second click on the active preset resets the view.
 export default function Floor({ plant, graph, selected, onPick, view = { mode: "iso", n: 0 } }) {
@@ -173,9 +174,9 @@ export default function Floor({ plant, graph, selected, onPick, view = { mode: "
       const m = 9, w = f.w + 2 * m, d = f.d + 2 * m, L = Math.max(10, Math.min(w, d) * 0.32), T = 2.6;
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
         const x = f.cx + sx * (w / 2), z = f.cz + sz * (d / 2);
-        const a = new THREE.Mesh(new THREE.BoxGeometry(L, 1.4, T), new THREE.MeshBasicMaterial({ color: C.teal }));
+        const a = new THREE.Mesh(new THREE.BoxGeometry(L, 1.4, T), new THREE.MeshBasicMaterial({ color: C.sel }));
         a.position.set(x - (sx * L) / 2, 1.2, z); selG.add(a);
-        const b = new THREE.Mesh(new THREE.BoxGeometry(T, 1.4, L), new THREE.MeshBasicMaterial({ color: C.teal }));
+        const b = new THREE.Mesh(new THREE.BoxGeometry(T, 1.4, L), new THREE.MeshBasicMaterial({ color: C.sel }));
         b.position.set(x, 1.2, z - (sz * L) / 2); selG.add(b);
       }
     };

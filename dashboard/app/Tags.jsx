@@ -6,38 +6,50 @@ import { fmtTag } from "./lib/format";
 
 // 2F.2 SCADA tag browser. The industrial data path made visible: every tag traveled physics ->
 // PLC register -> Modbus or S7comm -> tag server -> historian. An absent tag server says so.
+// One row per tag in a scrolling table with a fixed header (LOG-082). The filter matches the tag,
+// the asset, the signal, and the address. A derived tag shows "calc" in the address column, and
+// its formula is in the row tooltip.
 export default function Tags({ scada }) {
   const [q, setQ] = useState("");
   const rows = scada?.tags || [];
   if (!scada) return <div className="empty">waiting for the tag server…</div>;
-  // PS6 (SCENARIOS.md 2.7): a dead tag server is a blind SCADA view, not a quiet one. The engine's
-  // plant plane still reads the physics tap, so the console says both things.
-  if (scada.source === "unavailable") return <div className="empty">tag server unreachable · the SCADA view is blind · the physics tap is still live</div>;
-  if (!rows.length) return <div className="empty">the tag server answers but holds no tags yet</div>;
+  // PS6 (SCENARIOS.md 2.7): a dead tag server is a blind SCADA view, not a quiet one.
+  if (scada.source === "unavailable") return <div className="empty">tag server unreachable · SCADA blind</div>;
+  if (!rows.length) return <div className="empty">no tags</div>;
   const f = q.trim().toLowerCase();
   const shown = f ? rows.filter((t) => `${t.tag} ${t.asset} ${t.signal} ${t.address}`.toLowerCase().includes(f)) : rows;
   const bad = rows.filter((t) => t.quality !== "GOOD").length;
   return (
     <div className="tags">
       <div className="tg-bar">
-        <input className="tg-filter" value={q} onChange={(e) => setQ(e.target.value)} placeholder="filter · asset, signal, address" aria-label="filter tags" />
+        <input className="tg-filter" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="search tags" aria-label="search tags" />
+        <span className="tg-count">{shown.length}/{rows.length}{bad ? <b> · {bad} not good</b> : null}</span>
         <span className="scada-badge">
           <Glyph st={scada.plc_connected ? "ok" : "hot"} size={7} />plc
           <Glyph st={scada.historian?.connected ? "ok" : "hot"} size={7} />historian
-          <b>{scada.historian?.rows_per_s ?? 0} rows/s</b>
-          <i>{(scada.historian?.rows_total ?? 0).toLocaleString("en-IN")} total</i>
-          <i>{shown.length}/{rows.length} tags{bad ? ` · ${bad} not good` : ""}</i>
         </span>
       </div>
-      <div className="tagstrip">
-        {shown.map((t) => (
-          <div key={t.tag} className={`tagchip${t.kind === "derived" ? " drv" : ""}`} title={`${t.kind} · ${t.address} · ${t.quality}`}>
-            <Glyph st={QST[t.quality] || "idle"} size={7} />
-            <span className="tn">{t.tag}</span>
-            <span className="tv">{fmtTag(t)}</span>
-            <span className="ta">{t.address}</span>
-          </div>
-        ))}
+      <div className="tg-wrap">
+        <table className="tg-table">
+          <thead>
+            <tr><th className="q" /><th>tag</th><th className="v">value</th><th>quality</th><th>address</th></tr>
+          </thead>
+          <tbody>
+            {shown.map((t) => {
+              const drv = t.kind === "derived";
+              return (
+                <tr key={t.tag} className={`qs-${String(t.quality || "").toLowerCase()}`} title={`${t.tag} · ${t.kind} · ${t.address}`}>
+                  <td className="q"><Glyph st={QST[t.quality] || "idle"} size={7} /></td>
+                  <td className="n">{t.tag}</td>
+                  <td className="v">{fmtTag(t)}</td>
+                  <td className="s">{t.quality}</td>
+                  <td className="a">{drv ? "calc" : t.address}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {!shown.length && <div className="empty">no tag matches "{q}"</div>}
       </div>
     </div>
   );

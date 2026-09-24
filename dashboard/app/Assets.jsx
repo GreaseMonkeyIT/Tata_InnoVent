@@ -68,7 +68,7 @@ export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
               <Band v={r.volts} lo={0.85 * r.v_src} hi={1.01 * r.v_src} okLo={0.882 * r.v_src} okHi={r.v_src} st={st} />
               <span className="rv" style={{ color: ink(st) }}>{r.volts.toFixed(1)}<small>V</small></span>
             </button>
-            {r.amps != null && <div className="as-loopnote">feeder meter {r.amps.toFixed(1)} A</div>}
+            {r.amps != null && <div className="as-loopnote">feeder {r.amps.toFixed(1)} A</div>}
             {devs.filter(([, d]) => d.rail === rn).map(([dn, d]) => (
               <Row key={dn} name={dn} d={d} trip={trip} hist={hist} sel={sel === dn} role={statusOf(dn)} onSelect={onSelect} />
             ))}
@@ -83,9 +83,9 @@ export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
             <Band v={loop.flow} lo={0} hi={nom * 1.1} okLo={0.85 * nom} okHi={nom * 1.1} st={lst} />
             <span className="rv" style={{ color: ink(lst) }}>{loop.flow.toFixed(1)}<small>L/min</small></span>
           </button>
-          <div className="as-loopnote">pump {Math.round((loop.pump_health ?? 1) * 100)} % · trip {Math.round(trip)} °C · nominal {Math.round(nom)} L/min</div>
+          <div className="as-loopnote">pump {Math.round((loop.pump_health ?? 1) * 100)} %</div>
           {Object.entries(plant.devices).filter(([, d]) => d.trip_reason).map(([dn, d]) => (
-            <div key={dn} className="as-loopnote hot">{dn} tripped · {d.trip_reason}</div>
+            <div key={dn} className="as-loopnote hot">{dn} TRIP · {d.trip_reason}</div>
           ))}
         </div>
       )}
@@ -100,7 +100,7 @@ export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
               <Band v={u} lo={0} hi={1.5} okLo={0} okHi={0.8} st={sst} />
               <span className="rv" style={{ color: ink(sst) }}>{(sg.latency_ms ?? 0).toFixed(0)}<small>ms</small></span>
             </button>
-            <div className="as-loopnote">load {Math.round(u * 100)} % · drops {Math.round((sg.drop_ratio ?? 0) * 100)} % · {Object.entries(sg.members || {}).map(([m, v]) => `${m} ${Math.round(v.offered_fps ?? 0)} fps`).join(" · ")}</div>
+            <div className="as-loopnote">load {Math.round(u * 100)} % · drops {Math.round((sg.drop_ratio ?? 0) * 100)} %</div>
           </div>
         );
       })}

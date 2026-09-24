@@ -20,8 +20,8 @@ export default function ActLoop({ actions, onChanged }) {
   async function execute(p) {
     setBusy(true); setMsg("writing the setpoint…");
     try {
-      const r = await send("POST", "/api/actions/execute", { id: p.id });
-      setMsg(`executed: ${p.tag} → ${p.to} % · relief measured in ${Math.round(r.relief_check_s)} s`);
+      await send("POST", "/api/actions/execute", { id: p.id });
+      setMsg(`executed ${p.asset} → ${p.to} %`);
     } catch (e) {
       setMsg(String(e.message || e));
     } finally {
@@ -31,7 +31,7 @@ export default function ActLoop({ actions, onChanged }) {
 
   async function restore(a) {
     setBusy(true); setMsg(`restoring ${a.asset}…`);
-    try { await send("POST", "/api/actions/restore", { asset: a.asset }); setMsg(`${a.asset} restored to 100 %`); onChanged(); }
+    try { await send("POST", "/api/actions/restore", { asset: a.asset }); setMsg(`${a.asset} restored`); onChanged(); }
     catch (e) { setMsg(String(e.message || e)); }
     finally { setBusy(false); }
   }
@@ -44,7 +44,7 @@ export default function ActLoop({ actions, onChanged }) {
           <span className="actpill alarm">blocked</span>
           <div className="b">
             <div className="nm">no action through {b.plc} for {b.asset}</div>
-            <div className="ct"><b>why:</b> {b.reason}. VISR does not act through a controller whose report it cannot trust.</div>
+            <div className="ct">{b.reason}</div>
           </div>
         </div>
       ))}
@@ -56,21 +56,14 @@ export default function ActLoop({ actions, onChanged }) {
             <div className="b">
               <div className="nm">{p.asset} → {p.to} % via {p.plc}</div>
               {!open ? (
-                <>
-                  <div className="ds">{p.expected}. One bounded setpoint, written over the PLC protocol.</div>
-                  <div className="ct"><b>cites:</b> root {p.cites.root} · edge {p.cites.edge} · {(p.cites.evidence || []).join("+")}{p.cites.confidence != null ? ` · ${p.cites.confidence.toFixed(2)} confidence` : ""}</div>
-                </>
+                <div className="ds">{p.expected}</div>
               ) : (
                 <div className="confirm" role="group" aria-label={`confirm ${p.verb}`}>
-                  <div className="lbl">human confirmation · audited</div>
                   <div className="kv"><span>write</span><b>{p.tag}: {p.from} → {p.to}</b></div>
-                  <div className="kv"><span>through</span><b>{p.plc} (SCADA setpoint write)</b></div>
-                  <div className="kv"><span>cites</span><b>root {p.cites.root} · {p.cites.edge}</b></div>
-                  <div className="echips">{(p.cites.evidence || []).map((x) => <span key={x} className="echip">{x}</span>)}</div>
-                  <div className="confirm-note">Expected: {p.expected}. The ledger records the write now and the measured relief after it. If the verdict changes before you confirm, the API refuses.</div>
+                  <div className="kv"><span>via</span><b>{p.plc}</b></div>
                   <div className="confirm-f">
                     <button className="btn sm" disabled={busy} onClick={() => setConfirm(null)}>Cancel</button>
-                    <button className="btn sm cmd" disabled={busy} onClick={() => execute(p)}>{busy ? "writing…" : "Confirm and execute"}</button>
+                    <button className="btn sm cmd" disabled={busy} onClick={() => execute(p)}>{busy ? "writing…" : "Confirm"}</button>
                   </div>
                 </div>
               )}
@@ -84,7 +77,7 @@ export default function ActLoop({ actions, onChanged }) {
           <span className={`actpill ${a.signed === false ? "alarm" : "warn"}`}>{a.signed === false ? "unsigned" : "holding"}</span>
           <div className="b">
             <div className="nm">{a.asset} held at {Math.round(a.value)} % by {a.plc}</div>
-            <div className="ct"><b>tag:</b> {a.tag} · {a.quality}{a.signed === false ? " · no signed ledger row wrote this value" : ""}</div>
+            <div className="ct">{a.tag} · {a.quality}</div>
           </div>
           <button className="btn" disabled={busy} onClick={() => restore(a)}>Restore</button>
         </div>

@@ -303,13 +303,14 @@ curl -s -X POST localhost:9200/reset
 echo "https://<box-ip-or-tailscale>:30443"     # 30080 redirects here. Log in as viewer or operator.
 # Notes (the operator console, LOG-062, one screen at 1920x1080 and 100 % zoom):
 #  - Assets (left) is the PRIMARY plant view: machines grouped by rail and coolant loop, fed by
-#    /api/plant (sim /state proxy). A click opens the machine in the Selected tab: trends plus its
-#    SCADA tags (/api/tags). The Edge tab holds the pod gauges. The Trends tab holds the Grafana
+#    /api/plant (sim /state proxy). A click opens the machine in the Selected tab: its values, a
+#    Grafana trend of that asset only (skn-plant panel 4), and its SCADA tags (/api/tags). The Edge tab holds the pod gauges. The Trends tab holds the Grafana
 #    panels through /grafana/ (step 5.2b).
-#  - Fault injection (left, bottom) is the PS-series from /api/scenarios (SCENARIOS.md): PS1 to PS6.
-#    Fire and Reset hit /api/scenarios/<id>/trigger and /reset. The api sends each id to its owner:
-#    plant-sim /fault, rogue-ews (PS4A), or the tag server /chaos (PS6). Operator login when 2E auth
-#    is enforced. Reset plant calls /api/scenarios/reset-all.
+#  - Event log (left, bottom) is the audit ledger. The console has no fault controls (LOG-081).
+#    Fire and reset faults from the fault shell on the box: bash ~/Tata_InnoVent/deploy/faults.sh
+#    (over SSH: ssh -t forge ...). It calls /api/scenarios/<id>/trigger, /reset, and /reset-all
+#    with the operator token. The api sends each id to its owner: plant-sim /fault, rogue-ews
+#    (PS4A), or the tag server /chaos (PS6).
 #  - the Trends graphs stay blank until step 5.2b has run. The browser console then shows 404s
 #    from /grafana/, not a Mixed Content error.
 ```

@@ -8,7 +8,7 @@ import Edge from "./Edge";
 // The detail tabs (ISA-101 level 3). Only one body mounts at a time, so the Grafana frames and
 // the fleet forms cost nothing while their tab is closed. A badge shows a count, and it turns
 // amber when something inside needs attention, so a closed tab never hides a problem.
-export default function Tabs({ d, hist, tab, setTab, sel, picked, clearPick, focusPlc }) {
+export default function Tabs({ d, tab, setTab, sel, picked, auto, clearPick, focusPlc }) {
   const plcs = d.fleet?.plcs || [];
   const tags = d.scada?.tags || [];
   const pods = d.derived.podRows;
@@ -30,7 +30,7 @@ export default function Tabs({ d, hist, tab, setTab, sel, picked, clearPick, foc
         ))}
       </header>
       <div className="pnl-b">
-        {tab === "selected" && <Selected plant={d.plant} scada={d.scada} hist={hist} sel={sel} picked={picked} onClear={clearPick} />}
+        {tab === "selected" && <Selected plant={d.plant} scada={d.scada} sel={sel} picked={picked} auto={auto} hasRoot={!!d.derived.root?.pod} onClear={clearPick} />}
         {tab === "fleet" && <Fleet fleet={d.fleet} tasks={d.tasks} profiles={d.profiles} plant={d.plant} onChanged={d.fleetChanged} focus={focusPlc} />}
         {tab === "tags" && <Tags scada={d.scada} />}
         {tab === "trends" && <Trends />}

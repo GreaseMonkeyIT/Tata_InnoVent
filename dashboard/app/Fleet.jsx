@@ -10,9 +10,10 @@ import { fmtMs, istTs } from "./lib/format";
 // Add PLC opens as a form inside this tab, and Remove asks for a second click, so no dialog ever
 // covers the console (LOG-062). A click on a PLC cabinet on the map focuses its card here.
 const PHASE_LABEL = {
-  requested: "requested", scheduled: "pod", running: "runtime", enrolled: "enrolled", polling: "scada good",
-  in_window: "engine window",
+  requested: "req", scheduled: "pod", running: "run", enrolled: "enroll", polling: "scada", in_window: "engine",
 };
+// time since the request, short enough for the card: 15.6s, 4.2m, 3.1h
+const ago = (s) => (s < 100 ? `+${s.toFixed(1)}s` : s < 6000 ? `+${(s / 60).toFixed(1)}m` : `+${(s / 3600).toFixed(1)}h`);
 const STATE_ST = { RUN: "ok", STOP: "strained", FAULT: "hot", STARTING: "busy", OFFLINE: "idle" };
 const STATE_C = { RUN: "var(--teal)", STOP: "var(--amber)", FAULT: "var(--red)", STARTING: "var(--teal)", OFFLINE: "var(--text-faint)" };
 const ARM_S = 5;   // seconds a Remove stays armed for the second click
@@ -28,7 +29,7 @@ function Phases({ phases }) {
           <div key={p.phase} className={`ph${done ? " done" : ""}`} title={done ? istTs(p.ts) : "not reached yet"}>
             <span className="pd" />
             <span className="pl">{PHASE_LABEL[p.phase] || p.phase}</span>
-            <span className="pt">{dt == null ? "" : p.phase === "requested" ? "t0" : `+${dt.toFixed(1)}s`}</span>
+            <span className="pt">{dt == null ? "" : p.phase === "requested" ? "t0" : ago(dt)}</span>
           </div>
         );
       })}
@@ -79,7 +80,7 @@ function PlcCard({ p, tasks, onDone, focus }) {
       </div>
       <div className="plc-cell">rail {p.cell?.rail || "—"} · {(p.cell?.machines || []).join(", ") || "—"}</div>
       {p.fault ? <div className="plc-fault">{p.fault}</div> : null}
-      <Phases phases={p.phases} />
+      {p.managed !== "static" && <Phases phases={p.phases} />}
       <div className="plc-act">
         {p.state === "RUN"
           ? <button className="btn sm" disabled={busy} onClick={() => act("stop", () => send("POST", `/api/fleet/plcs/${p.name}/stop`))}>Stop</button>
@@ -97,7 +98,7 @@ function PlcCard({ p, tasks, onDone, focus }) {
           ? <button className="btn sm warn armed" disabled={busy} onClick={() => { setArmed(false); act("remove", () => send("DELETE", `/api/fleet/plcs/${p.name}`)); }}>Confirm remove</button>
           : <button className="btn sm warn" disabled={busy} onClick={() => setArmed(true)}>Remove</button>)}
       </div>
-      {armed && <div className="plc-msg warn">Its cell machines leave the plant. Click Confirm remove within {ARM_S} s.</div>}
+      {armed && <div className="plc-msg warn">cell machines leave the plant</div>}
       {msg && <div className="plc-msg">{msg}</div>}
     </div>
   );
@@ -140,7 +141,6 @@ function AddPlc({ tasks, profiles, rails, fleet, onClose, onDone }) {
     <div className="addplc">
       <div className="addplc-h">
         <span className="brk">add plc</span>
-        <span className="fleet-note">virtual PLC · protocol profile, not vendor firmware</span>
         <button className="btn sm" onClick={onClose} disabled={busy}>Cancel</button>
         <button className="btn sm cmd" disabled={busy || !task || !profile || !rail} onClick={create}>{busy ? "creating…" : "Create PLC"}</button>
       </div>
@@ -184,8 +184,8 @@ export default function Fleet({ fleet, tasks, profiles, plant, onChanged, focus 
   return (
     <>
       <div className="fleet-bar">
-        <span className="brk">virtual plc fleet</span>
-        <span className="fleet-note">enrollment {fleet.enroll} · protocols real, controllers virtual</span>
+        <span className="brk">plc fleet</span>
+        {fleet.enroll !== "enabled" && <span className="fleet-note">enrollment {fleet.enroll}</span>}
         <button className="btn sm cmd" disabled={fleet.enroll !== "enabled" || !tasks?.length} onClick={() => setAdding(true)}>Add PLC</button>
       </div>
       <div className="plcs">

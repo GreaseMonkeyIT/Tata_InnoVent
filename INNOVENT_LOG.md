@@ -1466,3 +1466,271 @@ with the defaults.
 `dashboard/app/MapPanel.jsx`, `dashboard/app/Console.jsx`, `dashboard/app/lib/useConsoleData.js`,
 `dashboard/README.md`, `SCENARIOS.md` (section 1 IDs, section 7), `POC_SCRIPT.md`, `INNOVENT_LOG.md`.
 Local only: `Design_PPT/stage2_build.py`, `Design_PPT/stage2_charts.py`, `HANDOFF.md`.
+
+**LOG-079 · 2026-09-22 · Proof run 3: all seven scenarios and every refusal pass on the box. PS2 passes for the first time.**
+**Run:** screen `visr-proof` on forge, 16:26 to 17:10 (2,653 s), on the images of LOG-078. The soak before it had
+123 QUIET of 138 lines, QUIET since 14:23:59. A wrapper warmed the narrator first (HTTP 200 in 40.9 s). The
+evidence is in `/var/tmp/visr-proof-20260922-162619`.
+**Measured, against proof run 2 (LOG-071):**
+
+| Check | 2026-09-20 | 2026-09-22 |
+|---|---|---|
+| PS1 root press-1 | 74.4 s | 80.3 s, write, rail, temporal on bus_voltage |
+| PS1 first trip card | 34.2 s | 30.2 s, and press-1 did not trip |
+| Execute relief, press-1 | 85.3 to 45.0 A | 85.3 to 45.0 A |
+| Execute relief, rail psu-a | 344.2 to 359.4 V | 344.4 to 359.6 V |
+| PS1 clear after the reset | 285.5 s | 305.7 s |
+| PS5 first trip and its lead | furnace-1 at 112.7 s, 80.2 s | furnace-1 at 116.5 s, 76.3 s (press-1 102.5 s) |
+| PS2 root compressor-1 with the loop hop | none, fail | 304.2 s |
+| PS3 root hmi-gw | 81.3 s | 90.2 s |
+| PS4A unsigned write | 39.1 s, rogue-ews | 39.1 s, rogue-ews |
+| PS4B current balance | 15.1 s, 18.6 A gap | 15.0 s, 18.1 A gap |
+| PS6 leak card, then blind | 93.2 s, 203.7 s | 90.4 s, 205.1 s, SCADA back 3.0 s later |
+| Refusals | 401, 409, 403 | 401, 409, 403 |
+| Audit chain | intact | intact, 29 rows |
+
+**PS2:** LOG-073 set `CHILLER_RESIDUAL_FLOW` to 0.60, so fewer cooled machines latch and rail B stays loaded
+while the loop hop forms. The root and the loop hop now hold in the same poll. The chain needs 304 s, and the
+catalogue gives `expect_s` 150 for PS2, so the console message after a fire gives too short a wait. PS2 is not in
+the recording script, and the code stays frozen, so the value does not change now. PS2 clears 480 s after the reset.
+**Deck (local):** the families slide marks all seven as measured on the edge box. The Results, Secure, and plan
+slides and the honesty notes carry the numbers of 2026-09-22. The audit reports 0 problems, and the template
+validator passes.
+**Files:** `INNOVENT_LOG.md`, `SCENARIOS.md` (status, 2.2). Local only: `Design_PPT/stage2_build.py`, `HANDOFF.md`.
+
+**LOG-080 · 2026-09-23 · The console follows ISA-101: gray when normal, color only when abnormal, values without explanation text.**
+**Why:** the operator asked to remove the explanation text from the panel and to use one name for it,
+"Fault injection".
+**Change (display only, the API and the scripts do not change):**
+- The panel header drops the "scenarios · sim" label. The title is "Fault injection".
+- Each scenario row drops the mechanism line, the "injected" and "owner not answering" prefixes, and the
+  incident anchor. The row tooltip still holds the mechanism and the anchor. The glyph still shows the
+  state.
+- The Steady plant row drops "no fault · baselines mature · the engine stays silent".
+- After Fire or Reset, the message says "Scenario N fired (time)" or "Scenario N reset (time)". It no longer
+  gives an expected wait, so the short `expect_s` of PS2 (LOG-079) no longer shows. Error messages do not change.
+- `globals.css` drops the unused `.fi-ds` and `.fi-an` rules.
+- Selected tab header (second request of the day): the kind moves to its own line under the name, as
+  chips ("MACHINE", "RAIL PSU-A", "COOLED" or "UNCOOLED", and a red "TRIPPED" chip). Rails, the loop,
+  and segments use the same chips. The grey "auto · root cause, forecast, or first rail" and
+  "operator pick" texts are gone. In auto mode, one teal label names the reason: "Auto · root cause",
+  "Auto · forecast", or "Auto mode". After a pick, a blue command button "Go to root cause" (or
+  "Auto mode" when there is no root cause) replaces the label and the small "follow root" button.
+  `Console.jsx` computes the reason and passes it through `Tabs.jsx` to `Selected.jsx`.
+- Whole console (third request): the operator asked for an "industrial grade" console with only the
+  information that matters, and asked for a check of HMI guides first. Guides read: ISA-101 and the
+  High Performance HMI method (normal in gray, color only for abnormal states, redundant shape coding,
+  dim labels and bright values, no decoration text).
+  - Color: the new token `--normal` (#8A93A6) replaces teal for every normal state: status glyphs,
+    sparklines, band ranges, running PLC cards, onboarding bars, map machine lamps, closed-loop PLC
+    links, and normal pods in the edge graph. Teal stays only as the brand accent (corner brackets,
+    boot splash). The map selection brackets use the command blue edge. Evidence chips are neutral.
+  - Command bar: no brand subtitle, no "signal" readout, no refresh period. The lamps show a value
+    only when it matters (fleet run count, SCADA blind, auth not enforced, CHAIN BROKEN, integrity).
+  - Panel headers: no meta text while normal. Verdict shows "engine offline" and Event log shows
+    "CHAIN BROKEN" only when true. Actions shows the count.
+  - Assets: no "machines · simulated". Loop line shows the pump only. Feeder and segment lines are short.
+  - Map: no hint line, no "physics-simulated" caption, banner "Scenario N injected", legend root,
+    affected, tripped.
+  - Selected: short sub-lines ("trip 78 °C", "plc-stamping · set 100 %", "low 335 V"). The tag table
+    shows measured tags only, without the derived formulas.
+  - Verdict: no narrator source line. Short integrity and blind bands.
+  - Actions: the proposal shows the expected effect only. The confirm step shows the write and the PLC.
+    Advisory cards drop the "cites" line. Event log rows drop the citation detail.
+  - Fleet: the onboarding row shows only on PLCs added with Add PLC. The base PLC showed times from a
+    week-old Deployment (+590330 s). The row now stays inside the card (`minmax(0, 1fr)` columns,
+    ellipsis), with short labels (req, pod, run, enroll, scada, engine) and times in s, m, or h.
+  - Tags, Edge, Trends: one-word bars.
+**Checked:** the local dev server with mock data renders the panel with no explanation text. The
+Selected header shows the chips, "Go to root cause" after a pick of qa-scanner-1, and "Auto · root cause"
+on press-1 after the click. The browser console shows no errors except the 404s of the missing dev API.
+The whole console at 1600 x 900 (incident mock) shows color only on the root, the affected machines,
+and the fault. Both Fleet cards stay inside their bounds. `npm run build` passes.
+**Not deployed:** the box still runs the dashboard image of LOG-078. More console removals come from the
+operator first, then one dashboard image push.
+**Files:** `dashboard/app/FaultInjection.jsx`, `dashboard/app/Console.jsx`, `dashboard/app/lib/useConsoleData.js`,
+`dashboard/app/Selected.jsx`, `dashboard/app/Tabs.jsx`, `dashboard/app/globals.css`, `dashboard/app/Glyph.jsx`,
+`dashboard/app/lib/palette.js`, `dashboard/app/lib/format.js`, `dashboard/app/Floor.jsx`, `dashboard/app/Graph.jsx`,
+`dashboard/app/CommandBar.jsx`, `dashboard/app/Assets.jsx`, `dashboard/app/MapPanel.jsx`, `dashboard/app/Verdict.jsx`,
+`dashboard/app/Actions.jsx`, `dashboard/app/ActLoop.jsx`, `dashboard/app/Fleet.jsx`, `dashboard/app/Tags.jsx`,
+`dashboard/app/Edge.jsx`, `dashboard/app/Trends.jsx`, `dashboard/README.md`, `INNOVENT_LOG.md`.
+
+**LOG-081 · 2026-09-23 · Faults leave the console for a shell on the box. Resizable panels. A Grafana trend per asset.**
+**Why (operator):** fault controls on the operator console are an afterthought and make the demo less
+authentic. A real operator sees only the effects of a fault. The operator also asked for panels that
+the operator can resize, a larger verdict, and one Grafana graph of the selected machine in place of
+the small sparklines. Status markers take their colors again, as before LOG-080.
+**Change:**
+- Colors: the status markers (glyphs, map machine lamps, closed-loop PLC links, edge graph nodes, the
+  PLC RUN state) are teal again when normal, amber for a warning, and red for an alarm. The other
+  LOG-080 changes stay: sparklines, band ranges, card edges, and onboarding bars are gray, and the
+  map selection brackets are blue.
+- New `deploy/faults.sh`, the fault shell. `ssh -t forge 'bash ~/Tata_InnoVent/deploy/faults.sh'`
+  opens it in the screen session `visr-faults`, where it stays on standby after Ctrl-A D. Commands:
+  `s` (status), `f <n>` (fire), `r <n>` (reset), `r all` (reset every fault owner). The same commands
+  run once as arguments. It reads the operator token from the Secret `aiops/visr-auth`, keeps it in
+  the process only, and sends the actor `fault-shell`. While the PS0 soak screen `visr-ps0` runs, a
+  fire asks for a confirmation, or stops without a terminal unless `FORCE=1`.
+- Console: the Fault injection panel, its Reset plant button, and the "Scenario N injected" map banner
+  are gone. `FaultInjection.jsx` and the `scenario`, `resetAll`, and `/api/scenarios` polling code of
+  `useConsoleData.js` are removed. The api endpoints do not change. `proof-run.sh` and `refusals.sh`
+  still use them.
+- Layout: the Event log moves under Assets. The Verdict takes the free height of the right column,
+  and Actions keeps 320 px. The new `Split.jsx` makes each gap a drag handle: the two column edges,
+  Assets and Event log, Map and tabs, Verdict and Actions. A double-click resets that size. The sizes
+  stay in the browser (`localStorage` key `visr.layout`).
+- Selected tab: the sparklines are gone. It shows the current values, one Grafana frame, and the
+  measured SCADA tags. The frame is the new panel 4 "Selected asset" of the `skn-plant` dashboard, with
+  the hidden variable `asset` (`var-asset=<name>` in the URL). Its queries match only the series that
+  the asset has: draw and temperature with the trip line for a machine, voltage and the feeder meter
+  for a rail, flow for the loop, load for a segment.
+**Checked:**
+- `faults.sh` passes `bash -n`.
+- On the box, `status` lists scenarios 0 to 6 with 0 NOW. `fire 9` and an unknown command are refused.
+  Nothing was fired, because the soak ran.
+- Six of the seven panel-4 queries were run on the box Prometheus (not the segment load) and answer as expected: press-1 draw and trip 78,
+  no trip line for conveyor-1, rail psu-a volts, no volts row for press-1, and the cool-1 flow.
+- In the dev preview at 1600 x 900: the Event log sits under Assets and the Verdict is taller. A drag
+  widens the left column to 472 px and the tabs to 450 px. Both sizes survive a reload, and a
+  double-click resets them. The map follows each resize.
+- `npm run build` passes.
+**Deploy (not done):** push the dashboard image, then `kubectl apply -f deploy/grafana-plant-dashboard.yaml`
+(the Grafana sidecar loads panel 4 in about 30 s), then restart the dashboard. Syncthing brings
+`faults.sh` to `~/Tata_InnoVent/deploy`.
+**Files:** `deploy/faults.sh` (new), `deploy/grafana-plant-dashboard.yaml`, `dashboard/app/Split.jsx` (new),
+`dashboard/app/FaultInjection.jsx` (removed), `dashboard/app/Console.jsx`, `dashboard/app/Selected.jsx`,
+`dashboard/app/Tabs.jsx`, `dashboard/app/MapPanel.jsx`, `dashboard/app/lib/useConsoleData.js`,
+`dashboard/app/Glyph.jsx`, `dashboard/app/Floor.jsx`, `dashboard/app/Graph.jsx`, `dashboard/app/Fleet.jsx`,
+`dashboard/app/lib/palette.js`, `dashboard/app/globals.css`, `dashboard/README.md`, `README.md`, `SCENARIOS.md`
+(section 7), `POC_SCRIPT.md`, `PIVOT_SETUP.md`, `INNOVENT_PLAN.md`, `BOOK.md`, `INNOVENT_LOG.md`.
+
+**LOG-082 · 2026-09-23 · The Tags tab is a searchable table, one row per tag.**
+**Why (operator):** the tag chips in a multi-column grid looked cluttered.
+**Change:** `Tags.jsx` shows a search box, the match count (with the count of tags that are not GOOD, in
+amber), and the PLC and historian lamps. Below it, a table with one row per tag: quality glyph, tag,
+value, quality, and address. The table scrolls under a sticky header. STALE shows in amber and BAD in
+red. A derived tag shows "calc" as its address, and the row tooltip holds the formula. The historian
+rows/s and total counters are gone from this bar.
+**Checked:** dev preview at 1600 x 900, incident mock: 41 rows, 4 not good. A search for "press_1" gives
+6 rows. With no search, the table scrolls (883 px of rows in a 214 px window), and the header stays in
+place. `npm run build` passes.
+**Files:** `dashboard/app/Tags.jsx`, `dashboard/app/globals.css`, `dashboard/README.md`, `INNOVENT_LOG.md`.
+
+**LOG-083 · 2026-09-23 · Edge cards stay pinned in role groups. LOG-080 to LOG-083 deployed on forge.**
+**Why (operator):** many Edge cards showed blank gauges, and the cards moved when a state changed.
+**Finding:** every workload runs. The blank gauges belong to the observability stack (Prometheus,
+Grafana, Loki, kube-state-metrics, the operator, node-exporter). Their Helm charts set no CPU or memory
+request or limit, so no share exists. `plc-stamping` has no entry in `/api/pod-resources` at all.
+**Change:** `Edge.jsx` groups the cards: AIOps engine (aiops), Plant and SCADA (plant), PLC fleet (fleet),
+Observability (observability), then other namespaces. The cards sort by name in each group, and
+`useConsoleData.js` no longer sorts them by state. A gauge shows use / limit. With only a request it shows
+use / request, amber above 100 % and never red. With neither it shows the absolute use (for example
+"531Mi") and the quota line says "no quota". A card with no resource data says so.
+**Deploy (11:58 to 11:59, screen `visr-dash`, log `/var/tmp/visr-dash.log`):** the laptop and box files
+matched by sha256 (Syncthing). `make push ONLY=dashboard`, `kubectl apply -f deploy/grafana-plant-dashboard.yaml`,
+`kubectl -n aiops rollout restart deploy/dashboard`: EXIT 0. The served bundle contains the layout code and no
+FaultInjection. Grafana lists panel 4 "Selected asset" and the variable `asset`. The PS0 watcher stayed QUIET
+through the restart. The engine, the plant, and the soak were not touched.
+**Files:** `dashboard/app/Edge.jsx`, `dashboard/app/lib/useConsoleData.js`, `dashboard/app/globals.css`,
+`dashboard/README.md`, `INNOVENT_LOG.md`.
+
+**LOG-084 · 2026-09-23 · Text size control. The Selected trend gets one color per metric. Deployed.**
+**Why (operator):** small text is hard to read for an operator. In the Selected trend, every line was
+white or teal, which made the metrics hard to tell apart.
+**Change:**
+- Text size: A, A+, and A++ in the command bar set 100, 115, or 130 %. In `globals.css`, each of the 82
+  fixed font sizes is now `calc(<px> * var(--fz))`. `--fz` is 1 at the root and takes the operator
+  value (`--txt`) only inside `.pnl-b`. So the text in the panel bodies grows, and the command bar,
+  the panel headers, the tab bar, and every panel size stay the same. The choice stays in the browser
+  (`localStorage` key `visr.text`). The gauge text in the Edge cards does not scale, because it must
+  fit inside the ring.
+- Panel 4 of `skn-plant`: draw blue, temp orange, trip red dashed, volts purple, feeder light blue
+  dashed, flow green, load yellow, 2 px lines, axis labels in the series color. The current axes have
+  a soft minimum of 0, and the voltage axis a soft range of 330 to 400 V. The earlier auto scale spread
+  0.3 A or 0.3 V of sensor noise over the full height. Every sample is still drawn. A value outside
+  the window stretches the axis, and a Scenario 1 surge (43 to 85 A) or sag (about 17 V) stays clear.
+**Checked:**
+- In the dev preview at 1600 x 900, a click on A++ leaves the six panel sizes the same (assets
+  360 x 594, log 360 x 236, map 808 x 526, tabs 808 x 304, verdict 400 x 510, actions 400 x 320).
+  No panel body scrolls sideways. The asset rows grow to 16.25 px, and the panel titles stay 13 px.
+- The live panel 4 in the browser pane shows press-1 (blue draw, orange temp, red trip line) and
+  psu-a (purple volts steady at 360 V, feeder dashed). Grafana on the box has no image renderer, so the
+  frame was read in the browser pane.
+- `npm run build` passes. Deploy 12:08 to 12:09 (`make push ONLY=dashboard`, rollout restart): EXIT 0.
+  The Grafana ConfigMap was applied three times (colors, the zero axis, the voltage window). The PS0
+  watcher stayed QUIET.
+**Files:** `dashboard/app/globals.css`, `dashboard/app/CommandBar.jsx`, `dashboard/app/Console.jsx`,
+`deploy/grafana-plant-dashboard.yaml`, `dashboard/README.md`, `INNOVENT_LOG.md`.
+
+**LOG-085 · 2026-09-23 · The normal range in the Assets bands is light cyan.**
+**Why (operator):** the gray normal range in the rail, loop, and segment bands was hard to see.
+**Change:** `.band b` in `globals.css` is teal at 24 % opacity. The marker keeps its state color.
+**Deploy:** at about 12:15 forge did not answer for a few minutes: SSH timed out, and `tailscale ping`
+got no reply. At 12:18 it answered again, with no reboot (up 1 day 1 h) and the soak QUIET. Then
+`make push ONLY=dashboard` and a rollout restart: EXIT 0 at 12:20:36.
+**Files:** `dashboard/app/globals.css`, `dashboard/README.md`, `INNOVENT_LOG.md`.
+
+**LOG-086 · 2026-09-23 · "Confidence" is relabeled. A Scenario 1 test shows a recovery tail. Two follow-ups noted.**
+**Operator test (12:24 to 12:35, fault shell):** fire PS1 12:24:10, root press-1 12:26:05 (rail, write + rail +
+temporal), Execute 12:26:33, relief row 12:27:33, `r all` and Restore 12:29:09. From 12:30 to 12:33 the
+verdict showed ROOT CAUSE press-1 again, with "confidence" 1.00, evidence stat + loop, and the chain
+press-1 → loop cool-1 → cnc-1. The narrator said to "expect impact on cnc-1 within 15 s". STEADY at 12:34.
+**Cause:** the recovery tail of the same incident ("detected in <385 s" is the 12:24 fire). The rail recovers
+at once after the reset. The temperatures do not: press-1 ran at 85 A, heated, and warmed the shared loop,
+and it cools with tau of about 120 s. For those minutes press-1 really is above its band and really is the
+source of the coolant deviation. The fault is not in the detection. The fault is that a recovering incident
+looks the same as a live one: red ROOT CAUSE, a forward-looking narrator line, and "confidence" 1.00.
+**Change now (dashboard only):** the number under the root is not a probability, so the Verdict no longer
+calls it "confidence". With a root edge it says "strength": the link strength, a running average that moves
+40 % toward 1 on each pass that sees the link again (EDGE_ALPHA 0.4) and loses 10 % on each pass that does not
+(EDGE_DECAY 0.1). Without an edge it says "share": the root's share of the candidate scores
+(`ranking.py`), which is 1.00 whenever one candidate is left. The row tooltip explains which. The label
+column of the verdict rows now scales with the text size.
+**Follow-up 1 (after the recording, needs an engine change, a new soak, and a proof run): a RECOVERING state.**
+When the root still deviates but moves back toward its band, or its own driving signal is already back in
+band, the verdict shows "RECOVERING <asset>" in a neutral or amber style: no red, no forward-looking impact
+line, and no act-loop proposal. Detection does not change.
+**Follow-up 2 (think only, no change now): temperature needs its own parameters.**
+- The engine uses one parameter set for every signal family (DEV_K, GATE_Q, RESET_WINDOW, ANALYSIS_WINDOW,
+  EDGE_ALPHA, EDGE_DECAY). Only the MAD floor is set per family (`MAD_FLOOR_COOLANT_TEMP` 0.3 °C).
+- Current, voltage, and speed are fast signals. They follow their cause within seconds, and they return
+  within seconds after the cause ends. A deviation from the band is the event.
+- Temperature is a first-order lag (tau 90 to 270 s per machine, SCENARIOS 2.9). It integrates heat, lags
+  its cause by about tau, and needs about 5 tau (8 to 20 min) to settle. The shared loop couples every cooled
+  machine. The quantities that matter are the headroom to the 78 °C trip and the rate toward it, not the
+  distance from a band.
+- Ideas, each to test on the replay harness first:
+  1. Per-family windows scaled to tau: RESET_WINDOW, ANALYSIS_WINDOW, and the lag bounds of the temporal test.
+  2. Judge temperature on a model residual: the measured temperature minus the temperature that the
+     first-order model expects from the recent heat load (heat_k × current). A load-driven rise and a
+     cool-down after a reset both give a residual near zero. A cooling fault (pump, chiller) gives a
+     growing residual. This is the fix at the root of the recovery tail above.
+  3. Direction-aware gating: a deviation that shrinks toward the band is recovery, not onset (feeds follow-up 1).
+  4. A load-dependent baseline: the steady temperature depends on the duty and the speed setpoint.
+  5. The asymptote-aware trip forecaster from LOG-071: no card when the ramp settles below the limit.
+  6. Alarm hysteresis in the ISA-18.2 sense: a separate off-delay and deadband per family.
+- Risk: a slower temperature gate delays the Scenario 5 trip forecasts, which already race the trips.
+**Files:** `dashboard/app/Verdict.jsx`, `dashboard/app/globals.css`, `dashboard/README.md`, `POC_SCRIPT.md`, `INNOVENT_LOG.md`.
+
+**LOG-087 · 2026-09-23 · Live console captures replace the mock screenshots in the deck.**
+**Why (operator):** the deck showed a preview build on mock data. The operator asked for the slides to use
+the latest VISR console, and asked Claude to fire the scenario for the capture.
+**Capture method:** the laptop serves the dashboard static export and passes `/api` (GET only) and `/grafana`
+through to forge. Headless Chrome, driven over the DevTools protocol from Node, saves a 1920 x 1080 PNG.
+No login is used. Grafana does not finish loading in headless Chrome, so the capture opens the Fleet tab
+instead of the Selected tab (the Grafana frame would show only a spinner).
+**Runs on the box (fault shell, actor fault-shell):**
+- 12:58:18 fire PS1. At 12:59:46 the derate proposal is live (88 s). Execute 13:00:57 (press-1 at 74.9 °C).
+  The relief row reads press-1 85.4 → 44.9 A. The capture at 13:04 shows root press-1 (strength 1.00), press-1
+  at 55 % and 45.0 A, rail A 359.7 V, the holding card, and TRIGGER, EXECUTE, and RELIEF in the ledger.
+  Reset all and restore 13:04:58.
+- 13:09:30 fire PS1 again for a capture before Execute. The API answered slowly for a moment, and the
+  capture stopped at the boot self-check (fleet probe timeout 4 s). Execute 13:12:36 at 77.3 °C, 0.7 °C before
+  the trip, and press-1 did not trip. Reset all and restore 13:12:58.
+**Deck (local, Design_PPT is gitignored):** `stage2_assets/console_s1_live.png` is the 13:04 capture. The
+overview slide (6) and the demo slide (14) use it. The captions and notes say it is a live capture of
+23 September after one human-confirmed derate. The honesty note about mock screenshots now says that faults
+are fired from a shell on the box and the console has no fault controls. Build: audit 0, notes 600 s and
+1,459 words, validator "All validations PASSED". Backups: `stage2_build_v2_0923_prelive.py.bak`,
+`SiliconKnights_Tata_VISR_Stage2_v2_0923_prelive.pptx.bak`.
+**Files:** `INNOVENT_LOG.md`. Local only: `Design_PPT/stage2_build.py`, `Design_PPT/stage2_assets/console_s1_live.png`.

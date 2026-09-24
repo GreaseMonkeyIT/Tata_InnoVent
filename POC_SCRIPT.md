@@ -16,8 +16,15 @@ shows forecasting; everything state-changing is authenticated and audit-logged.
   the LLM is a **spokesperson only** — the verdict exists before and without it.
 - If the narrator (gemma) is down, the template verdict renders anyway — that is a feature; say so.
 
-**Names on screen (LOG-078):** the console and the deck say "Scenario 1", and the fault rows show the
-number only. The API, the scripts, and `SCENARIOS.md` keep the IDs (PS1). Say "Scenario 1" on camera.
+**Names on screen (LOG-078):** the deck says "Scenario 1". The API, the scripts, and `SCENARIOS.md`
+keep the IDs (PS1). Say "Scenario 1" on camera.
+
+**Faults come from a terminal, not the console (LOG-081).** The console is the operator's view only,
+as in a real plant: it has no fault controls and no "injected" banner. Fire and reset each scenario
+in the fault shell on the box, over Tailscale SSH, in a terminal beside the console:
+`ssh -t forge 'bash ~/Tata_InnoVent/deploy/faults.sh'`. Commands: `s` (status), `f 1` (fire),
+`r 1` (reset), `r all` (reset every fault owner). Show the terminal on camera for the fire, or cut
+to it in the edit.
 
 ---
 
@@ -42,7 +49,10 @@ number only. The API, the scripts, and `SCENARIOS.md` keep the IDs (PS1). Say "S
 6. Screen: 1920×1080, the console at 100 % zoom, full screen (F11), close everything else. The
    console fits one screen, so never zoom and never scroll. Recording tool of choice + mic check.
    The IST clock in the command bar is fine (it's honest).
-7. Warm the narrator 10 min before recording. On forge, run
+7. Open the fault shell in a second terminal: `ssh -t forge 'bash ~/Tata_InnoVent/deploy/faults.sh'`.
+   Type `s`: every row must show `-` and row 0 `NOW`. Ctrl-A D leaves it on standby, and the same
+   command attaches again.
+8. Warm the narrator 10 min before recording. On forge, run
    `curl -s http://127.0.0.1:11434/api/generate -d '{"model":"gemma4:e4b-it-qat","prompt":"ready","keep_alive":"60m"}'`.
    A cold model takes more than 15 s on the 4 GB GPU (proof run of 2026-09-19).
 
@@ -68,21 +78,21 @@ number only. The API, the scripts, and `SCENARIOS.md` keep the IDs (PS1). Say "S
 |---|---|---|
 | 2b.1 | Open the **Fleet** tab (or click the `plc-stamping` cabinet on the map, which opens the same card): S7-1200 profile, S7comm :102, `virtual` badge, scan time, SCADA RTT | "The stamping line has its own process controller. It speaks real S7comm to our SCADA. It is a virtual PLC with a Siemens protocol profile, not Siemens firmware, and the card says so. OpenPLC stays the separate trip interlock, the way a real plant splits process and safety." |
 | 2b.2 | **Add PLC** (the form opens inside the Fleet tab, the map stays in view) → task `packaging-cell`, profile IEC 61131-3 soft PLC, rail `psu-c` → **Create PLC** | "A new packaging cell. The task is IEC 61131-3 Structured Text, the same language a real PLC runs." |
-| 2b.3 | Watch the six phases fill in: pod · runtime · enrolled · scada good · engine window | "Every step is a real timestamp: Kubernetes scheduled the pod, the runtime started, the controller enrolled with a signed token, SCADA read good tags over Modbus, and the engine window picked it up. Nothing here runs on a timer." |
+| 2b.3 | Watch the six phases fill in on the new card: req · pod · run · enroll · scada · engine | "Every step is a real timestamp: Kubernetes scheduled the pod, the runtime started, the controller enrolled with a signed token, SCADA read good tags over Modbus, and the engine window picked it up. Nothing here runs on a timer." |
 | 2b.4 | Map: the new cabinet lamp turns teal on rail C. Assets: the pack machines appear under rail psu-c. Click one: the **Selected** tab shows its `drive` row | "Its machines now draw real simulated current on the spare feeder, commanded by the PLC over the field bus." |
 
 ## 3 · The fault: Scenario 1, the rail-sag cascade (PS1, ~2 min, the hero beat)
 
 | Beat | Do | Say |
 |---|---|---|
-| 3.1 | **Fault injection** (left column, bottom) → row **1** Rail-sag cascade → **Fire**. (Fire in a compressor-OFF window: watch compressor-1 draw fall in Assets first.) | "I'm injecting one parameter: bearing friction on press-1 rises ×1.9. That's all. Everything downstream must EMERGE from the physics." |
-| 3.2 | Map and Assets (~5 s): the amber "Scenario 1 injected" banner appears, press-1 draw climbs ~43→85 A, rail psu-a sags 361→344 V, cnc-1 / qa-scanner throughput slides; conduits light along the fixed wiring. At about 20 s a forecast card appears: press-1 trips in about 100 s | "More friction → more current → the shared rail sags → voltage-sensitive machines degrade. A dozen simultaneous symptoms — this is the alarm-flood moment every SCADA operator knows. And the press is heating toward its trip." |
-| 3.3 | **Verdict** panel (about 80 to 90 s after the fire): **ROOT CAUSE press-1**, confidence, the chain line (press-1 → rail psu-a → victims), narrative. The map brackets press-1 and the Selected tab opens on it. Point at the evidence chips | "One verdict, not twelve alarms: press-1, with evidence — write, rail, temporal. It waited until the evidence held for most of two minutes, so a normal compressor cycle never convicts. The 'rail' chip is the witness gate: no shared physical medium declared, no edge." |
+| 3.1 | Fault shell: `f 1` (Scenario 1, rail-sag cascade). (Fire in a compressor-OFF window: watch compressor-1 draw fall in Assets first.) | "I'm injecting one parameter: bearing friction on press-1 rises ×1.9. That's all. Everything downstream must EMERGE from the physics." |
+| 3.2 | Map and Assets (~5 s): press-1 draw climbs ~43→85 A, rail psu-a sags 361→344 V, cnc-1 / qa-scanner throughput slides; conduits light along the fixed wiring. At about 20 s a forecast card appears: press-1 trips in about 100 s | "More friction → more current → the shared rail sags → voltage-sensitive machines degrade. A dozen simultaneous symptoms — this is the alarm-flood moment every SCADA operator knows. And the press is heating toward its trip." |
+| 3.3 | **Verdict** panel (about 80 to 90 s after the fire): **ROOT CAUSE press-1**, link strength, the chain line (press-1 → rail psu-a → victims), narrative. The map brackets press-1 and the Selected tab opens on it. Point at the evidence chips | "One verdict, not twelve alarms: press-1, with evidence — write, rail, temporal. It waited until the evidence held for most of two minutes, so a normal compressor cycle never convicts. The 'rail' chip is the witness gate: no shared physical medium declared, no edge." |
 | 3.4 | Map header: toggle **EDGE** briefly and back to **FLOOR** | "Same incident from the pod plane — topology genuinely discovered by eBPF. The floor's wiring, by contrast, pre-exists; runtime only weights it. We show each plane the way it really is." |
-| 3.5 | **Event log** (right column, bottom): the `trigger` row for Scenario 1, with the verdict it cited | "Who fired what, when, citing which evidence — hash-chained, so an edited history breaks visibly." |
-| 3.6 | **Actions** (right column): the **derate press-1 → 55 % via plc-stamping** card → **Execute** → read the confirmation inside the card (the verdict stays in view above it) → **Confirm and execute** | "Now we act, with a human. One bounded verb, and it cites the verdict it acts on. If the verdict changes before I confirm, the API refuses. SCADA writes one setpoint over S7comm to the stamping PLC." |
+| 3.5 | **Event log** (left column, bottom): the `trigger` row for Scenario 1, with the verdict it cited | "Who fired what, when, citing which evidence — hash-chained, so an edited history breaks visibly." |
+| 3.6 | **Actions** (right column): the **derate press-1 → 55 % via plc-stamping** card → **Execute** → read the confirmation inside the card (the verdict stays in view above it) → **Confirm** | "Now we act, with a human. One bounded verb, and it cites the verdict it acts on. If the verdict changes before I confirm, the API refuses. SCADA writes one setpoint over S7comm to the stamping PLC." |
 | 3.7 | Selected tab (press-1): `drive` falls to 55 %, its amps fall (offline: about 85→45 A). Assets: press-1 shows ▼55 % and rail psu-a climbs back (about 344→360 V). The trip card goes away, and press-1 never trips. After ~60 s the Event log shows the `relief` row with volts before and after | "The relief is measured, not claimed: the ledger records the rail voltage before and after the action. And the trip that was coming never happens." |
-| 3.8 | **Reset plant** (Fault injection header), then **Restore** press-1 to 100 % (Actions) | "Reset clears the fault. Restore returns the setpoint, and that is audited too." |
+| 3.8 | Fault shell: `r all`, then **Restore** press-1 to 100 % (Actions) | "Reset clears the fault. Restore returns the setpoint, and that is audited too." |
 
 ## 4 · The forecast: Scenario 5, coolant degradation (PS5, ~2.5 min, cut the waits)
 
@@ -92,19 +102,19 @@ about 80 s, and the first trip (furnace-1) at about 2 min, 86 s after its own ca
 
 | Beat | Do | Say |
 |---|---|---|
-| 4.1 | **Reset plant** → the floor calms in ~5 s. The verdict clears in about 3 min while the temperatures recover (cut the wait in the edit). Then fire row **5** Coolant pump degradation | "Second fault family: the coolant pump degrades. Flow drops; every cooled machine's temperature starts a slow ramp. Watch what the engine does BEFORE anything breaks." |
+| 4.1 | Fault shell: `r all` → the floor calms in ~5 s. The verdict clears in about 3 min while the temperatures recover (cut the wait in the edit). Then `f 5` (coolant pump degradation) | "Second fault family: the coolant pump degrades. Flow drops; every cooled machine's temperature starts a slow ramp. Watch what the engine does BEFORE anything breaks." |
 | 4.2 | The Verdict names **chiller-1** (the pump) as the root, with a trip ETA per machine and a headroom bar under it (coolant temps ramp toward the 78 °C latch). The map and Assets mark those machines amber | "The cause is the chiller pump, not the hottest machine. And it extrapolates the ramp and forecasts the trip: maintenance gets a clock, not a post-mortem." |
 | 4.3 | Let the trip land: PLC latches, machine stops (⌀ OPEN on the map and in Assets), rail recovers | "The trip is a real interlock in a real IEC 61131-3 runtime — OpenPLC latched it over Modbus. The plant fails safe; the engine explains why it happened." |
-| 4.4 | **Reset plant** → calm returns | "And back to steady. Deterministic, reproducible — fire it again and you get the same verdict for the same physics." |
+| 4.4 | Fault shell: `r all` → calm returns | "And back to steady. Deterministic, reproducible — fire it again and you get the same verdict for the same physics." |
 
 ## 4b · Secure: Scenario 4A, a setpoint nobody signed, and the refusals (PS4A, ~75 s)
 
 | Beat | Do | Say |
 |---|---|---|
-| 4b.1 | **Reset plant**, wait for calm (cut in the edit). fire row **4A** Setpoint write with no record | "Now an attack, not a fault. A client that is not our SCADA writes one setpoint on the stamping PLC over S7comm, as Stuxnet and FrostyGoop did. S7comm and Modbus have no authentication." |
+| 4b.1 | Fault shell: `r all`, wait for calm (cut in the edit). Then `f 4a` (setpoint write with no record) | "Now an attack, not a fault. A client that is not our SCADA writes one setpoint on the stamping PLC over S7comm, as Stuxnet and FrostyGoop did. S7comm and Modbus have no authentication." |
 | 4b.2 | In 35 to 45 s the red **INTEGRITY** band appears: press-1 DERATE 100→30 with no signed ledger row, client rogue-ews. Actions shows **BLOCKED** and an **UNSIGNED** hold. The event log shows a red UNSIGNED row | "VISR does not block the writer. It sees that a setpoint changed with no signed row, it names the client it saw on the wire, and it refuses to act through a controller it cannot trust." |
 | 4b.3 | Press **Restore** on the unsigned hold. A signed restore row lands, and the finding clears | "The operator puts it back, and that write is signed." |
-| 4b.4 | Log in as `viewer` and press Fire (or run `deploy/refusals.sh` in a terminal): 401, then a stale Execute gets 409. The red rows land in the ledger | "Every refused command lands in the hash-chained ledger." |
+| 4b.4 | Run `deploy/refusals.sh` in a terminal: a fire with no token gets 401, a stale Execute gets 409, a delete of the base PLC gets 403. The red rows land in the ledger | "Every refused command lands in the hash-chained ledger." |
 
 ## 5 · Close (~30 s)
 
@@ -118,7 +128,7 @@ box." Cut.
 ## Fallbacks (pre-decided; do not improvise on camera)
 
 - **Narrator down** → template verdict renders; either say the honesty line or restart Ollama off-camera.
-- **Scenario 1 verdict roots compressor-1 with low confidence** → young-baseline / ON-window artifact
+- **Scenario 1 verdict roots compressor-1 with a low share** → young-baseline / ON-window artifact
   (LOG-046): reset, wait for a compressor-OFF window, fire again. If it repeats, the soak was too
   short — go back to step 0.3; do not record.
 - **Plant plane misbehaves entirely** → do not record. Diagnose off-camera, then repeat from step 0.3.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getJSON } from "./api";
-import { RES_WORD, pctOf, scenarioName } from "./format";
+import { RES_WORD, pctOf } from "./format";
 
 // All console data in one hook: the polling loops, the operator actions, and the values derived
 // from the verdict. Every panel reads the same snapshot, so two panels never disagree.
@@ -19,9 +19,6 @@ export default function useConsoleData() {
   const [actions, setActions] = useState(null);   // 3D act loop (/api/actions)
   const [tasks, setTasks] = useState([]);
   const [profiles, setProfiles] = useState([]);
-  const [scenarios, setScenarios] = useState(null); // SCENARIOS.md 5.1: the fault catalogue (/api/scenarios)
-  const [pending, setPending] = useState({});     // sid -> in-flight trigger or reset (button busy state)
-  const [fired, setFired] = useState(null);
   const [updated, setUpdated] = useState(null);
   const [feedErr, setFeedErr] = useState(null);   // the last failed core call: {what, at}
   const [tagsOkAt, setTagsOkAt] = useState(null); // the last time the tag server answered (PS6 blind band)
@@ -32,7 +29,7 @@ export default function useConsoleData() {
     // fleet panels, and a dead tag server must show as blind, not as the last good picture.
     const miss = [];
     const core = (path) => getJSON(path).catch(() => { miss.push(path); return null; });
-    const [g, n, h, t, p, pr, pl, tg, fl, ac, sc] = await Promise.all([
+    const [g, n, h, t, p, pr, pl, tg, fl, ac] = await Promise.all([
       core("/api/graph"),
       core("/api/narrative"),
       core("/api/health"),
@@ -43,14 +40,12 @@ export default function useConsoleData() {
       getJSON("/api/tags").catch(() => null),
       getJSON("/api/fleet").catch(() => null),
       getJSON("/api/actions").catch(() => null),
-      getJSON("/api/scenarios").catch(() => null),
     ]);
     if (g) setGraph(g); if (n) setNarr(n); if (h) setHealth(h);
     if (t) setTopo(t); if (p) setPods(p); if (pr) setPodres(pr); if (pl) setPlant(pl);
     if (tg) setScada(tg);
     if (tg && tg.source === "scada") setTagsOkAt(new Date());
     if (fl) setFleet(fl); if (ac) setActions(ac);
-    if (Array.isArray(sc)) setScenarios(sc);
     if (miss.length) setFeedErr({ what: miss.join(", "), at: new Date() });
     else { setFeedErr(null); setUpdated(new Date()); }
   }
@@ -94,50 +89,6 @@ export default function useConsoleData() {
 
   // Dev review switch: reload every source after the mock state changes.
   function reloadAll() { refresh(); loadRecs(); loadAudit(); }
-
-  // Fire or reset one scenario. The button state comes from the sim's real active_faults, so it
-  // stays correct across reloads. Nothing is set optimistically.
-  async function scenario(sid, action) {
-    setPending((p) => ({ ...p, [sid]: true }));
-    setFired(`${action === "reset" ? "resetting" : "firing"} ${scenarioName(sid)}…`);
-    // the catalogue says how long each fault takes to show (PS2 waits for the relay, PS6 for a leak)
-    const expect = (scenarios || []).find((s) => s.id === sid)?.expect_s;
-    try {
-      const r = await fetch(`/api/scenarios/${sid}/${action}`, { method: "POST" });
-      const j = await r.json().catch(() => ({}));
-      const why = r.status === 401 ? "operator login required" : j.detail || j.status || r.statusText || "";
-      setFired(r.ok
-        ? `${scenarioName(sid)} ${action === "reset" ? "reset · the floor clears in about 5 s, the verdict in 1 to 3 min" : `fired · expect the verdict in about ${expect || 90} s`} (${new Date().toLocaleTimeString()})`
-        : `error ${r.status}: ${why}`);
-      getJSON("/api/plant").then(setPlant).catch(() => {});
-      getJSON("/api/scenarios").then((x) => Array.isArray(x) && setScenarios(x)).catch(() => {});
-    } catch (e) {
-      setFired("error: " + e);
-    } finally {
-      setPending((p) => ({ ...p, [sid]: false }));
-    }
-  }
-
-  // Full reset of every fault owner (SCENARIOS.md 5.1): plant-sim, the rogue-ews injector, and the
-  // tag server's leak. The API writes one audit row for it, so this recovers any unknown state.
-  async function resetAll() {
-    setPending((p) => ({ ...p, __all: true }));
-    setFired("resetting every fault owner…");
-    try {
-      const r = await fetch(`/api/scenarios/reset-all`, { method: "POST" });
-      const j = await r.json().catch(() => ({}));
-      const why = r.status === 401 ? "operator login required" : typeof j.detail === "string" ? j.detail : "";
-      setFired(r.ok
-        ? `all faults reset (${new Date().toLocaleTimeString()})`
-        : `reset error ${r.status}: ${why}`);
-      getJSON("/api/plant").then(setPlant).catch(() => {});
-      getJSON("/api/scenarios").then((x) => Array.isArray(x) && setScenarios(x)).catch(() => {});
-    } catch (e) {
-      setFired("reset error: " + e);
-    } finally {
-      setPending((p) => ({ ...p, __all: false }));
-    }
-  }
 
   // ── derive ──────────────────────────────────────────────────────────────
   const meta = graph?.meta || {};
@@ -214,7 +165,6 @@ export default function useConsoleData() {
     r.cpuUse += p.cpu?.usage || 0; r.cpuReq += p.cpu?.request || 0; r.cpuLim += p.cpu?.limit || 0;
     r.memUse += p.mem?.usage || 0; r.memReq += p.mem?.request || 0; r.memLim += p.mem?.limit || 0;
   }
-  const stRank = { hot: 0, strained: 1, ok: 2 };
   const podRows = (pods || []).map((p) => {
     const r = resByWl[p.workload] || {};
     return {
@@ -222,7 +172,7 @@ export default function useConsoleData() {
       cpuUse: r.cpuUse, cpuReq: r.cpuReq, cpuLim: r.cpuLim, memUse: r.memUse, memReq: r.memReq, memLim: r.memLim,
       cpuPct: pctOf(r.cpuUse, r.cpuReq, r.cpuLim), memPct: pctOf(r.memUse, r.memReq, r.memLim), ioPct: p.value,
     };
-  }).sort((a, b) => stRank[a.st] - stRank[b.st]);   // root first, then blast radius, then steady
+  });   // Edge.jsx pins the order: by role group, then by name (LOG-083)
 
   // Advisory cards. An executable act-loop proposal replaces the advisory throttle for its asset.
   const advisory = [];
@@ -247,9 +197,9 @@ export default function useConsoleData() {
 
   return {
     graph, narr, health, topo, pods, podres, plant, recs, audit, scada, fleet, actions, tasks, profiles,
-    pending, fired, updated,
-    scenario, resetAll, fleetChanged, reloadAll,
-    scenarios, feedErr, now, tagsOkAt,
+    updated,
+    fleetChanged, reloadAll,
+    feedErr, now, tagsOkAt,
     derived: { meta, root, rootEdge, edges, blast, blastSet, resWord, statusOf, plantSet, edgeGraph, podRows, advisory, fairness,
       chain, chainNodes, mediaNames, integrity },
   };

@@ -1,6 +1,14 @@
 # SKN Plant dashboard, provisioned as code (same sidecar pattern as grafana-psi-dashboard.yaml).
 # Fixed uid (skn-plant) + panel ids that the VISR Machines section embeds as d-solo iframes:
 #   panelId 1 = bus voltage per rail · 2 = current draw per machine · 3 = coolant temps vs trip.
+#   panelId 4 = one asset only, for the console's Selected tab (LOG-081). The console sets the hidden
+#   variable with var-asset=<name>. Each query matches only the series that the asset has: a machine
+#   shows its draw and, if cooled, its temperature with the trip line. A rail shows its voltage and its
+#   feeder meter. The loop shows its flow. A segment shows its load. Each metric has its own color,
+#   and each axis takes the color of its series: draw blue, temp orange, trip red dashed, volts purple,
+#   feeder light blue dashed, flow green, load yellow. The current axes start at 0, so sensor noise on
+#   a steady machine stays flat. The voltage axis spans at least 330 to 400 V: rail noise stays flat, and
+#   a Scenario 1 sag (about 17 V) still shows clearly.
 # No "min: 0" on purpose: auto-scale keeps an 8V rail sag or a 3C temp climb visible.
 apiVersion: v1
 kind: ConfigMap
@@ -22,7 +30,9 @@ data:
       "time": { "from": "now-30m", "to": "now" },
       "templating": {
         "list": [
-          { "name": "datasource", "type": "datasource", "query": "prometheus", "hide": 0, "current": {} }
+          { "name": "datasource", "type": "datasource", "query": "prometheus", "hide": 0, "current": {} },
+          { "name": "asset", "type": "textbox", "label": "asset", "query": "press-1", "hide": 2,
+            "current": { "text": "press-1", "value": "press-1" } }
         ]
       },
       "panels": [
@@ -89,6 +99,281 @@ data:
               "datasource": { "type": "prometheus", "uid": "${datasource}" },
               "expr": "plant_trip_threshold_celsius",
               "legendFormat": "trip"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "Selected asset",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 27
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "axisColorMode": "series"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "draw A"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "amp"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#5794F2"
+                    }
+                  },
+                  {
+                    "id": "custom.axisSoftMin",
+                    "value": 0
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "temp"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "celsius"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#FF9830"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "trip"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "celsius"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F2495C"
+                    }
+                  },
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        6,
+                        4
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 1
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "volts"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "volt"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#B877D9"
+                    }
+                  },
+                  {
+                    "id": "custom.axisSoftMin",
+                    "value": 330
+                  },
+                  {
+                    "id": "custom.axisSoftMax",
+                    "value": 400
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "feeder A"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "amp"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#8AB8FF"
+                    }
+                  },
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "fill": "dash",
+                      "dash": [
+                        4,
+                        3
+                      ]
+                    }
+                  },
+                  {
+                    "id": "custom.axisSoftMin",
+                    "value": 0
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "flow"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "flowlpm"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#73BF69"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "load"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percentunit"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#FADE2A"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "plant_current_draw_amps{pod=\"$asset\"}",
+              "legendFormat": "draw A"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "plant_temp_celsius{pod=\"$asset\"}",
+              "legendFormat": "temp"
+            },
+            {
+              "refId": "C",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "plant_trip_threshold_celsius and on() plant_temp_celsius{pod=\"$asset\"}",
+              "legendFormat": "trip"
+            },
+            {
+              "refId": "D",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "plant_bus_voltage_volts{pod=\"$asset\"} unless on() plant_current_draw_amps{pod=\"$asset\"}",
+              "legendFormat": "volts"
+            },
+            {
+              "refId": "E",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "plant_feeder_current_amps{pod=\"$asset\"}",
+              "legendFormat": "feeder A"
+            },
+            {
+              "refId": "F",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "plant_coolant_flow_lpm{pod=\"$asset\"}",
+              "legendFormat": "flow"
+            },
+            {
+              "refId": "G",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "plant_net_utilization_ratio{pod=\"$asset\"}",
+              "legendFormat": "load"
             }
           ]
         }

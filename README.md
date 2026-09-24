@@ -13,6 +13,7 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 
 | Path | What |
 |---|---|
+| `BOOK.md` | The whole solution end to end, in plain words: the problem, every part, the inspirations, the proof, the plan |
 | `plant/` · `plc/` · `scada/` | Plant physics sim, OpenPLC trip program, SCADA tag server + historian writer |
 | `vplc/` | Virtual PLC runtime: Structured Text tasks, S7comm and Modbus TCP protocol profiles (2H) |
 | `FLEET.md` | Design and interface contract of the virtual PLC fleet and the act loop |
@@ -31,9 +32,12 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 
 - **Box bring-up** (single-node K3s): follow `PIVOT_SETUP.md`.
 - **Tests**: `make test`, or `python -m pytest -q` inside `correlation/`, `plant/`, `api/`, `scada/`, or `vplc/`.
-- **The console** is one screen: Assets and Fault injection on the left, the map and the detail tabs
-  in the center, the verdict, actions, and event log on the right. `dashboard/README.md` has the map.
-- **Fire a fault**: console → Fault injection. Each row names the real incident it is anchored on:
+- **The console** is one screen: Assets and the event log on the left, the map and the detail tabs
+  in the center, the verdict and actions on the right. The operator drags the gaps to resize panels.
+  `dashboard/README.md` has the map.
+- **Fire a fault**: from the fault shell on the box, not the console:
+  `ssh -t forge 'bash ~/Tata_InnoVent/deploy/faults.sh'`, then `f 1` (fire), `r all` (reset).
+  Each scenario is anchored on a real incident:
   PS1 rail-sag cascade · PS2 power sag trips the chiller · PS3 control network storm · PS4A setpoint
   write with no record · PS4B current report contradicts the feeder · PS5 coolant ramp-to-trip ·
   PS6 the monitor runs out of memory. `SCENARIOS.md` is the contract for the set.

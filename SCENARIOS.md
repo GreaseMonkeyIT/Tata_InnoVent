@@ -7,8 +7,9 @@ section 4.4), the second box proof run (LOG-071) passed PS0, PS1 with Execute, P
 refusals. PS2 still fails: its two hops do not show at the same time. The code follows this file. If the code and
 this file disagree, fix one of them in the same change.
 
-**Box, 2026-09-22 (LOG-078):** the images with LOG-073 to LOG-077 went live at 14:08, and a new PS0 soak
-started. PS2 gets its first box run with `CHILLER_RESIDUAL_FLOW=0.60` in the next proof run.
+**Box, 2026-09-22 (LOG-078, LOG-079):** the images with LOG-073 to LOG-077 went live at 14:08, and the PS0
+soak passed at 14:54. The third box proof run passed all seven scenarios and every refusal. PS2 passed for the
+first time: root `compressor-1` with the loop hop after 304 s.
 
 **Supply boundary (2026-09-20, this change).** The plant had no supply above its rails. `Rail.step` used a
 constant source voltage, so every sag in the model started inside the plant. A power quality meter at the
@@ -104,7 +105,7 @@ where the root is `compressor-1` AND the loop hop is up, one process per setting
 0.60 sits at the start of the plateau and keeps one real trip, so the trip forecast still predicts an event
 that arrives. Above 0.70 nothing latches and the cards promise a trip that never comes. **The lab is not the
 box:** it runs two signals where the box runs six, and PS2 passes in the lab even at 0.45. The table measures
-the improvement between settings. Only a box proof run settles the box.
+the improvement between settings. Only a box proof run settles the box. On 2026-09-22 it did: PS2 passes at 0.60 (LOG-079).
 
 **Load budget:** extra running load on `psu-b` above about 30 A can trip the relay in normal operation.
 Keep new cells on `psu-c`. The fleet API default rail is `psu-c`.
@@ -496,10 +497,10 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
 
 ## 7. Console behavior
 
-- **Fault injection:** rows come from `GET /api/scenarios`. The current three rows are the fallback when the call
-  fails. Each row shows the scenario number, the name, and the mechanism. The live row also shows the anchor
-  in faint text. The map banner and the event log say "Scenario 1" (`scenarioName` in `lib/format.js`).
-  **Reset plant** calls `reset-all`. The post-fire message uses `expect_s`.
+- **Fault injection (LOG-081):** the console has no fault controls and no "injected" banner. The fault shell
+  `deploy/faults.sh` runs on the box and calls the same endpoints: `trigger`, `reset`, and `reset-all`, with
+  the operator token from the Secret `aiops/visr-auth` and the actor `fault-shell`. Its status reads
+  `GET /api/scenarios`. The event log says "Scenario 1" (`scenarioName` in `lib/format.js`).
 - **Verdict:** an integrity block above the state band when `graph.integrity` has open findings. The block does not
   replace a root. A blind band takes priority when `/api/tags` answers `source: "unavailable"`:
   "SCADA view blind · last good HH:MM:SS · physics tap live".
