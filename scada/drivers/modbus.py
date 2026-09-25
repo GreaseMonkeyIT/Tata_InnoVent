@@ -1,4 +1,6 @@
-"""Modbus TCP driver for the SCADA port of `generic-iec` (FLEET.md 4.2).
+"""Modbus TCP driver. Where each value lives comes from a register map (drivers/regmap.py).
+
+Without a map the driver uses default_map("modbus"), the FLEET.md 4.2 layout of `generic-iec`:
 
   discrete inputs (FC02)   0..63       %IX     read
   coils (FC01)             0..63       %QX     read
@@ -6,37 +8,52 @@
   holding registers (FC03) 0..63       %QW     read
   holding registers        1024..1087  %MW0..63  read (FC03), write (FC06)
 
-One poll is five requests. last_rtt_ms is the wall time of those five exchanges. The
-connect time is not part of it.
+That is five requests per poll, the same frames as before register maps existed. A vendor
+map (regmaps/*.yaml) can put any slot at any address, in INT16, UINT16, INT32, UINT32,
+FLOAT32 or BOOL, either word order, with a scale. The read plan groups mapped addresses into
+as few requests as Modbus allows (125 registers or 2000 bits each).
+
+last_rtt_ms is the wall time of the read requests of one poll. The connect time is not part of it.
 """
 from __future__ import annotations
 
 import threading
 import time
 
-from . import N_BITS, N_WORDS, check_mw, to_int16
+from . import check_mw
+from .codec import encode_words
+from .regmap import RegMap, default_map, vendor_value
 
 try:
     from pymodbus.client import ModbusTcpClient          # pymodbus 3.x, the same pin as plant-sim
 except Exception:                                        # pragma: no cover
     ModbusTcpClient = None
 
-MW_BASE = 1024
+MW_BASE = 1024                                           # the default map's %MW base (FLEET.md 4.2)
+
+_READ = {"discrete_input": ("read_discrete_inputs", "FC02", "bits"),
+         "coil": ("read_coils", "FC01", "bits"),
+         "input_register": ("read_input_registers", "FC04", "registers"),
+         "holding_register": ("read_holding_registers", "FC03", "registers")}
 
 
 class ModbusDriver:
-    """A pymodbus client that reads the image and writes %MW words."""
+    """A pymodbus client that reads the image and writes %MW words through a register map."""
 
     kind = "modbus"
 
     def __init__(self, host: str, port: int = 502, unit: int = 1, timeout: float = 2.0,
-                 retries: int = 1):
+                 retries: int = 1, regmap: RegMap | None = None):
         self.host = host
         self.port = int(port)
         self.unit = int(unit)
         self.timeout = timeout
         self.retries = retries
+        self.map = regmap or default_map("modbus")
+        if self.map.protocol != "modbus":
+            raise ValueError(f"{self.map.source} is a {self.map.protocol} map, not modbus")
         self.last_rtt_ms: float | None = None
+        self.last_clamped: list[str] = []                # slots clamped to INT16 on the last read
         self._client = None
         self._lock = threading.Lock()
 
@@ -76,39 +93,42 @@ class ModbusDriver:
         with self._lock:
             try:
                 c = self._conn()
+                data = {}
                 t0 = time.perf_counter()
-                di = self._ok(c.read_discrete_inputs(0, count=N_BITS, slave=self.unit), "FC02 0..63")
-                co = self._ok(c.read_coils(0, count=N_BITS, slave=self.unit), "FC01 0..63")
-                ir = self._ok(c.read_input_registers(0, count=N_WORDS, slave=self.unit), "FC04 0..63")
-                qw = self._ok(c.read_holding_registers(0, count=N_WORDS, slave=self.unit), "FC03 0..63")
-                mw = self._ok(c.read_holding_registers(MW_BASE, count=N_WORDS, slave=self.unit),
-                              "FC03 1024..1087")
+                for i, sp in enumerate(self.map.spans):
+                    fn, fc, attr = _READ[sp.area]
+                    what = f"{fc} {sp.start}..{sp.start + sp.count - 1}"
+                    resp = self._ok(getattr(c, fn)(sp.start, count=sp.count, slave=self.unit), what)
+                    values = list(getattr(resp, attr))
+                    if len(values) < sp.count:
+                        raise IOError(f"modbus short read ({what})")
+                    data[i] = values[:sp.count]
                 rtt = (time.perf_counter() - t0) * 1000.0
             except Exception:
                 self._drop()
                 raise
-        bits_ix, bits_qx = list(di.bits), list(co.bits)
-        words = [list(ir.registers), list(qw.registers), list(mw.registers)]
-        if len(bits_ix) < N_BITS or len(bits_qx) < N_BITS or any(len(w) < N_WORDS for w in words):
-            with self._lock:
-                self._drop()
-            raise IOError("modbus short read")
+        image, clamped = self.map.build_image(data)
         self.last_rtt_ms = rtt
-        return {
-            "ix": [bool(b) for b in bits_ix[:N_BITS]],
-            "qx": [bool(b) for b in bits_qx[:N_BITS]],
-            "iw": [to_int16(v) for v in words[0][:N_WORDS]],
-            "qw": [to_int16(v) for v in words[1][:N_WORDS]],
-            "mw": [to_int16(v) for v in words[2][:N_WORDS]],
-        }
+        self.last_clamped = clamped
+        return image
 
     def write_mw(self, index: int, value: int) -> None:
         index, value = check_mw(index, value)
+        p = self.map.write_point(index)
+        v = vendor_value(p, value)
+        if p.area == "coil":
+            op = lambda c: self._ok(c.write_coil(p.start, bool(v), slave=self.unit), f"FC05 {p.start}")
+        else:
+            words = encode_words(v, p.type, p.word_order)    # ValueError before the wire
+            if len(words) == 1:
+                op = lambda c: self._ok(c.write_register(p.start, words[0], slave=self.unit),
+                                        f"FC06 {p.start}")
+            else:
+                op = lambda c: self._ok(c.write_registers(p.start, words, slave=self.unit),
+                                        f"FC16 {p.start}..{p.start + len(words) - 1}")
         with self._lock:
             try:
-                c = self._conn()
-                self._ok(c.write_register(MW_BASE + index, value & 0xFFFF, slave=self.unit),
-                         f"FC06 {MW_BASE + index}")
+                op(self._conn())
             except Exception:
                 self._drop()
                 raise

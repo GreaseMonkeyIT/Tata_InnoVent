@@ -1,3 +1,4 @@
 pymodbus==3.6.9
 psycopg2-binary==2.9.10
 python-snap7==3.1.2
+PyYAML==6.0.2
