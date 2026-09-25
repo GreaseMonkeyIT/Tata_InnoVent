@@ -1,0 +1,353 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1720" viewBox="0 0 1800 1720" font-family="Arial, Helvetica, Liberation Sans, sans-serif" xmlns:c2pa="http://c2pa.org/manifest"><metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTpmZGFmYzg0OS04NDAxLTQ0YjMtYjY5OS0zMGEyYmQ0MTliNzEAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaCmCYH7INYdv9q2XFly3VoMAAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDo1ZGM0M2ZjZi0yN2Y3LTRhMGItYWZkYS1kNmEzNTNkNjFlMzJscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNoW3eYnurQb7Y77GhvqSNgDgAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggFPRV2yeTUSPrfFU0AdLOQfE3SpZf5mzuU8TFL/s5HX2kZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaD9sh/mVdPeNZ7pSauFcRAAAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRNAAAAAAAAAAAAAAAAAGRoYXNoWCDCGlqBzpQuSxZOA0Y+lihCaXQR7vhe3BBfSDSQBB6S3mRuYW1lbmp1bWJmIG1hbmlmZXN0amV4Y2x1c2lvbnOBomVzdGFydBjWZmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOmZkYWZjODQ5LTg0MDEtNDRiMy1iNjk5LTMwYTJiZDQxOWI3MS9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOjlhNzcyOTlhLTZlNGEtNDQ4Yi1iNTYyLTkyOGMxZWM1YzZhNHJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCAU9FXbJ5NRI+t8VTQB0s5B8TdKll/mbO5TxMUv+zkdfaJjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggS/CD8+sD/ta9XeA535KEq8/gLRvLOK2NnRTZBvCy3q2iY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFgg4cdwbH3MJFPO88miibV1Q8VVMytvogM2K/17FuILrlZ0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQBbJHBgkx+k0SWkbL590rFTidJJSmjLh9kJz1+rrZmWIJ2FdezADXUv0uMYJvjchfRR1k/jk4aY26fI0vHNA4LE=</c2pa:manifest></metadata>
+<defs>
+<marker id="eg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5A5F73"/></marker>
+<marker id="sg" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#5A5F73"/></marker>
+<marker id="ea" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#FF9C00"/></marker>
+<marker id="sa" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#FF9C00"/></marker>
+<marker id="er" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#D7263D"/></marker>
+<marker id="sr" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#D7263D"/></marker>
+<marker id="et" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#12C6B3"/></marker>
+<marker id="st" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#12C6B3"/></marker>
+<marker id="eb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0000B3"/></marker>
+<marker id="sb" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#0000B3"/></marker>
+<marker id="en" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1E9E4A"/></marker>
+<marker id="sn" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#1E9E4A"/></marker>
+<linearGradient id="hdr" x1="0" x2="1"><stop offset="0" stop-color="#0000B3"/><stop offset="1" stop-color="#12C6B3"/></linearGradient>
+</defs>
+<rect x="0" y="0" width="1800" height="1720" rx="0" fill="#FAFBFF" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="0" y="0" width="1800" height="96" rx="0" fill="url(#hdr)" stroke="none" stroke-width="0" opacity="1"/>
+<text x="40" y="46" font-size="34" fill="#FFFFFF" font-weight="bold" text-anchor="start">VISR · whole-system flow</text>
+<text x="40" y="78" font-size="18" fill="#FFFFFF" font-weight="normal" text-anchor="start">Edge causal-AIOps for industrial plants · Team SiliconKnights · Tata InnoVent 2026</text>
+<text x="1760" y="46" font-size="20" fill="#FFFFFF" font-weight="bold" text-anchor="end">One air-gapped edge PC</text>
+<text x="1760" y="76" font-size="16" fill="#FFFFFF" font-weight="normal" text-anchor="end">16 cores · 15 GB RAM · single-node k3s · no internet</text>
+<rect x="18" y="118" width="1764" height="1330" rx="26" fill="none" stroke="#12C6B3" stroke-width="3" stroke-dasharray="16 8" opacity="1"/>
+<rect x="1470" y="104" width="300" height="30" rx="15" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="1620" y="125" font-size="15" fill="#FFFFFF" font-weight="bold" text-anchor="middle">TRUST BOUNDARY · edge PC</text>
+<rect x="40" y="150" width="1720" height="268" rx="20" fill="#FFF8EC" stroke="#FF9C00" stroke-width="2" stroke-dasharray="10 6" opacity="1"/>
+<rect x="62" y="133" width="568.8" height="34" rx="17" fill="#FF9C00" stroke="none" stroke-width="0" opacity="1"/>
+<text x="346.4" y="156" font-size="17" fill="#FFFFFF" font-weight="bold" text-anchor="middle">1 · PLANT FLOOR  (physics-simulated, labelled as such)</text>
+<rect x="68" y="195" width="300" height="206" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="64" y="190" width="300" height="206" rx="14" fill="#FFFFFF" stroke="#D7263D" stroke-width="2.5" opacity="1"/>
+<rect x="64" y="190" width="300" height="44" rx="14" fill="#D7263D" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="64" y="220" width="300" height="14" rx="0" fill="#D7263D" stroke="none" stroke-width="0" opacity="1"/>
+<text x="80" y="219" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Fault shell</text>
+<text x="80" y="262" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">deploy/faults.sh (ssh)</text>
+<text x="80" y="285" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">fires PS1 to PS6 + PS4B</text>
+<text x="80" y="308" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">f 1 = fire · r all = reset</text>
+<text x="80" y="331" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">each anchored on a real</text>
+<text x="80" y="354" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">incident (SCENARIOS.md)</text>
+<rect x="80" y="362" width="122.8" height="24" rx="12" fill="#D7263D" stroke="#D7263D" stroke-width="1.5" opacity="0.14"/>
+<text x="141.4" y="379" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">operator-only</text>
+<rect x="414" y="195" width="420" height="206" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="410" y="190" width="420" height="206" rx="14" fill="#FFFFFF" stroke="#FF9C00" stroke-width="2.5" opacity="1"/>
+<rect x="410" y="190" width="420" height="44" rx="14" fill="#FF9C00" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="410" y="220" width="420" height="14" rx="0" fill="#FF9C00" stroke="none" stroke-width="0" opacity="1"/>
+<text x="426" y="219" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">plant-sim</text>
+<text x="816" y="219" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">ns plant</text>
+<text x="426" y="262" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">8 machines · 4 need cooling</text>
+<text x="426" y="285" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">3 DC rails psu-a · psu-b · psu-c</text>
+<text x="426" y="308" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">  with source impedance</text>
+<text x="426" y="331" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">1 shared coolant loop cool-1</text>
+<text x="426" y="354" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">faults perturb the physics</text>
+<rect x="426" y="362" width="122.8" height="24" rx="12" fill="#FF9C00" stroke="#FF9C00" stroke-width="1.5" opacity="0.14"/>
+<text x="487.4" y="379" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">:9200 metrics</text>
+<rect x="880" y="195" width="300" height="206" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="876" y="190" width="300" height="206" rx="14" fill="#FFFFFF" stroke="#FF9C00" stroke-width="2.5" opacity="1"/>
+<rect x="876" y="190" width="300" height="44" rx="14" fill="#FF9C00" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="876" y="220" width="300" height="14" rx="0" fill="#FF9C00" stroke="none" stroke-width="0" opacity="1"/>
+<text x="892" y="219" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">OpenPLC</text>
+<text x="1162" y="219" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">ns plant</text>
+<text x="892" y="262" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">real IEC 61131-3 program</text>
+<text x="892" y="285" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">latched trip at 78 °C</text>
+<text x="892" y="308" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">program.st · REGISTER_MAP</text>
+<text x="892" y="331" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">acts on its own; VISR</text>
+<text x="892" y="354" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">never overrides a trip</text>
+<rect x="892" y="362" width="105.6" height="24" rx="12" fill="#FF9C00" stroke="#FF9C00" stroke-width="1.5" opacity="0.14"/>
+<text x="944.8" y="379" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">Modbus :502</text>
+<rect x="1226" y="195" width="300" height="206" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="1222" y="190" width="300" height="206" rx="14" fill="#FFFFFF" stroke="#FF9C00" stroke-width="2.5" opacity="1"/>
+<rect x="1222" y="190" width="300" height="44" rx="14" fill="#FF9C00" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="1222" y="220" width="300" height="14" rx="0" fill="#FF9C00" stroke="none" stroke-width="0" opacity="1"/>
+<text x="1238" y="219" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Virtual PLC fleet</text>
+<text x="1508" y="219" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">ns fleet</text>
+<text x="1238" y="262" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">Structured Text tasks</text>
+<text x="1238" y="285" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">Siemens S7comm profile</text>
+<text x="1238" y="308" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">Modbus TCP profile</text>
+<text x="1238" y="331" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">HMAC enrolment token</text>
+<text x="1238" y="354" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">add from console: ~15.6 s</text>
+<rect x="1238" y="362" width="71.19999999999999" height="24" rx="12" fill="#FF9C00" stroke="#FF9C00" stroke-width="1.5" opacity="0.14"/>
+<text x="1273.6" y="379" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">S7 :102</text>
+<rect x="1317.2" y="362" width="105.6" height="24" rx="12" fill="#FF9C00" stroke="#FF9C00" stroke-width="1.5" opacity="0.14"/>
+<text x="1370.0" y="379" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">Modbus :502</text>
+<rect x="1572" y="195" width="168" height="206" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="1568" y="190" width="168" height="206" rx="14" fill="#FFFFFF" stroke="#D7263D" stroke-width="2.5" stroke-dasharray="8 5" opacity="1"/>
+<rect x="1568" y="190" width="168" height="44" rx="14" fill="#D7263D" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="1568" y="220" width="168" height="14" rx="0" fill="#D7263D" stroke="none" stroke-width="0" opacity="1"/>
+<text x="1584" y="219" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">rogue-ews</text>
+<text x="1584" y="262" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">test attacker</text>
+<text x="1584" y="285" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">for PS4A:</text>
+<text x="1584" y="308" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">writes a</text>
+<text x="1584" y="331" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">setpoint with</text>
+<text x="1584" y="354" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">no record</text>
+<path d="M364,293 L406,293" fill="none" stroke="#D7263D" stroke-width="2.6" marker-end="url(#er)"/>
+<path d="M830,280 L872,280" fill="none" stroke="#FF9C00" stroke-width="2.6" marker-end="url(#ea)" marker-start="url(#sa)"/>
+<path d="M620,190 L620,170 L1372,170 L1372,186" fill="none" stroke="#FF9C00" stroke-width="2.6" marker-end="url(#ea)"/>
+<text x="996" y="164" font-size="13.5" fill="#A86500" font-weight="bold" text-anchor="middle">I/O image to virtual PLCs</text>
+<path d="M1568,293 L1526,293" fill="none" stroke="#D7263D" stroke-width="2.6" stroke-dasharray="7 5" marker-end="url(#er)"/>
+<rect x="40" y="460" width="1720" height="300" rx="20" fill="#EEFBF9" stroke="#12C6B3" stroke-width="2" stroke-dasharray="10 6" opacity="1"/>
+<rect x="62" y="443" width="252.6" height="34" rx="17" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="188.3" y="466" font-size="17" fill="#FFFFFF" font-weight="bold" text-anchor="middle">2 · COLLECT  (the eyes)</text>
+<rect x="68" y="505" width="250" height="236" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="64" y="500" width="250" height="236" rx="14" fill="#FFFFFF" stroke="#12C6B3" stroke-width="2.5" opacity="1"/>
+<rect x="64" y="500" width="250" height="44" rx="14" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="64" y="530" width="250" height="14" rx="0" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="80" y="529" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Historian</text>
+<text x="300" y="529" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">ns plant</text>
+<text x="80" y="572" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">PostgreSQL</text>
+<text x="80" y="595" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">every reading</text>
+<text x="80" y="618" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">saved with time</text>
+<text x="80" y="641" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">replay any</text>
+<text x="80" y="664" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">incident later</text>
+<rect x="80" y="702" width="165.79999999999998" height="24" rx="12" fill="#12C6B3" stroke="#12C6B3" stroke-width="1.5" opacity="0.14"/>
+<text x="162.89999999999998" y="719" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">historian-db :5432</text>
+<rect x="360" y="505" width="470" height="236" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="356" y="500" width="470" height="236" rx="14" fill="#FFFFFF" stroke="#12C6B3" stroke-width="2.5" opacity="1"/>
+<rect x="356" y="500" width="470" height="44" rx="14" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="356" y="530" width="470" height="14" rx="0" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="372" y="529" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">SCADA tag server</text>
+<text x="812" y="529" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">scada/ · ns plant</text>
+<text x="372" y="572" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">41 tags · GOOD / STALE / BAD</text>
+<text x="372" y="595" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">drivers: Modbus TCP · S7comm</text>
+<text x="372" y="618" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">register maps: 1 YAML per vendor</text>
+<text x="372" y="641" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">  (INT16…FLOAT32 · word order · scale)</text>
+<text x="372" y="664" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">write gate: writable tags, min / max</text>
+<rect x="372" y="702" width="131.39999999999998" height="24" rx="12" fill="#12C6B3" stroke="#12C6B3" stroke-width="1.5" opacity="0.14"/>
+<text x="437.7" y="719" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">:9300 /metrics</text>
+<rect x="874" y="505" width="390" height="236" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="870" y="500" width="390" height="236" rx="14" fill="#FFFFFF" stroke="#12C6B3" stroke-width="2.5" opacity="1"/>
+<rect x="870" y="500" width="390" height="44" rx="14" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="870" y="530" width="390" height="14" rx="0" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="886" y="529" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Prometheus stack</text>
+<text x="1246" y="529" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">ns observability</text>
+<text x="886" y="572" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">kube-prometheus-stack</text>
+<text x="886" y="595" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">cAdvisor per-pod usage + PSI</text>
+<text x="886" y="618" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">scrapes tag server + exporters</text>
+<text x="886" y="641" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">Loki + Alloy collect logs</text>
+<text x="886" y="664" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">history for charts and engine</text>
+<rect x="1308" y="505" width="432" height="110" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="1304" y="500" width="432" height="110" rx="14" fill="#FFFFFF" stroke="#12C6B3" stroke-width="2.5" opacity="1"/>
+<rect x="1304" y="500" width="432" height="44" rx="14" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="1304" y="530" width="432" height="14" rx="0" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="1320" y="529" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Linux kernel (real signals)</text>
+<text x="1320" y="572" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">cgroup v2 CPU · memory · IO pressure (PSI)</text>
+<rect x="1308" y="631" width="432" height="110" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="1304" y="626" width="432" height="110" rx="14" fill="#FFFFFF" stroke="#12C6B3" stroke-width="2.5" opacity="1"/>
+<rect x="1304" y="626" width="432" height="44" rx="14" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="1304" y="656" width="432" height="14" rx="0" fill="#12C6B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="1320" y="655" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Caretta (eBPF)</text>
+<text x="1320" y="698" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">who talks to whom · names a rogue client</text>
+<path d="M1026,400 L1026,442 M1372,400 L1372,442 M1372,442 L700,442" fill="none" stroke="#5A5F73" stroke-width="2.6"/>
+<path d="M1026,442 L1026,402" fill="none" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<path d="M1372,442 L1372,402" fill="none" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<path d="M700,442 L700,496" fill="none" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<rect x="1110" y="428" width="176" height="26" rx="12" fill="#FFFFFF" stroke="#5A5F73" stroke-width="1.2" opacity="1"/>
+<text x="1198" y="446" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">poll + write setpoint</text>
+<path d="M356,620 L318,620" fill="none" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<path d="M826,620 L866,620" fill="none" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<path d="M1304,555 L1264,555" fill="none" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<path d="M1304,681 L1264,681" fill="none" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<rect x="40" y="806" width="1720" height="330" rx="20" fill="#F1F1FF" stroke="#0000B3" stroke-width="2" stroke-dasharray="10 6" opacity="1"/>
+<rect x="62" y="789" width="364.79999999999995" height="34" rx="17" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="244.39999999999998" y="812" font-size="17" fill="#FFFFFF" font-weight="bold" text-anchor="middle">3 · DECIDE  (the brain · ns aiops)</text>
+<rect x="68" y="851" width="300" height="266" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="64" y="846" width="300" height="266" rx="14" fill="#FFFFFF" stroke="#0000B3" stroke-width="2.5" opacity="1"/>
+<rect x="64" y="846" width="300" height="44" rx="14" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="64" y="876" width="300" height="14" rx="0" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="80" y="875" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Aggregator</text>
+<text x="350" y="875" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">L2</text>
+<text x="80" y="918" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">Go · every 5 s</text>
+<text x="80" y="941" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">one snapshot of all</text>
+<text x="80" y="964" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">signals (queries.yaml)</text>
+<text x="80" y="987" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">ring of recent windows</text>
+<text x="80" y="1010" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">threshold events out</text>
+<rect x="80" y="1078" width="54.0" height="24" rx="12" fill="#0000B3" stroke="#0000B3" stroke-width="1.5" opacity="0.14"/>
+<text x="107.0" y="1095" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">:9000</text>
+<rect x="412" y="851" width="470" height="266" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="408" y="846" width="470" height="266" rx="14" fill="#0000B3" stroke="#0000B3" stroke-width="2.5" opacity="1"/>
+<rect x="408" y="846" width="470" height="44" rx="14" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="408" y="876" width="470" height="14" rx="0" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="424" y="875" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Causal engine</text>
+<text x="864" y="875" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">L3 · correlation/</text>
+<text x="424" y="918" font-size="16.5" fill="#FFFFFF" font-weight="bold" text-anchor="start">deterministic · no LLM inside</text>
+<text x="424" y="941" font-size="16.5" fill="#FFFFFF" font-weight="normal" text-anchor="start">learns baselines: EWMA + CUSUM</text>
+<text x="424" y="964" font-size="16.5" fill="#FFFFFF" font-weight="normal" text-anchor="start">lagged correlation: who moved first</text>
+<text x="424" y="987" font-size="16.5" fill="#FFFFFF" font-weight="normal" text-anchor="start">shared-medium gate: same rail / loop</text>
+<text x="424" y="1010" font-size="16.5" fill="#FFFFFF" font-weight="normal" text-anchor="start">ranks suspects → root cause</text>
+<text x="424" y="1033" font-size="16.5" fill="#FFFFFF" font-weight="normal" text-anchor="start">forecasts OOM + thermal-trip ETA</text>
+<rect x="424" y="1078" width="54.0" height="24" rx="12" fill="#FFFFFF" stroke="#0000B3" stroke-width="1.5" opacity="1"/>
+<text x="451.0" y="1095" font-size="13.5" fill="#0000B3" font-weight="bold" text-anchor="middle">:9100</text>
+<rect x="926" y="851" width="470" height="266" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="922" y="846" width="470" height="266" rx="14" fill="#FFFFFF" stroke="#0000B3" stroke-width="2.5" opacity="1"/>
+<rect x="922" y="846" width="470" height="44" rx="14" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="922" y="876" width="470" height="14" rx="0" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="938" y="875" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">API gate</text>
+<text x="1378" y="875" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">L4 · api/</text>
+<text x="938" y="918" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">FastAPI · TLS · viewer / operator</text>
+<text x="938" y="941" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">refusals 401 · 409 · 403 (logged)</text>
+<text x="938" y="964" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">integrity 4A: unsigned write</text>
+<text x="938" y="987" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">integrity 4B: current vs feeder</text>
+<text x="938" y="1010" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">actions: propose → confirm → execute</text>
+<text x="938" y="1033" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">fleet manager: add / remove vPLC</text>
+<rect x="938" y="1078" width="54.0" height="24" rx="12" fill="#0000B3" stroke="#0000B3" stroke-width="1.5" opacity="0.14"/>
+<text x="965.0" y="1095" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">:8088</text>
+<rect x="1440" y="851" width="300" height="266" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="1436" y="846" width="300" height="266" rx="14" fill="#FFFFFF" stroke="#0000B3" stroke-width="2.5" opacity="1"/>
+<rect x="1436" y="846" width="300" height="44" rx="14" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="1436" y="876" width="300" height="14" rx="0" fill="#0000B3" stroke="none" stroke-width="0" opacity="1"/>
+<text x="1452" y="875" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Narrator</text>
+<text x="1722" y="875" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">explains, never decides</text>
+<text x="1452" y="918" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">local Ollama LLM</text>
+<text x="1452" y="941" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">gemma4 e4b (on box)</text>
+<text x="1452" y="964" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">turns the verdict into</text>
+<text x="1452" y="987" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">plain words only</text>
+<text x="1452" y="1010" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">fallback: fixed template</text>
+<path d="M1085,736 L1085,786 L214,786 L214,842" fill="none" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<rect x="428.45" y="770" width="83.10000000000001" height="23" rx="11" fill="#FFFFFF" stroke="#5A5F73" stroke-width="1.2" opacity="1"/>
+<text x="470" y="787" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">every 5 s</text>
+<path d="M364,979 L404,979" fill="none" stroke="#0000B3" stroke-width="2.6" marker-end="url(#eb)"/>
+<path d="M878,979 L918,979" fill="none" stroke="#0000B3" stroke-width="2.6" marker-end="url(#eb)"/>
+<path d="M1392,979 L1432,979" fill="none" stroke="#0000B3" stroke-width="2.6" marker-end="url(#eb)" marker-start="url(#sb)"/>
+<rect x="40" y="1182" width="1720" height="246" rx="20" fill="#F0FAF3" stroke="#1E9E4A" stroke-width="2" stroke-dasharray="10 6" opacity="1"/>
+<rect x="62" y="1165" width="191.39999999999998" height="34" rx="17" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<text x="157.7" y="1188" font-size="17" fill="#FFFFFF" font-weight="bold" text-anchor="middle">4 · SERVE + HUMAN</text>
+<rect x="68" y="1227" width="360" height="182" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="64" y="1222" width="360" height="182" rx="14" fill="#FFFFFF" stroke="#1E9E4A" stroke-width="2.5" opacity="1"/>
+<rect x="64" y="1222" width="360" height="44" rx="14" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="64" y="1252" width="360" height="14" rx="0" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<text x="80" y="1251" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Grafana</text>
+<text x="410" y="1251" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">ns observability</text>
+<text x="80" y="1294" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">plant + PSI dashboards</text>
+<text x="80" y="1317" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">reads Prometheus + Loki</text>
+<text x="80" y="1340" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">history for engineers</text>
+<rect x="472" y="1227" width="470" height="182" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="468" y="1222" width="470" height="182" rx="14" fill="#FFFFFF" stroke="#1E9E4A" stroke-width="2.5" opacity="1"/>
+<rect x="468" y="1222" width="470" height="44" rx="14" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="468" y="1252" width="470" height="14" rx="0" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<text x="484" y="1251" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Operator console</text>
+<text x="924" y="1251" font-size="14" fill="#FFFFFF" font-weight="normal" text-anchor="end">dashboard/</text>
+<text x="484" y="1294" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">Next.js · ISA-101 style · HTTPS</text>
+<text x="484" y="1317" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">assets + event log · plant map</text>
+<text x="484" y="1340" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">verdict · actions · fleet tab</text>
+<rect x="484" y="1370" width="62.599999999999994" height="24" rx="12" fill="#1E9E4A" stroke="#1E9E4A" stroke-width="1.5" opacity="0.14"/>
+<text x="515.3" y="1387" font-size="13.5" fill="#1A1A2E" font-weight="bold" text-anchor="middle">:30443</text>
+<rect x="986" y="1227" width="330" height="182" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="982" y="1222" width="330" height="182" rx="14" fill="#1E9E4A" stroke="#1E9E4A" stroke-width="2.5" opacity="1"/>
+<rect x="982" y="1222" width="330" height="44" rx="14" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="982" y="1252" width="330" height="14" rx="0" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<text x="998" y="1251" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Operator</text>
+<text x="998" y="1294" font-size="16.5" fill="#FFFFFF" font-weight="bold" text-anchor="start">a human decides</text>
+<text x="998" y="1317" font-size="16.5" fill="#FFFFFF" font-weight="normal" text-anchor="start">Confirm and execute</text>
+<text x="998" y="1340" font-size="16.5" fill="#FFFFFF" font-weight="normal" text-anchor="start">or leave it alone</text>
+<rect x="1360" y="1227" width="380" height="182" rx="14" fill="#000" stroke="none" stroke-width="0" opacity="0.08"/>
+<rect x="1356" y="1222" width="380" height="182" rx="14" fill="#FFFFFF" stroke="#1E9E4A" stroke-width="2.5" opacity="1"/>
+<rect x="1356" y="1222" width="380" height="44" rx="14" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<rect x="1356" y="1252" width="380" height="14" rx="0" fill="#1E9E4A" stroke="none" stroke-width="0" opacity="1"/>
+<text x="1372" y="1251" font-size="19" fill="#FFFFFF" font-weight="bold" text-anchor="start">Ledger</text>
+<text x="1372" y="1294" font-size="16.5" fill="#1A1A2E" font-weight="bold" text-anchor="start">SHA-256 hash chain</text>
+<text x="1372" y="1317" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">every verdict, action, refusal</text>
+<text x="1372" y="1340" font-size="16.5" fill="#1A1A2E" font-weight="normal" text-anchor="start">edit history → chain breaks</text>
+<path d="M1000,1112 L1000,1160 L703,1160 L703,1218" fill="none" stroke="#0000B3" stroke-width="2.6" marker-end="url(#eb)"/>
+<rect x="808.45" y="1144" width="83.10000000000001" height="23" rx="11" fill="#FFFFFF" stroke="#0000B3" stroke-width="1.2" opacity="1"/>
+<text x="850" y="1161" font-size="13.5" fill="#0000B3" font-weight="bold" text-anchor="middle">HTTPS API</text>
+<path d="M938,1313 L978,1313" fill="none" stroke="#1E9E4A" stroke-width="2.6" marker-end="url(#en)"/>
+<path d="M1147,1222 L1147,1116" fill="none" stroke="#FF9C00" stroke-width="2.6" marker-end="url(#ea)"/>
+<rect x="1113.35" y="1152" width="67.30000000000001" height="23" rx="11" fill="#FFFFFF" stroke="#FF9C00" stroke-width="1.2" opacity="1"/>
+<text x="1147" y="1169" font-size="13.5" fill="#FF9C00" font-weight="bold" text-anchor="middle">confirm</text>
+<path d="M1300,1112 L1300,1160 L1546,1160 L1546,1218" fill="none" stroke="#0000B3" stroke-width="2.6" marker-end="url(#eb)"/>
+<rect x="1378.7" y="1144" width="122.60000000000001" height="23" rx="11" fill="#FFFFFF" stroke="#0000B3" stroke-width="1.2" opacity="1"/>
+<text x="1440" y="1161" font-size="13.5" fill="#0000B3" font-weight="bold" text-anchor="middle">every decision</text>
+<path d="M1300,846 L1300,766 L620,766 L620,740" fill="none" stroke="#FF9C00" stroke-width="3.4" marker-end="url(#ea)"/>
+<rect x="896.0" y="750" width="328.0" height="23" rx="11" fill="#FFFFFF" stroke="#FF9C00" stroke-width="1.2" opacity="1"/>
+<text x="1060" y="767" font-size="13.5" fill="#FF9C00" font-weight="bold" text-anchor="middle">write ONE setpoint (e.g. derate press-1)</text>
+<circle cx="410" cy="190" r="15" fill="#FF9C00" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="410" y="196" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">1</text>
+<circle cx="356" cy="500" r="15" fill="#FF9C00" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="356" y="506" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">2</text>
+<circle cx="64" cy="846" r="15" fill="#FF9C00" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="64" y="852" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">3</text>
+<circle cx="408" cy="846" r="15" fill="#FF9C00" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="408" y="852" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">4</text>
+<circle cx="922" cy="846" r="15" fill="#FF9C00" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="922" y="852" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">5</text>
+<circle cx="982" cy="1222" r="15" fill="#FF9C00" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="982" y="1228" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">6</text>
+<circle cx="760" cy="766" r="15" fill="#FF9C00" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="760" y="772" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">7</text>
+<circle cx="830" cy="190" r="15" fill="#FF9C00" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="830" y="196" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">8</text>
+<rect x="40" y="1470" width="1720" height="226" rx="18" fill="#FFFFFF" stroke="#D5D9E8" stroke-width="1.5" opacity="1"/>
+<text x="64" y="1506" font-size="20" fill="#1A1A2E" font-weight="bold" text-anchor="start">The act loop, measured (Scenario PS1, proof run 3)</text>
+<circle cx="79" cy="1546" r="15" fill="#FF9C00"/>
+<text x="79" y="1552" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">1</text>
+<text x="104" y="1552" font-size="17" fill="#1A1A2E" font-weight="bold" text-anchor="start">Fault</text>
+<text x="64" y="1578" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">press-1 current 42.9</text>
+<text x="64" y="1597" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">→ 85.3 A</text>
+<path d="M254,1546 L270,1546" fill="none" stroke="#FF9C00" stroke-width="2" marker-end="url(#ea)"/>
+<circle cx="291" cy="1546" r="15" fill="#FF9C00"/>
+<text x="291" y="1552" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">2</text>
+<text x="316" y="1552" font-size="17" fill="#1A1A2E" font-weight="bold" text-anchor="start">Sense</text>
+<text x="276" y="1578" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">rail psu-a sags 360 →</text>
+<text x="276" y="1597" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">344 V</text>
+<path d="M466,1546 L482,1546" fill="none" stroke="#FF9C00" stroke-width="2" marker-end="url(#ea)"/>
+<circle cx="503" cy="1546" r="15" fill="#FF9C00"/>
+<text x="503" y="1552" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">3</text>
+<text x="528" y="1552" font-size="17" fill="#1A1A2E" font-weight="bold" text-anchor="start">Window</text>
+<text x="488" y="1578" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">all signals, every 5</text>
+<text x="488" y="1597" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">s</text>
+<path d="M678,1546 L694,1546" fill="none" stroke="#FF9C00" stroke-width="2" marker-end="url(#ea)"/>
+<circle cx="715" cy="1546" r="15" fill="#FF9C00"/>
+<text x="715" y="1552" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">4</text>
+<text x="740" y="1552" font-size="17" fill="#1A1A2E" font-weight="bold" text-anchor="start">Verdict</text>
+<text x="700" y="1578" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">root cause press-1 ·</text>
+<text x="700" y="1597" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">80.3 s</text>
+<path d="M890,1546 L906,1546" fill="none" stroke="#FF9C00" stroke-width="2" marker-end="url(#ea)"/>
+<circle cx="927" cy="1546" r="15" fill="#FF9C00"/>
+<text x="927" y="1552" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">5</text>
+<text x="952" y="1552" font-size="17" fill="#1A1A2E" font-weight="bold" text-anchor="start">Explain</text>
+<text x="912" y="1578" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">narrator + proposed</text>
+<text x="912" y="1597" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">derate</text>
+<path d="M1102,1546 L1118,1546" fill="none" stroke="#FF9C00" stroke-width="2" marker-end="url(#ea)"/>
+<circle cx="1139" cy="1546" r="15" fill="#FF9C00"/>
+<text x="1139" y="1552" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">6</text>
+<text x="1164" y="1552" font-size="17" fill="#1A1A2E" font-weight="bold" text-anchor="start">Confirm</text>
+<text x="1124" y="1578" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">operator clicks</text>
+<text x="1124" y="1597" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">Confirm</text>
+<path d="M1314,1546 L1330,1546" fill="none" stroke="#FF9C00" stroke-width="2" marker-end="url(#ea)"/>
+<circle cx="1351" cy="1546" r="15" fill="#FF9C00"/>
+<text x="1351" y="1552" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">7</text>
+<text x="1376" y="1552" font-size="17" fill="#1A1A2E" font-weight="bold" text-anchor="start">Write</text>
+<text x="1336" y="1578" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">one setpoint over the</text>
+<text x="1336" y="1597" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">PLC protocol</text>
+<path d="M1526,1546 L1542,1546" fill="none" stroke="#FF9C00" stroke-width="2" marker-end="url(#ea)"/>
+<circle cx="1563" cy="1546" r="15" fill="#FF9C00"/>
+<text x="1563" y="1552" font-size="16" fill="#FFFFFF" font-weight="bold" text-anchor="middle">8</text>
+<text x="1588" y="1552" font-size="17" fill="#1A1A2E" font-weight="bold" text-anchor="start">Relief</text>
+<text x="1548" y="1578" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">85.3 → 45.0 A · 344.4</text>
+<text x="1548" y="1597" font-size="14.5" fill="#5A5F73" font-weight="normal" text-anchor="start">→ 359.6 V</text>
+<rect x="64" y="1647" width="22" height="20" rx="5" fill="#FFFFFF" stroke="#FF9C00" stroke-width="2.5" opacity="1"/>
+<text x="94" y="1662" font-size="15" fill="#1A1A2E" font-weight="normal" text-anchor="start">simulated plant</text>
+<rect x="250.0" y="1647" width="22" height="20" rx="5" fill="#FFFFFF" stroke="#12C6B3" stroke-width="2.5" opacity="1"/>
+<text x="280.0" y="1662" font-size="15" fill="#1A1A2E" font-weight="normal" text-anchor="start">collect</text>
+<rect x="368.8" y="1647" width="22" height="20" rx="5" fill="#FFFFFF" stroke="#0000B3" stroke-width="2.5" opacity="1"/>
+<text x="398.8" y="1662" font-size="15" fill="#1A1A2E" font-weight="normal" text-anchor="start">decide</text>
+<rect x="479.20000000000005" y="1647" width="22" height="20" rx="5" fill="#0000B3" stroke="#0000B3" stroke-width="2.5" opacity="1"/>
+<text x="509.20000000000005" y="1662" font-size="15" fill="#1A1A2E" font-weight="normal" text-anchor="start">deterministic core</text>
+<rect x="690.4000000000001" y="1647" width="22" height="20" rx="5" fill="#FFFFFF" stroke="#1E9E4A" stroke-width="2.5" opacity="1"/>
+<text x="720.4000000000001" y="1662" font-size="15" fill="#1A1A2E" font-weight="normal" text-anchor="start">serve + human</text>
+<rect x="859.6000000000001" y="1647" width="22" height="20" rx="5" fill="#FFFFFF" stroke="#D7263D" stroke-width="2.5" opacity="1"/>
+<text x="889.6000000000001" y="1662" font-size="15" fill="#1A1A2E" font-weight="normal" text-anchor="start">test / attack</text>
+<line x1="1038.8000000000002" y1="1657" x2="1078.8000000000002" y2="1657" stroke="#FF9C00" stroke-width="3.4" marker-end="url(#ea)"/>
+<text x="1086.8000000000002" y="1662" font-size="15" fill="#1A1A2E" font-weight="normal" text-anchor="start">act loop (needs human confirm)</text>
+<line x1="1358.8000000000002" y1="1657" x2="1398.8000000000002" y2="1657" stroke="#5A5F73" stroke-width="2.6" marker-end="url(#eg)"/>
+<text x="1406.8000000000002" y="1662" font-size="15" fill="#1A1A2E" font-weight="normal" text-anchor="start">data flow</text>
+</svg>

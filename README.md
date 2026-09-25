@@ -9,6 +9,14 @@ learned baselines and attributes root cause across declared shared media (witnes
 evidence, threshold-free). It also forecasts failures (OOM and thermal-trip ETAs) and narrates the
 verdict. The simulated substrate is labeled as such everywhere. The inference on top of it is real.
 
+## Architecture
+
+<p align="center">
+  <a href="docs/images/visr-architecture.svg">
+    <img src="docs/images/visr-architecture.svg" alt="VISR whole-system flow: plant floor, collect, decide, serve and human, with the measured act loop" width="100%">
+  </a>
+</p>
+
 ## Layout
 
 | Path | What |
