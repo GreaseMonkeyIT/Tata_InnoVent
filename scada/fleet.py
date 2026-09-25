@@ -28,6 +28,7 @@ import tags
 NS = "fleet"
 NAME_RE = re.compile(r"^plc-[a-z0-9]([-a-z0-9]{0,16}[a-z0-9])?\Z")    # \Z: no trailing newline
 PART_RE = re.compile(r"^[A-Za-z0-9_-]{1,63}\Z")
+MAP_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}\Z")             # protocol.map, a file name
 PROTOCOL_KINDS = {"modbus": 502, "s7comm": 102}         # kind -> default SCADA port
 DIRECTIONS = ("in", "out", "setpoint", "system")
 MAX_MACHINES = 8
@@ -141,6 +142,13 @@ def parse_enrollment(body) -> dict:
     else:
         protocol["rack"] = protocol["slot"] = protocol["db"] = None
         protocol["unit"] = _int(p.get("unit"), "protocol.unit", 0, 255, 1)
+    # Optional register map (drivers/regmap.py): regmaps/<map>.yaml says where each slot
+    # lives on a vendor's PLC. Absent means the fixed FLEET.md layout, as before.
+    pmap = p.get("map")
+    if pmap is not None:
+        if not isinstance(pmap, str) or not MAP_RE.match(pmap):
+            raise EnrollError("protocol.map must match ^[a-z0-9][a-z0-9._-]{0,63}$")
+        protocol["map"] = pmap
 
     t = body.get("task") or {}
     if not isinstance(t, dict):
@@ -417,3 +425,4 @@ def prom_text(snaps: list[dict]) -> str:
         good = sum(1 for r in s["table"] if (aged.get(r["tag"]) or {}).get("quality") == "GOOD")
         lines.append(f"scada_tags_good{lab} {good}")
     return "\n".join(lines) + "\n" if lines else ""
+    

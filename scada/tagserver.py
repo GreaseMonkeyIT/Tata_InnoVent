@@ -46,6 +46,7 @@ from urllib.parse import unquote, urlsplit
 import fleet
 import tags
 from drivers import make_driver
+from drivers.regmap import RegMapError
 
 PLC_HOST = os.environ.get("PLC_HOST", "openplc.plant.svc")
 PLC_PORT = int(os.environ.get("PLC_PORT", "502"))
@@ -286,8 +287,12 @@ def fleet_enroll(body, token: str | None, now: float | None = None) -> tuple[int
             old_entry["reg"] = reg                       # a heartbeat: keep the thread
             old_entry["last_enroll_at"] = now
             return 200, {"enrolled": True, "tags": len(table), "poll": "kept"}
+        try:
+            driver = make_driver(reg["protocol"])        # loads and checks protocol.map
+        except RegMapError as e:
+            return 400, {"enrolled": False, "error": str(e)}
         entry = {
-            "reg": reg, "table": table, "key": key, "driver": make_driver(reg["protocol"]),
+            "reg": reg, "table": table, "key": key, "driver": driver,
             "stop": threading.Event(), "thread": None, "tags": {},
             "enrolled_at": now, "last_enroll_at": now, "first_good_at": None,
             "last_good_at": None, "poll_rtt_ms": None, "connected": False, "poll_error": None,
@@ -590,3 +595,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

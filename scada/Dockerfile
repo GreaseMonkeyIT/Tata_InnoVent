@@ -6,5 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY tags.py fleet.py tagserver.py ./
 COPY drivers/ ./drivers/
+# Register maps, one YAML per vendor/model (drivers/regmap.py). REGMAP_DIR overrides the folder.
+COPY regmaps/ ./regmaps/
 EXPOSE 9300
 CMD ["python", "-u", "tagserver.py"]

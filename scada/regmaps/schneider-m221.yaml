@@ -1,0 +1,43 @@
+# Example register map: a Schneider Electric Modicon M221 running one 2-machine cell,
+# read over Modbus TCP (port 502). The addresses follow a typical exchange table written
+# 1-based, as many Schneider tables are ("register 101" = protocol address 100), so base: 1.
+# Adjust address/type/scale to your own program's Modbus mapping.
+#
+# slot  = the VISR image slot the tag table reads, so tag names stay the same (FLEET.md 3.1)
+# scale = image value = PLC value x scale. The tag table divides AMPS/TEMP/VOLTS/THROUGHPUT
+#         by 10. This program sends current in 0.01 A (4230 = 42.30 A), so scale 0.1 gives
+#         423 in the image and 42.3 A in the tag. Temperature and volts already come in 0.1.
+vendor: Schneider Electric
+model: Modicon M221 (TM221CE24T), example program
+protocol: modbus
+defaults:
+  base: 1
+  area: holding_register
+  type: INT16
+  word_order: big
+  scale: 1
+read:
+  max_gap: 0                  # read only mapped registers (safe: no illegal-address errors)
+points:
+  # machine 0 ------------------------------------------------------------------
+  - { slot: "%IW0", signal: AMPS,       address: 101, scale: 0.1 }
+  - { slot: "%IW1", signal: TEMP,       address: 102 }
+  - { slot: "%IW2", signal: VOLTS,      address: 103, type: UINT16 }
+  - { slot: "%IW3", signal: THROUGHPUT, address: 104 }
+  # machine 1 ------------------------------------------------------------------
+  - { slot: "%IW4", signal: AMPS,       address: 105, scale: 0.1 }
+  - { slot: "%IW5", signal: TEMP,       address: 106 }
+  - { slot: "%IW6", signal: VOLTS,      address: 107, type: UINT16 }
+  - { slot: "%IW7", signal: THROUGHPUT, address: 108 }
+  # status bits -----------------------------------------------------------------
+  - { slot: "%IX0.0", signal: READY, area: discrete_input, address: 1, type: BOOL }
+  - { slot: "%IX0.1", signal: READY, area: discrete_input, address: 2, type: BOOL }
+  - { slot: "%QX0.0", signal: RUN,   area: coil,           address: 1, type: BOOL }
+  - { slot: "%QX0.1", signal: RUN,   area: coil,           address: 2, type: BOOL }
+  # an extra meter value: cell power as FLOAT32, low word first (CDAB) ----------
+  # (feeds an io_extra tag on %MW20, e.g. {asset: cell, signal: POWER_KW, address: "%MW20"})
+  - { slot: "%MW20", signal: POWER_KW, address: 201, type: FLOAT32, word_order: little }
+  # setpoints VISR may write -----------------------------------------------------
+  - { slot: "%MW8",  signal: CELL_ENABLE, area: coil, address: 17, type: BOOL, direction: read_write }
+  - { slot: "%MW10", signal: DERATE_PCT,  address: 301, direction: read_write }
+  - { slot: "%MW11", signal: DERATE_PCT,  address: 302, direction: read_write }

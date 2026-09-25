@@ -13,6 +13,10 @@ The image is a dict of five lists, 64 entries each:
 
 A driver serializes its own protocol exchanges with a lock, so the poll thread and an
 HTTP write can share one driver. A failed exchange drops the connection and raises.
+
+Where each slot lives on the PLC comes from a register map (drivers/regmap.py). An
+enrollment names one with protocol.map (a file regmaps/<map>.yaml, or REGMAP_DIR/<map>.yaml).
+With no map, the driver uses the fixed FLEET.md layout, exactly as before register maps.
 """
 from __future__ import annotations
 
@@ -40,16 +44,30 @@ def check_mw(index, value) -> tuple[int, int]:
     return index, value
 
 
+def load_protocol_map(protocol: dict):
+    """The RegMap named by protocol.map, or None for the default layout. Raise RegMapError
+    when the file is missing or invalid, or is written for another protocol."""
+    name = protocol.get("map")
+    if not name:
+        return None
+    from .regmap import RegMapError, load_map, map_path
+    m = load_map(map_path(name))
+    if m.protocol != protocol.get("kind"):
+        raise RegMapError(f"{m.source}: a {m.protocol} map cannot drive a "
+                          f"{protocol.get('kind')} PLC")
+    return m
+
+
 def make_driver(protocol: dict):
-    """Return the driver for an enrolled protocol block {kind, host, port, ...}."""
+    """Return the driver for an enrolled protocol block {kind, host, port, map?, ...}."""
     kind = protocol.get("kind")
     if kind == "modbus":
         from .modbus import ModbusDriver
         return ModbusDriver(protocol["host"], port=protocol["port"],
-                            unit=protocol.get("unit") or 1)
+                            unit=protocol.get("unit") or 1, regmap=load_protocol_map(protocol))
     if kind == "s7comm":
         from .s7 import S7Driver
         return S7Driver(protocol["host"], port=protocol["port"], rack=protocol.get("rack") or 0,
                         slot=protocol.get("slot") if protocol.get("slot") is not None else 1,
-                        db=protocol.get("db") or 1)
+                        db=protocol.get("db") or 1, regmap=load_protocol_map(protocol))
     raise ValueError(f"unknown protocol kind {kind!r}")

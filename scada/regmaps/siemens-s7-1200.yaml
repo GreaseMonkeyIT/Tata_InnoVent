@@ -1,0 +1,45 @@
+# Example register map: a Siemens S7-1200 running one 2-machine cell.
+# The PLC program keeps process values as REAL (FLOAT32) in DB10 and the operator
+# setpoints in DB20. Adjust db/offset to your own program; check them in TIA Portal
+# (DB properties > "Optimized block access" OFF shows the offset column).
+#
+# PLC requirements (S7-1200 / S7-1500):
+#   - Protection & Security > Connection mechanisms: "Permit access with PUT/GET" ON
+#   - DB10 and DB20: "Optimized block access" OFF (otherwise byte offsets do not exist)
+#
+# slot  = the VISR image slot the tag table reads, so tag names stay the same
+#         (%IW0..3 = machine 0 AMPS/TEMP/VOLTS/THROUGHPUT, %IW4..7 = machine 1, FLEET.md 3.1)
+# scale = image value = PLC value x scale. The tag table divides AMPS/TEMP/VOLTS/THROUGHPUT
+#         by 10, so a REAL of 42.3 A becomes 423 in the image and 42.3 A again in the tag.
+vendor: Siemens
+model: S7-1200 (CPU 1214C), example program
+protocol: s7comm
+defaults:
+  area: db
+  db: 10
+  word_order: big            # S7 is big-endian; REAL is ABCD
+  scale: 10
+points:
+  # machine 0 (press-1) -------------------------------------------------------
+  - { slot: "%IW0", signal: AMPS,       offset: 0,  type: FLOAT32 }
+  - { slot: "%IW1", signal: TEMP,       offset: 4,  type: FLOAT32 }
+  - { slot: "%IW2", signal: VOLTS,      offset: 8,  type: FLOAT32 }
+  - { slot: "%IW3", signal: THROUGHPUT, offset: 12, type: FLOAT32 }
+  # machine 1 (press-2) -------------------------------------------------------
+  - { slot: "%IW4", signal: AMPS,       offset: 16, type: FLOAT32 }
+  - { slot: "%IW5", signal: TEMP,       offset: 20, type: FLOAT32 }
+  - { slot: "%IW6", signal: VOLTS,      offset: 24, type: FLOAT32 }
+  - { slot: "%IW7", signal: THROUGHPUT, offset: 28, type: FLOAT32 }
+  # status bits: READY from the input image, RUN from the output image ---------
+  - { slot: "%IX0.0", signal: READY, area: input,  offset: 0, bit: 0, type: BOOL }
+  - { slot: "%IX0.1", signal: READY, area: input,  offset: 0, bit: 1, type: BOOL }
+  - { slot: "%QX0.0", signal: RUN,   area: output, offset: 0, bit: 0, type: BOOL }
+  - { slot: "%QX0.1", signal: RUN,   area: output, offset: 0, bit: 1, type: BOOL }
+  # commanded speed, INT in percent -------------------------------------------
+  - { slot: "%QW0", signal: SPEED_PCT, offset: 32, type: INT16, scale: 1 }
+  - { slot: "%QW1", signal: SPEED_PCT, offset: 34, type: INT16, scale: 1 }
+  # setpoints VISR may write (the tag table's writable %MW slots) --------------
+  - { slot: "%MW8",  signal: CELL_ENABLE, db: 20, offset: 0, bit: 0, type: BOOL, scale: 1, direction: read_write }
+  - { slot: "%MW10", signal: DERATE_PCT,  db: 20, offset: 2, type: FLOAT32, scale: 1, direction: read_write }
+  - { slot: "%MW11", signal: DERATE_PCT,  db: 20, offset: 6, type: FLOAT32, scale: 1, direction: read_write }
+  
