@@ -9,6 +9,8 @@
 #   feeder light blue dashed, flow green, load yellow. The current axes start at 0, so sensor noise on
 #   a steady machine stays flat. The voltage axis spans at least 330 to 400 V: rail noise stays flat, and
 #   a Scenario 1 sag (about 17 V) still shows clearly.
+#   panelId 5 = the VISR verdict (LOG-088): root score, the number of findings, and any derate in force.
+#   panelId 6 = the forecast time to the limit per asset. Both read the visr_* series of api /metrics.
 # No "min: 0" on purpose: auto-scale keeps an 8V rail sag or a 3C temp climb visible.
 apiVersion: v1
 kind: ConfigMap
@@ -374,6 +376,198 @@ data:
               },
               "expr": "plant_net_utilization_ratio{pod=\"$asset\"}",
               "legendFormat": "load"
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "VISR verdict: root, findings, derate",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 36
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "axisColorMode": "series",
+                "lineInterpolation": "stepAfter"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "A"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#F2495C"
+                    }
+                  },
+                  {
+                    "id": "custom.axisSoftMin",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.axisSoftMax",
+                    "value": 1
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "B"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#FF9830"
+                    }
+                  },
+                  {
+                    "id": "custom.axisSoftMin",
+                    "value": 0
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byFrameRefID",
+                  "options": "C"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percent"
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#5794F2"
+                    }
+                  },
+                  {
+                    "id": "custom.axisSoftMin",
+                    "value": 0
+                  },
+                  {
+                    "id": "custom.axisSoftMax",
+                    "value": 100
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "visr_root_score",
+              "legendFormat": "root {{asset}}"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "visr_findings",
+              "legendFormat": "findings"
+            },
+            {
+              "refId": "C",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "visr_derate_pct",
+              "legendFormat": "derate {{asset}} %"
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "VISR forecast: time to the limit (s)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 45
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 0,
+                "showPoints": "never",
+                "axisSoftMin": 0
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "visr_forecast_eta_seconds",
+              "legendFormat": "{{asset}} {{signal}}"
             }
           ]
         }

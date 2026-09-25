@@ -425,6 +425,12 @@ waited for CPU, memory or disk. PSI tells you when the computer is struggling, b
 An eBPF tool called Caretta discovers which services talk to which from real network traffic, and the
 console draws that map on the EDGE view.
 
+Prometheus also records what VISR concludes. The API serves the current verdict as series: the root and
+its score, the number of findings, the time left on each forecast card, the causal edges, the open
+integrity findings, and any derate in force. Grafana can then show a fault and the verdict about it on
+one time axis. Prometheus keeps all of this on the slow disk of the edge computer for 30 days, so a
+restart does not erase the history.
+
 ### The aggregator: one window every five seconds
 
 The aggregator (`aggregator/`, written in Go) turns all of this into one input for the engine. Every five

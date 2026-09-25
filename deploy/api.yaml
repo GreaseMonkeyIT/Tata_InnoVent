@@ -82,3 +82,20 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata: { name: api, namespace: aiops }
+---
+# LOG-088: Prometheus scrapes the verdict series from GET /metrics (api/metrics.py) every 5 s. The
+# series name plant assets with the label "asset", so honorLabels stays off. Release label "prom"
+# matches the kube-prometheus-stack serviceMonitorSelector.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api-verdict
+  namespace: aiops
+  labels: { release: prom }
+spec:
+  selector: { matchLabels: { app: api } }
+  namespaceSelector: { matchNames: [aiops] }
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 5s

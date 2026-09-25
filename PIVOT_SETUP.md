@@ -97,8 +97,9 @@ kubectl -n aiops scale deploy/correlation-engine --replicas=1
 ## 3. Prepare the 64Gi/5Gi volumes (with claimRef stickiness)
 
 ```bash
-# 3.1 lay out the directories on the slow HDD
-sudo mkdir -p /mnt/slowdisk/historian /mnt/slowdisk/plant-shared
+# 3.1 lay out the directories on the slow HDD. Prometheus runs as user 1000, group 2000 (LOG-088).
+sudo mkdir -p /mnt/slowdisk/historian /mnt/slowdisk/plant-shared /mnt/slowdisk/prometheus
+sudo chown 1000:2000 /mnt/slowdisk/prometheus && sudo chmod 0775 /mnt/slowdisk/prometheus
 df -h /mnt/slowdisk                     # sanity: the HDD is mounted
 
 # 3.2 apply the PVs. claimRef is baked in the manifest, so historian-pv can ONLY
@@ -107,7 +108,8 @@ df -h /mnt/slowdisk                     # sanity: the HDD is mounted
 cd "$REPO"
 NODE=$(kubectl get node -o jsonpath='{.items[0].metadata.labels.kubernetes\.io/hostname}')
 sed "s/<NODE_NAME>/$NODE/g" deploy/slowdisk.yaml | kubectl apply -f -
-kubectl get pv                          # CLAIM column pre-set to plant/...
+kubectl get pv                          # CLAIM column pre-set to plant/... and observability/prometheus-...
+# plant-shared has no user yet. The claim binds, and no pod mounts it.
 ```
 
 ## 4. Build and push the images (local registry, no sudo per deploy)
@@ -239,6 +241,22 @@ kubectl -n observability set env deploy/prom-grafana -c grafana \
   GF_SERVER_ROOT_URL='%(protocol)s://%(domain)s:%(http_port)s/grafana/' GF_SERVER_SERVE_FROM_SUB_PATH=true
 kubectl -n observability rollout status deploy/prom-grafana --timeout=180s
 curl -s http://127.0.0.1:30030/grafana/api/health        # expect "database": "ok"
+
+# 5.2c Prometheus on the slow disk, 30 days (LOG-088). On an existing install only: a fresh install
+#      gets the same storage from skctl (values/prometheus-storage.yaml). The script stops during a
+#      soak or a proof run. apply asks for sudo once, so run it in a terminal, not in screen.
+#      The Prometheus pod starts again once. The series of the last 12 h are lost, and the engine is
+#      noisy for a few minutes while its window fills again. Never run it during a recording.
+bash deploy/prometheus-storage.sh check      # read-only
+bash deploy/prometheus-storage.sh apply      # rolls back by itself when the claim or the pod fails
+
+# 5.2d the verdict series (LOG-088): GET /metrics on the api, scraped by ServiceMonitor api-verdict.
+#      Grafana panels 5 and 6 of skn-plant plot them. The api pod starts again once.
+make push ONLY=api
+kubectl apply -f deploy/api.yaml
+kubectl -n aiops rollout restart deploy/api && kubectl -n aiops rollout status deploy/api --timeout=180s
+kubectl apply -f deploy/grafana-plant-dashboard.yaml
+bash deploy/prometheus-storage.sh verify     # expect VERIFY PASS and "the verdict series arrive"
 
 # 5.3 the plant: namespace, PVCs (bind to the claimRef'd PVs), sim, historian, ServiceMonitor
 kubectl apply -f plant/deploy.yaml

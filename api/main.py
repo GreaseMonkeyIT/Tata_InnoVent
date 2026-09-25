@@ -26,9 +26,11 @@ import urllib.request
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 import fleet
 import integrity
+import metrics
 import security
 
 ENGINE = os.environ.get("ENGINE_URL", "http://correlation-engine.aiops.svc:9100").rstrip("/")
@@ -1372,3 +1374,17 @@ def integrity_view():
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     return {"ok": True}
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics():
+    """LOG-088: the verdict as Prometheus series (api/metrics.py), read-only. The ServiceMonitor
+    api-verdict (deploy/api.yaml) scrapes it every 5 s. An engine that does not answer gives
+    visr_engine_up 0 and no verdict series, never an error."""
+    try:
+        g = graph()
+    except HTTPException:
+        g = None
+    derates = fleet.active_derates(_scada_fleet())
+    return PlainTextResponse(metrics.exposition(g, _integrity_findings(), derates),
+                             media_type="text/plain; version=0.0.4")

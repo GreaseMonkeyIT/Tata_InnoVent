@@ -1734,3 +1734,45 @@ are fired from a shell on the box and the console has no fault controls. Build: 
 1,459 words, validator "All validations PASSED". Backups: `stage2_build_v2_0923_prelive.py.bak`,
 `SiliconKnights_Tata_VISR_Stage2_v2_0923_prelive.pptx.bak`.
 **Files:** `INNOVENT_LOG.md`. Local only: `Design_PPT/stage2_build.py`, `Design_PPT/stage2_assets/console_s1_live.png`.
+
+**LOG-088 · 2026-09-24 · Prometheus keeps 30 days on the slow disk, and it records the VISR verdict.**
+**Why (operator):** the forge reboot of 24 September erased the Scenario 1 run of 23 September from Grafana.
+Prometheus kept its TSDB in an emptyDir with 12 h retention. The operator asked for the history to stay,
+and for Grafana to show the engine's own signals and the container metrics too.
+**Found:** the slow disk (`/dev/sdb`, 500 GB HDD, `/mnt/slowdisk`) had 431 GB free. It holds the historian
+volume (TimescaleDB, table `plant_tags`, 64 tags since 15 September, 3.3 GB, no retention limit) and the 5 Gi
+`plant-shared` volume, which no pod mounts. Prometheus already scraped the container metrics (cAdvisor at
+5 s, kube-state-metrics, node-exporter), the plant tags, and the fleet series. Nothing exported the verdict:
+the engine keeps it in SQLite and serves it only as JSON.
+**Change:**
+- `api/metrics.py` + `GET /metrics` on the api: the current verdict as Prometheus gauges. `visr_engine_up`,
+  `visr_root_active`, `visr_root_score{asset}`, `visr_findings`, `visr_finding{asset,class}`,
+  `visr_forecast_eta_seconds{asset,signal}`, `visr_forecast_headroom_ratio`, `visr_edge_r{src,dst,signal}`,
+  `visr_blast_eta_seconds{asset}`, `visr_case_match{register}`, `visr_integrity_open{kind}`,
+  `visr_derate_pct{asset,plc}`. The label is `asset`, not `pod`, so it does not collide with the scrape
+  label. An engine that does not answer gives `visr_engine_up 0`, not an error. The route is read-only
+  and needs no token. The engine code does not change.
+- `deploy/api.yaml`: ServiceMonitor `api-verdict`, every 5 s.
+- `deploy/grafana-plant-dashboard.yaml`: panel 5 (root score, findings, derate) and panel 6 (forecast
+  time to the limit).
+- `deploy/slowdisk.yaml`: PV `prometheus-pv-slowdisk`, 150Gi on `/mnt/slowdisk/prometheus`, claimRef to the
+  claim that the Prometheus operator makes.
+- `deploy/values/prometheus-storage.yaml`: `retention: 30d`, `retentionSize: 100GB`, the claim template on
+  storage class `slowdisk`. `deploy/skctl` adds it for a fresh install.
+- `deploy/prometheus-storage.sh` (check, apply, verify): helm upgrade with `--reuse-values` plus the overlay,
+  at the chart version that runs (87.5.1). The live release has a scrape job (`l0-fast`) that
+  `values/prometheus.yaml` does not have, so an upgrade with the repo values file would change the scrape
+  configuration. apply stops during a soak or a proof run, and it runs helm rollback when the claim does
+  not bind or the pod does not start.
+**Verified:** api tests 66 pass (7 unit tests of `metrics.py`, 3 route tests). On forge, read-only: `check`
+passes, and a server-side dry run of the upgrade changes only the Prometheus resource (retention, size cap,
+storage). The Grafana Deployment does not change, so the `/grafana/` sub-path from `kubectl set env` stays.
+**Not deployed.** The operator runs PIVOT_SETUP 5.2c and 5.2d after the recording. The Prometheus pod and
+the api pod each start again once, and the series of the last 12 h are lost.
+**Also on 24 September (deck, local):** after the reboot, a Scenario 1 run on forge for a Grafana capture:
+fire 13:15:32, derate proposal 85 s later, Execute 13:16:57, reset all and restore 13:20:57 (actor
+fault-shell). Panel 4 for press-1 over 13:13 to 13:22 replaces the plant model chart on the demo slide.
+**Files:** `api/metrics.py`, `api/main.py`, `api/tests/test_metrics.py`, `api/tests/test_metrics_api.py`,
+`deploy/api.yaml`, `deploy/grafana-plant-dashboard.yaml`, `deploy/slowdisk.yaml`,
+`deploy/values/prometheus-storage.yaml`, `deploy/values/prometheus.yaml`, `deploy/skctl`,
+`deploy/prometheus-storage.sh`, `PIVOT_SETUP.md`, `BOOK.md`, `INNOVENT_LOG.md`.

@@ -1,0 +1,19 @@
+# LOG-088: Prometheus keeps its TSDB on the slow disk (PV prometheus-pv-slowdisk, deploy/slowdisk.yaml)
+# for 30 days or 100 GB, whichever comes first. Before this, the TSDB was an emptyDir with 12 h
+# retention, and a reboot erased every plant, container, and verdict series.
+# Use it as an overlay: deploy/prometheus-storage.sh runs helm upgrade with --reuse-values plus this
+# file, so the live scrape jobs do not change. A fresh install adds it after values/prometheus.yaml.
+prometheus:
+  prometheusSpec:
+    retention: 30d
+    retentionSize: 100GB
+    storageSpec:
+      volumeClaimTemplate:
+        metadata:
+          name: prometheus-prom-kube-prometheus-stack-prometheus-db
+        spec:
+          storageClassName: slowdisk
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 150Gi

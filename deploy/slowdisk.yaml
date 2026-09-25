@@ -6,6 +6,9 @@
 # Node prereq (disk already formatted/mounted on the box; dirs recreated by the
 # wipe step in PIVOT_SETUP.md):
 #   /dev/sdb mounted at /mnt/slowdisk; /mnt/slowdisk/{historian,plant-shared} exist
+#   /mnt/slowdisk/prometheus exists, owner 1000:2000 (the Prometheus pod user and fsGroup)
+# The Prometheus PV (LOG-088) is bound by deploy/prometheus-storage.sh, which makes the
+# directory, applies this file, and upgrades the helm release. plant-shared has no user yet.
 # Apply (fills the node name in):
 #   NODE=$(kubectl get node -o jsonpath='{.items[0].metadata.labels.kubernetes\.io/hostname}')
 #   sed "s/<NODE_NAME>/$NODE/g" deploy/slowdisk.yaml | kubectl apply -f -
@@ -51,6 +54,29 @@ spec:
     name: plant-shared
   local:
     path: /mnt/slowdisk/plant-shared
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - { key: kubernetes.io/hostname, operator: In, values: ["<NODE_NAME>"] }
+---
+# LOG-088: Prometheus TSDB. The operator names the claim <volumeClaimTemplate>-<pod>, so the
+# claimRef below matches deploy/values/prometheus-storage.yaml exactly. Retention stops at 30 days
+# or 100 GB, whichever comes first, so 150Gi leaves room for the WAL and compaction.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: prometheus-pv-slowdisk
+spec:
+  capacity: { storage: 150Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: slowdisk
+  claimRef:
+    namespace: observability
+    name: prometheus-prom-kube-prometheus-stack-prometheus-db-prometheus-prom-kube-prometheus-stack-prometheus-0
+  local:
+    path: /mnt/slowdisk/prometheus
   nodeAffinity:
     required:
       nodeSelectorTerms:

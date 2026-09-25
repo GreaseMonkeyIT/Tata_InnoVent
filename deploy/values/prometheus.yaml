@@ -1,4 +1,5 @@
-# kube-prometheus-stack values - 12h retention, 5s scrape for cadvisor and the eBPF exporters
+# kube-prometheus-stack values - 5s scrape for cadvisor and the eBPF exporters.
+# Retention and storage: values/prometheus-storage.yaml (30 days on the slow disk, LOG-088).
 grafana:
   enabled: true                  # re-enabled (reverses LOG-024); pinned to v11 to avoid the v12 apiserver crashloop
   image:
@@ -26,7 +27,7 @@ prometheus:
     type: NodePort
     nodePort: 30090             # direct PromQL + scrape targets at <node-ip>:30090
   prometheusSpec:
-    retention: 12h
+    retention: 12h              # overridden by values/prometheus-storage.yaml (30d)
     scrapeInterval: 15s
     additionalScrapeConfigs:
       - job_name: cadvisor-fast

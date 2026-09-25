@@ -22,7 +22,7 @@ up() {
     helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
     helm repo update >/dev/null
     helm upgrade --install prom prometheus-community/kube-prometheus-stack \
-      -n observability -f "$HERE/values/prometheus.yaml"
+      -n observability -f "$HERE/values/prometheus.yaml" -f "$HERE/values/prometheus-storage.yaml"   # needs the slowdisk PV (PIVOT_SETUP 3)
     helm upgrade --install loki grafana/loki-stack -n observability -f "$HERE/values/loki.yaml"
     helm upgrade --install alloy grafana/alloy -n observability -f "$HERE/values/alloy.yaml" || echo "  (alloy install issue - logs deferred)"   # logs -> Loki
     # the eBPF collector is flaky (kernel 7.0, chart coordinates) - NON-FATAL so it can never block engine/dashboard deploys (LOG-039)
