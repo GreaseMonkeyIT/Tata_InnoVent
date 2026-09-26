@@ -48,10 +48,12 @@ because the OpenPLC register map depends on it. Cell machines live in CELL_DEVIC
     (SPEED_PCT when RUN, 0 when not RUN) and plant_cell_connected{pod=<cell>}.
 
 Scenario set (SCENARIOS.md sections 2 and 3). Each fault perturbs the model. The symptoms emerge.
-  - PS2: chiller-1 has a motor overload relay (class Overload). It uses no random numbers. The
-    relay heats above 1.02 x rated current and trips at heat 90. The trip latches until /reset.
-    A tripped chiller cuts the loop flow to CHILLER_RESIDUAL_FLOW of nominal. A normal compressor
-    window never trips it. A stuck-on compressor keeps rail B low, and the relay trips.
+  - PS2 (LOG-100): compressor-1's pressure transducer fails low, so its controller keeps it loaded.
+    The receiver vents at the safety valve. The water-cooled compressor puts more heat into loop
+    cool-1 than chiller-1 can remove, the supply water warms, and every cooled machine warms with
+    it. furnace-1 trips first, about 16 min after the fault. The chiller does not trip.
+  - chiller-1 has an IEC 60947-4-1 class 10 overload relay (class Overload) and ANSI 27 undervoltage
+    protection (class Undervoltage). Neither uses random numbers. PS7 stops it on undervoltage.
   - PS3: a field network segment (class Segment, an M/M/1/K queue model). FIELD_SEGMENTS sets
     it: name|talkers|capacity_fps|buffer. Every cell PLC link runs through the first segment.
     The queue is a model. Its delays and drops act on the real Modbus requests of each cell.
@@ -106,18 +108,50 @@ _NAME_RE = re.compile(r"^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$")
 _HOST_RE = re.compile(r"^[A-Za-z0-9]([-A-Za-z0-9.]{0,251}[A-Za-z0-9])?$")
 _IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
-# ---- PS2 (SCENARIOS.md 2.2): the chiller-1 overload relay and the loop it drives. ----
-CHILLER_OL_PICKUP = float(os.environ.get("CHILLER_OL_PICKUP", "1.02"))        # x rated current
-CHILLER_OL_UP_PER_S = float(os.environ.get("CHILLER_OL_UP_PER_S", "1.0"))     # heat gain above pickup
-CHILLER_OL_DOWN_PER_S = float(os.environ.get("CHILLER_OL_DOWN_PER_S", "0.5")) # heat loss below pickup
-CHILLER_OL_TRIP = float(os.environ.get("CHILLER_OL_TRIP", "90"))              # trip level, latched
-CHILLER_RESIDUAL_FLOW = float(os.environ.get("CHILLER_RESIDUAL_FLOW", "0.60"))  # flow share, chiller off
-# 0.45 -> 0.60 on 2026-09-20 (LOG-073). At 0.45 the loop fell to 54 L/min, three cooled machines
-# reached the 78 C latch, and their contactors opened. That unloaded rail B, the sag went away, and
-# the rail hop died before the loop hop was established, which is the PS2 failure. Measured in
-# correlation/tests/ps2_lab.py: the window where the root is compressor-1 AND the loop hop is up
-# grows from 120 s to 180 s, and the trips fall from three machines to one (furnace-1). Above 0.70
-# nothing trips at all, so the trip forecast would predict an event that never arrives.
+# ---- Realism pass (LOG-100). Each value is from a published source or marked a project choice.
+#      The sources are listed in SCENARIOS.md section 12. ----
+# Rails: IEC 60364-5-52 recommends about 4 % steady voltage drop for motor circuits. At full normal
+# load, 0.12 ohm gives about 3.5 % on rail A (111 A) and 2.6 to 3.9 % on rail B. The old 0.35 ohm
+# put rail A at 361 V, 10 % below the 400 V rating, in normal running.
+RAIL_R_OHM = float(os.environ.get("RAIL_R_OHM", "0.12"))
+PF_NOMINAL = 0.85                  # motor power factor for P = sqrt(3) * V * I * PF (project choice)
+# The process cooling water loop cool-1 (project choices within the sourced ranges: an induction coil
+# wants inlet water under 35 C, and process loops run at 25 to 35 C).
+LOOP_T_SETPOINT = float(os.environ.get("LOOP_T_SETPOINT", "28.0"))   # supply water setpoint, C
+LOOP_VOLUME_L = float(os.environ.get("LOOP_VOLUME_L", "150"))       # water in the loop pipes and coolers
+CP_KJ_PER_KG_K = 4.186                                              # water
+# chiller-1: sized for the machines plus the compressor at its normal duty, with a small margin
+# (project choice). Capacity rises a little as the supply warms (a warmer evaporator lifts more).
+CHILLER_CAP_KW = float(os.environ.get("CHILLER_CAP_KW", "46.0"))
+CHILLER_CAP_PER_K = float(os.environ.get("CHILLER_CAP_PER_K", "0.01"))   # share of capacity per K
+CHILLER_HOLD_KW_PER_K = 20.0       # the unit controller holds the setpoint while it has capacity
+CHILLER_RLA_A = 30.0               # rated load amps. The unit limits its current to 100 % RLA.
+CHILLER_ANTI_RECYCLE_S = float(os.environ.get("CHILLER_ANTI_RECYCLE_S", "300"))  # Trane: 5 min start to start
+# IEC 60947-4-1 class 10 thermal overload: no trip at 1.05 x Ir, a trip at 1.2 x Ir, and a trip in
+# 4 to 10 s at 7.2 x Ir from cold. Thermal model: theta' = ((I/Ir)^2 - theta) / tau, trip at 1.125^2.
+# tau = 283 s gives about 7 s at 7.2 x, 234 s at 1.5 x (class 10 limit 240 s), and 598 s at 1.2 x.
+OL_TAU_S = 283.0
+OL_TRIP_THETA = 1.125 ** 2
+# ANSI 27 undervoltage on the chiller supply: stage 1 at 90 %, stage 2 at 85 % of rating (typical
+# stages). The delays are project choices, longer than a motor-start dip as the guidance asks.
+UV_STAGES = ((0.85, 2.0), (0.90, 10.0))
+UV_RESET_FRAC = 0.95
+# compressor-1 air system: load at 6.9 bar, unload at 7.5 bar (Atlas Copco recommends at least
+# 0.6 bar between them). Unloaded it draws 25 % of full-load current (sourced range 15 to 35 %).
+# Water-cooled: about 80 % of its electrical input goes to the cooling water. The safety valve and
+# the fill and demand rates are project choices: 60 s loaded in every 300 s at normal demand.
+AIR_LOAD_BAR = 6.9
+AIR_UNLOAD_BAR = 7.5
+AIR_SAFETY_BAR = 8.5
+AIR_FILL_BAR_S = 0.0125            # receiver pressure rise per s at full delivery, no demand
+AIR_DEMAND_BAR_S = 0.0025          # pressure fall per s from the plant's air demand
+COMP_UNLOADED_FRAC = 0.25
+COMP_HEAT_FRAC = 0.80
+PT_FAIL_BAR = 5.5                  # PS2: the pressure transducer fails and reads this
+# Machine thermal trips, per machine (the OpenPLC interlock). Press hydraulic oil: alarm 80 to 85 C.
+# CNC spindle motor: 80 to 100 C is the usual conservative limit. Induction coil cooling water:
+# at most 55 C. The PLC latches the trip (plc/program.st).
+TRIP_LIMITS = {"press-1": 80.0, "press-2": 80.0, "cnc-1": 80.0, "furnace-1": 55.0}
 
 # ---- PS7 (SCENARIOS.md 2.8): the supply above every rail. A disturbance here reaches every
 #      rail at once, from above the plant load. That is what separates an external cause from
@@ -198,50 +232,141 @@ class Rail:
 
 
 class CoolantLoop:
-    """A shared loop: pump provides flow; machines take shares and dump heat.
-    Degraded pump -> less flow -> everyone's temperature rises (lagged)."""
+    """The process cooling water loop (LOG-100). The pump sets the flow. The chiller removes heat
+    and holds the supply at its setpoint while it has capacity. Heat it cannot remove warms the
+    water in the loop, so the supply temperature rises for every machine on it.
+    - A degraded pump (PS5): less flow, so each machine's cooler gets less water and runs hotter.
+    - More heat than the chiller can remove (PS2), or a stopped chiller (PS7): the supply warms."""
     def __init__(self, name, flow_nominal=120.0):
         self.name, self.flow_nominal = name, flow_nominal
         self.pump_health = 1.0            # 1.0 healthy .. 0.3 badly degraded
         self.flow = flow_nominal
-        self.driver = None                # the chiller that drives the loop (PS2)
+        self.driver = None                # the chiller device that cools the loop
+        self.t_supply = LOOP_T_SETPOINT   # supply water temperature, C
+        self.q_load = 0.0                 # heat into the water this tick, kW
 
-    def step(self):
-        # A tripped driver leaves only the residual flow. One gauss draw per step either way,
-        # so the random stream does not change.
-        scale = CHILLER_RESIDUAL_FLOW if self.driver is not None and self.driver.tripped else 1.0
-        self.flow = max(self.flow_nominal * self.pump_health * scale + random.gauss(0, 0.8), 5.0)
+    def step(self, dt=1.0, q_load=0.0):
+        # The chilled-water pump runs whether or not the chiller's compressor runs.
+        self.flow = max(self.flow_nominal * self.pump_health + random.gauss(0, 0.8), 5.0)
+        self.q_load = q_load
+        unit = getattr(self.driver, "unit", None)
+        if unit is not None and unit.running:
+            want = q_load + CHILLER_HOLD_KW_PER_K * (self.t_supply - LOOP_T_SETPOINT)
+            q_rem = min(unit.capacity(self.t_supply), max(0.0, want))
+        else:
+            q_rem = 0.0
+        if unit is not None:
+            unit.q_removed = q_rem
+        self.t_supply += (q_load - q_rem) / (LOOP_VOLUME_L * CP_KJ_PER_KG_K) * dt
 
 
 class Overload:
-    """A motor overload relay with thermal memory (SCENARIOS.md 2.2). It uses no random numbers.
-    Above pickup x rated current the heat rises at up_per_s. Below it the heat drains at
-    down_per_s. At the trip level the relay latches until reset()."""
-    def __init__(self, i_rated, pickup=None, up_per_s=None, down_per_s=None, trip=None):
+    """An IEC 60947-4-1 class 10 thermal overload relay (LOG-100). It uses no random numbers.
+    theta follows (I/Ir)^2 with the time constant OL_TAU_S, and the relay trips and latches at
+    OL_TRIP_THETA: never at 1.05 x Ir, at 1.2 x Ir after about 10 min, at 7.2 x Ir in about 7 s."""
+    def __init__(self, i_rated, tau_s=None, trip_theta=None):
         self.i_rated = i_rated
-        self.pickup = CHILLER_OL_PICKUP if pickup is None else pickup
-        self.up_per_s = CHILLER_OL_UP_PER_S if up_per_s is None else up_per_s
-        self.down_per_s = CHILLER_OL_DOWN_PER_S if down_per_s is None else down_per_s
-        self.trip = CHILLER_OL_TRIP if trip is None else trip
-        self.heat = 0.0
+        self.tau_s = OL_TAU_S if tau_s is None else tau_s
+        self.trip_theta = OL_TRIP_THETA if trip_theta is None else trip_theta
+        self.theta = 0.0
         self.latched = False
 
     def step(self, amps, dt):
         """Integrate one tick of motor current. Returns True while the relay is tripped."""
-        if amps > self.pickup * self.i_rated:
-            self.heat += self.up_per_s * dt
-        else:
-            self.heat = max(0.0, self.heat - self.down_per_s * dt)
-        if self.heat >= self.trip:
+        x = (amps / self.i_rated) ** 2 if self.i_rated > 0 else 0.0
+        self.theta += (x - self.theta) * min(1.0, dt / self.tau_s)
+        if self.theta >= self.trip_theta:
             self.latched = True
         return self.latched
 
     def ratio(self):
-        """Heat as a share of the trip level, 0..1. Display only."""
-        return min(1.0, self.heat / self.trip) if self.trip > 0 else 1.0
+        """Thermal state as a share of the trip level, 0..1. Display only."""
+        return min(1.0, self.theta / self.trip_theta) if self.trip_theta > 0 else 1.0
 
     def reset(self):
-        self.heat, self.latched = 0.0, False
+        self.theta, self.latched = 0.0, False
+
+
+class Undervoltage:
+    """ANSI 27 undervoltage protection (LOG-100): a stage trips when the voltage stays below its
+    share of the rating for its delay. The trip clears when the voltage is back above
+    UV_RESET_FRAC. The equipment it protects decides when to restart."""
+    def __init__(self, stages=None):
+        self.stages = tuple(stages or UV_STAGES)
+        self.below = [0.0] * len(self.stages)
+        self.tripped = False
+
+    def step(self, frac, dt):
+        for i, (limit, delay) in enumerate(self.stages):
+            self.below[i] = self.below[i] + dt if frac < limit else 0.0
+            if self.below[i] >= delay:
+                self.tripped = True
+        if self.tripped and frac >= UV_RESET_FRAC:
+            self.tripped = False
+            self.below = [0.0] * len(self.stages)
+        return self.tripped
+
+    def reset(self):
+        self.tripped, self.below = False, [0.0] * len(self.stages)
+
+
+class ChillerUnit:
+    """chiller-1's own unit controller (LOG-100). It runs while it is enabled (its PLC RUN, or
+    fail-open), its overload relay is closed, and its supply voltage is good. After any stop it
+    waits CHILLER_ANTI_RECYCLE_S from its last start before it starts again. SPEED_PCT from its
+    PLC is the demand limit: a share of the capacity."""
+    def __init__(self, cap_kw=None):
+        self.cap_kw = CHILLER_CAP_KW if cap_kw is None else cap_kw
+        self.running = True
+        self.last_start = -1e9
+        self.q_removed = 0.0
+        self.demand_limit = 1.0
+        self.uv = Undervoltage()
+
+    def capacity(self, t_supply):
+        lift = 1.0 + CHILLER_CAP_PER_K * max(0.0, t_supply - LOOP_T_SETPOINT)
+        return self.cap_kw * lift * self.demand_limit
+
+    def load_frac(self):
+        return self.q_removed / self.cap_kw if self.cap_kw > 0 else 0.0
+
+    def at_capacity(self, t_supply):
+        return self.running and self.q_removed >= 0.98 * self.capacity(t_supply)
+
+    def update(self, t, allowed):
+        if not allowed:
+            self.running = False
+        elif not self.running and t - self.last_start >= CHILLER_ANTI_RECYCLE_S:
+            self.running, self.last_start = True, t
+
+
+class AirSystem:
+    """compressor-1's receiver (LOG-100). Delivery above the unloaded level fills it, the plant's
+    demand drains it, and the safety valve vents above AIR_SAFETY_BAR. The pressure transducer
+    reading is what every controller sees. PS2 makes it fail low."""
+    def __init__(self):
+        self.pressure = 7.2
+        self.loaded = False               # the local pressure-switch state (the fallback control)
+        self.pt_fault = None              # PS2: the transducer reads this value instead
+        self.venting = False
+
+    def reading(self):
+        return self.pt_fault if self.pt_fault is not None else self.pressure
+
+    def local_band(self):
+        """The compressor's own load/unload band on the transducer reading."""
+        r = self.reading()
+        if r <= AIR_LOAD_BAR:
+            self.loaded = True
+        elif r >= AIR_UNLOAD_BAR:
+            self.loaded = False
+        return self.loaded
+
+    def step(self, load_frac, dt):
+        deliver = max(0.0, min(1.0, (load_frac - COMP_UNLOADED_FRAC) / (1.0 - COMP_UNLOADED_FRAC)))
+        self.pressure += (AIR_FILL_BAR_S * deliver - AIR_DEMAND_BAR_S) * dt
+        self.venting = self.pressure >= AIR_SAFETY_BAR
+        self.pressure = min(max(self.pressure, 0.0), AIR_SAFETY_BAR)
 
 
 class Device:
@@ -249,13 +374,18 @@ class Device:
     duty(t) in [0,1] scales electrical load. Faults multiply friction/heat.
     A device in a cell also follows its PLC: RUN and SPEED_PCT set the drive speed."""
     def __init__(self, name, rail, i_base, loop=None, tau=45.0, heat_k=0.55,
-                 duty=None, v_sensitive=False, kind=None):
-        # heat_k calibration: steady temps must sit ~50-65C with healthy flow so the PS5
-        # story works (pump degrades -> share drops -> temps CROSS TRIP_C=78, not live
-        # above it). At heat_k=0.55: press-1 steady = 35 + 0.55*42 = 58C; under PS5
-        # (share 0.45) = 35 + 0.55*42/0.45 = 86C -> trips. The old 6.0 put steady at
-        # ~287C, permanently past trip - the forecast target was unreachable.
+                 duty=None, v_sensitive=False, kind=None, heat_frac=0.0, heat_loop=None):
+        # heat_k (C per A) sets the machine's own temperature above the supply water:
+        # T = t_supply + heat_k * I / flow_share. The calibration puts each machine at a realistic
+        # normal value below its own trip (LOG-100): press-1 28 + 0.69 * 42 = 57 C oil, and under
+        # PS5 (share 0.45) 28 + 29 / 0.45 = 92 C, past its 80 C trip.
+        # heat_frac is the share of the machine's electrical power that goes into the loop water, in
+        # kW: that is what the chiller has to remove. heat_loop is the loop that receives it. A
+        # water-cooled compressor gives heat to the loop but has no temperature channel of its own.
         self.name, self.rail, self.loop = name, rail, loop
+        self.heat_frac = heat_frac
+        self.heat_loop = heat_loop if heat_loop is not None else loop
+        self.trip_c = TRIP_LIMITS.get(name)
         self.kind = kind or name.rsplit("-", 1)[0]
         self.i_base = i_base              # amps at duty=1, healthy
         self.tau = tau                    # thermal time constant (s) -> REAL lags
@@ -266,7 +396,7 @@ class Device:
         # A cooled machine starts at its healthy steady temperature (full load, full flow). A
         # plant-sim restart restarts the model, not the plant: the machines were warm before it.
         # A cold start put a 20-minute warm-up ramp on four machines after every restart.
-        self.temp = 35.0 + heat_k * i_base if loop is not None else 35.0
+        self.temp = LOOP_T_SETPOINT + heat_k * i_base if loop is not None else LOOP_T_SETPOINT
         self.current = 0.0
         self.throughput = 100.0           # % of nominal work rate
         self.tripped = False              # PLC trip coil (2F): contactor open
@@ -275,9 +405,17 @@ class Device:
         self.cmd_run = None               # RUN coil (%QX0.k) as last read
         self.cmd_speed_pct = None         # SPEED_PCT word (%QW k) as last read, 0..100
         self.speed_frac = 1.0             # the drive speed after the ramp
-        self.overload = None              # a motor overload relay (chiller-1, PS2)
+        self.overload = None              # an IEC class 10 overload relay (chiller-1)
+        self.unit = None                  # chiller-1's unit controller (ChillerUnit)
+        self.air = None                   # compressor-1's receiver (AirSystem)
         self.recent = deque(maxlen=REPLAY_N)   # the true current of the last PS4B_REPLAY_S
         self.replay = None                # PS4B: {"buf", "t0"} replayed on the vPLC AMPS word
+
+    def heat_kw(self):
+        """Heat this machine puts into its loop's water now, in kW (LOG-100)."""
+        if self.heat_frac <= 0.0:
+            return 0.0
+        return self.heat_frac * math.sqrt(3.0) * self.rail.voltage * self.current * PF_NOMINAL / 1000.0
 
     def temp_noise(self):
         """Temperature noise per 1 s tick. It scales with sqrt(40 s / tau), so every machine keeps
@@ -321,13 +459,16 @@ class Device:
             self.speed_frac = target
         else:
             self.speed_frac += limit if gap > 0 else -limit
+        if self.unit is not None:
+            self._step_chiller(t, dt)
+            return
         if self.tripped:
             # contactor open: no drive current (rail load drops -> voltage RECOVERS, physics),
-            # work stops, and the machine cools toward ambient with its own lag
+            # work stops, and the machine cools toward the supply water with its own lag
             self.current = max(random.gauss(0.2, 0.02), 0.0)
             self.throughput = max(0.0, self.throughput - 5.0)
             if self.loop is not None:
-                self.temp += (35.0 - self.temp) * (dt / self.tau) + random.gauss(0, self.temp_noise())
+                self.temp += (self.loop.t_supply - self.temp) * (dt / self.tau) + random.gauss(0, self.temp_noise())
             return
         duty = self.duty_fn(t)
         running, commanded = self.running(), self.commanded()
@@ -358,42 +499,63 @@ class Device:
             self.tripped = True
         if not running:
             self.throughput = 0.0         # no RUN command: the machine does no work
-        # thermal: first-order response to heat load over the flow share
+        # thermal: first-order response to heat load over the flow share, above the supply water
         if self.loop is not None:
             heat = self.heat_k * self.current
             share = max(self.loop.flow / self.loop.flow_nominal, 0.05)
-            t_target = 35.0 + heat / share
+            t_target = self.loop.t_supply + heat / share
             self.temp += (t_target - self.temp) * (dt / self.tau) + random.gauss(0, self.temp_noise())
+
+    def _step_chiller(self, t, dt):
+        """chiller-1 (LOG-100): the unit runs while its PLC enables it (or fail-open), its overload
+        relay is closed, and its undervoltage protection is clear. Its current follows the heat it
+        removes, up to 100 % RLA. CoolantLoop.step already set the heat removed this tick."""
+        unit = self.unit
+        unit.demand_limit = (self.cmd_speed_pct / 100.0) if self.commanded() and self.cmd_run else 1.0
+        uv = unit.uv.step(self.rail.voltage / self.rail.v_nom, dt)
+        unit.update(t, allowed=self.running() and not self.tripped and not uv)
+        if not unit.running:
+            self.current = max(random.gauss(0.2, 0.02), 0.0)
+            self.throughput = 0.0
+        else:
+            load = min(1.0, unit.load_frac())
+            self.current = max(0.0, self.i_base * (0.25 + 0.75 * load) + random.gauss(0, 0.05))
+            v = self.rail.voltage
+            if v < 0.92 * self.rail.v_src:            # constant power: a low supply raises current
+                self.current *= min(1.15, (0.92 * self.rail.v_src) / max(v, 1.0))
+            self.throughput = 100.0 * load
+        if self.overload is not None and self.overload.step(self.current, dt):
+            self.tripped = True
 
 
 # ------------------------------------------------------------- build the plant
 SUPPLY = Supply()                                # the incoming board above every rail (PS7)
-RAIL_A = Rail("psu-a", SUPPLY)
-RAIL_B = Rail("psu-b", SUPPLY)
+RAIL_A = Rail("psu-a", SUPPLY, r_src=RAIL_R_OHM)
+RAIL_B = Rail("psu-b", SUPPLY, r_src=RAIL_R_OHM)
 RAIL_C = Rail("psu-c", SUPPLY, v_nom=400.0, r_src=0.5)   # spare feeder for new cells, idle at start
 RAILS = [RAIL_A, RAIL_B, RAIL_C]
 RAIL_BY_NAME = {r.name: r for r in RAILS}
 LOOP = CoolantLoop("cool-1")
 
-def compressor_duty(t):
-    # PS2's aggressor personality: OFF most of the time, heavy when the header
-    # "calls" - a 300s cycle with a 60s high-draw window (no matured baseline).
-    return 1.0 if (t % 300) < 60 else 0.12
+AIR = AirSystem()                                 # compressor-1's receiver (LOG-100)
 
 # The 8 base devices. The ORDER is a contract: the OpenPLC map (MW8..15, MW24..31) and
 # scada/tags.py depend on it. Never append cell machines here.
 # Thermal time constants are 90 to 270 s (2026-09-19, LOG-070). At 30 to 90 s, OpenPLC tripped a
 # hot machine in 40 to 95 s, before the engine could hold a verdict (about 80 s with GATE_Q=35),
 # so PS1, PS2 and PS5 lost the race on the box. Real motors and furnaces are slower still.
+# LOG-100 calibration: press oil about 57 C, cnc-1 spindle motor about 50 C, furnace-1 coil water
+# about 42 C, each below its own trip (TRIP_LIMITS). heat_frac is a project choice per machine.
 BASE_DEVICES = [
-    Device("press-1",      RAIL_A, i_base=42.0, loop=LOOP, tau=120.0),
-    Device("press-2",      RAIL_A, i_base=38.0, loop=LOOP, tau=165.0),
-    Device("cnc-1",        RAIL_A, i_base=25.0, loop=LOOP, tau=90.0, v_sensitive=True),
+    Device("press-1",      RAIL_A, i_base=42.0, loop=LOOP, tau=120.0, heat_k=0.69, heat_frac=0.5),
+    Device("press-2",      RAIL_A, i_base=38.0, loop=LOOP, tau=165.0, heat_k=0.69, heat_frac=0.5),
+    Device("cnc-1",        RAIL_A, i_base=25.0, loop=LOOP, tau=90.0, heat_k=0.88, heat_frac=0.4,
+           v_sensitive=True),
     Device("qa-scanner-1", RAIL_A, i_base=6.0,  v_sensitive=True),
     Device("conveyor-1",   RAIL_B, i_base=18.0),
-    Device("compressor-1", RAIL_B, i_base=55.0, duty=compressor_duty),
-    Device("furnace-1",    RAIL_B, i_base=30.0, loop=LOOP, tau=270.0, heat_k=1.0),   # runs hot: steady 65C, PS5 -> ~102C
-    Device("chiller-1",    RAIL_B, i_base=22.0),   # drives LOOP: its trip cuts the flow (PS2)
+    Device("compressor-1", RAIL_B, i_base=55.0, heat_frac=COMP_HEAT_FRAC, heat_loop=LOOP),   # water-cooled
+    Device("furnace-1",    RAIL_B, i_base=30.0, loop=LOOP, tau=100.0, heat_k=0.467, heat_frac=0.3),
+    Device("chiller-1",    RAIL_B, i_base=CHILLER_RLA_A),   # cools LOOP (ChillerUnit)
 ]
 DEVICES = BASE_DEVICES          # old name, kept for callers. It holds the base devices only.
 CELL_DEVICES = []               # machines that POST /cells adds, in the order they arrive
@@ -401,7 +563,13 @@ BASE_BY_NAME = {d.name: d for d in BASE_DEVICES}
 BY_NAME = dict(BASE_BY_NAME)    # every device, base and cell
 CELLS = {}                      # cell name -> Cell, base cells first
 BASE_BY_NAME["chiller-1"].overload = Overload(BASE_BY_NAME["chiller-1"].i_base)
+BASE_BY_NAME["chiller-1"].unit = ChillerUnit()
 LOOP.driver = BASE_BY_NAME["chiller-1"]
+COMP = BASE_BY_NAME["compressor-1"]
+COMP.air = AIR
+# Without a PLC command the compressor follows its own pressure switch on the transducer reading.
+# Under its PLC, SPEED_PCT is the load: 100 loaded, 25 unloaded (vplc/tasks/utilities.st).
+COMP.duty_fn = lambda t: 1.0 if COMP.commanded() else (1.0 if AIR.local_band() else COMP_UNLOADED_FRAC)
 
 
 def all_devices():
@@ -632,10 +800,11 @@ FAULTS = {
     "PS1": {"desc": "press-1 bearing friction rises -> rail-A sag cascade",
             "apply": lambda: setattr(BY_NAME["press-1"], "friction", 1.9),
             "clear": lambda: setattr(BY_NAME["press-1"], "friction", 1.0)},
-    "PS2": {"desc": "compressor stuck-on: rail B stays low -> chiller-1 overload trips -> "
-                    "coolant flow drops -> cooled machines heat",
-            "apply": lambda: setattr(BY_NAME["compressor-1"], "duty_fn", lambda t: 1.0),
-            "clear": lambda: setattr(BY_NAME["compressor-1"], "duty_fn", compressor_duty)},
+    "PS2": {"desc": f"compressor-1 pressure transducer fails low ({PT_FAIL_BAR} bar) -> the compressor "
+                    f"stays loaded, the safety valve vents -> its heat exceeds chiller-1's capacity -> "
+                    f"supply water warms -> cooled machines heat",
+            "apply": lambda: setattr(AIR, "pt_fault", PT_FAIL_BAR),
+            "clear": lambda: setattr(AIR, "pt_fault", None)},
     "PS3": {"desc": f"{STORM[1] if STORM else 'talker'} floods segment "
                     f"{STORM[0].name if STORM else 'field'}: {NET_TALKER_FPS:.0f} -> "
                     f"{NET_STORM_FPS:.0f} frames/s over {NET_RAMP_S:.0f} s -> cell links lag and drop",
@@ -649,15 +818,15 @@ FAULTS = {
             "apply": lambda: setattr(LOOP, "pump_health", 0.45),
             "clear": lambda: setattr(LOOP, "pump_health", 1.0)},
     "PS7": {"desc": f"the supply dips to {SUPPLY_DIP_PCT * 100:.0f} % of nominal -> every rail sags "
-                    f"together, with no machine leading -> chiller-1 overload trips -> coolant flow "
-                    f"drops -> cooled machines heat",
+                    f"together, with no machine leading -> chiller-1 undervoltage protection stops it -> "
+                    f"supply water warms -> cooled machines heat",
             "apply": lambda: setattr(SUPPLY, "target", SUPPLY_DIP_PCT),
             "clear": lambda: setattr(SUPPLY, "target", 1.0)},
 }
 if STORM is None:
     del FAULTS["PS3"]             # FIELD_SEGMENTS is empty: there is no segment to flood
 ACTIVE = set()
-TRIP_C = 78.0     # the PS5 forecast target: coolant-side trip threshold
+TRIP_C = TRIP_LIMITS["press-1"]   # the press and cnc trip. Per machine: TRIP_LIMITS (LOG-100).
 
 
 def inject_fault(fid):
@@ -692,11 +861,19 @@ def plc_frames():
     return regs, thru
 
 
+def plc_loop_words():
+    """MW16..17 (LOG-100): the loop supply temperature x10 and the compressor pressure reading
+    x100 (bar). The OpenPLC program does not use them. The tag server reads them."""
+    return [max(0, int(LOOP.t_supply * 10)), max(0, int(AIR.reading() * 100))]
+
+
 def plc_sync_once(client):
     """One OpenPLC field-wiring tick over an open client: sensor words out, trip coils in."""
     with _lock:
         regs, thru = plc_frames()
+        extra = plc_loop_words()
     client.write_registers(PLC_MW_BASE, regs, slave=1)
+    client.write_registers(PLC_MW_BASE + 16, extra, slave=1)
     client.write_registers(PLC_MW_BASE + 24, thru, slave=1)
     if _PLC_RESET.is_set():
         client.write_registers(PLC_MW_BASE + 20, [1], slave=1)            # MW20: reset cmd
@@ -749,10 +926,11 @@ def step_world(t, dt):
     SUPPLY.step(sum(d.current for d in devices), dt)
     for rail in RAILS:
         rail.step(sum(d.current for d in devices if d.rail is rail))
-    LOOP.step()
+    LOOP.step(dt, sum(d.heat_kw() for d in devices if d.heat_loop is LOOP))
     for d in devices:
         d.step(t, dt)
         d.recent.append(d.current)        # the PS4B recording. It draws no random numbers.
+    AIR.step(COMP.current / COMP.i_base if COMP.i_base else 0.0, dt)
 
 
 def tick_dt(now, last):
@@ -1026,7 +1204,30 @@ def cell_frames(cell, now=None):
         hr[4 * k + 2] = _word10(d.rail.voltage)
         hr[4 * k + 3] = _word10(d.throughput)
         coils[k] = not d.tripped
+    extras = cell_extra_words(cell)
+    if extras:
+        hr += [0] * (CELL_EXTRA_BASE + CELL_EXTRA_N - len(hr))
+        for i, v in extras.items():
+            hr[i] = v
     return hr, coils
+
+
+CELL_EXTRA_BASE, CELL_EXTRA_N = 32, 4   # %IW32..35: the utilities instruments (LOG-100)
+
+
+def cell_extra_words(cell):
+    """The instrument words of a utilities cell (FLEET.md 3.1): %IW32 the compressor pressure
+    reading (bar x100), %IW33 the loop supply temperature (C x10), %IW34 the loop flow (L/min x10),
+    %IW35 the chiller load (% x10). Only for the machines this cell wires. Call it under _lock."""
+    out = {}
+    for d in cell.devices:
+        if d.air is not None:
+            out[32] = max(0, min(32767, int(d.air.reading() * 100)))
+        if d.unit is not None:
+            out[33] = _word10(LOOP.t_supply)
+            out[34] = _word10(LOOP.flow)
+            out[35] = _word10(100.0 * d.unit.load_frac())
+    return out
 
 
 def _ok(resp, what):
@@ -1043,7 +1244,7 @@ def cell_sync_once(cell, client):
         if cell.stop.is_set():
             return False
         hr, coils = cell_frames(cell)
-    _ok(client.write_registers(0, hr, slave=1), "write holding 0..31")
+    _ok(client.write_registers(0, hr, slave=1), f"write holding 0..{len(hr) - 1}")
     _ok(client.write_coils(0, coils, slave=1), "write coils 0..7")
     words = list(_ok(client.read_holding_registers(100, count=CELL_SLOTS, slave=1),
                      "read holding 100..107").registers)
@@ -1121,7 +1322,10 @@ def domains():
         # The suffix names the medium, the same convention as rail:psu-a (SCENARIOS.md 3.2).
         out[f"rail:{SUPPLY.name}"] = [r.name for r in RAILS] + [SUPPLY.name]
         driver = [LOOP.driver.name] if LOOP.driver is not None else []
-        out[f"loop:{LOOP.name}"] = [d.name for d in devices if d.loop is LOOP] + driver + [LOOP.name]
+        # LOG-100: a heat member (the water-cooled compressor) shares the loop too.
+        out[f"loop:{LOOP.name}"] = ([d.name for d in devices if d.loop is LOOP]
+                                    + [d.name for d in devices if d.loop is not LOOP and d.heat_loop is LOOP]
+                                    + driver + [LOOP.name])
         for seg in SEGMENTS.values():
             out[f"net:{seg.name}"] = list(seg.talkers) + list(segment_plcs(seg)) + [seg.name]
     return {"domains": out}
@@ -1140,17 +1344,24 @@ def supply_amps():
 
 
 def cooling_shortfall():
-    """Heat that the loop fails to remove, in W (SCENARIOS.md 3.3). Call it under _lock.
-    A cooled machine makes heat_k * I. At flow share s it heats as if (1/s) times that heat
-    reached it, so the shortfall is heat * (1/s - 1). The sum is never below 0."""
+    """The cooling the machines lose against design, in W (SCENARIOS.md 3.3, LOG-100). Two parts:
+    - flow: each cooled machine's heat q at flow share s reaches it as if q/s, so it keeps q(1/s - 1)
+    - supply: water above the setpoint carries cp * design flow * (t_supply - setpoint) back.
+    The tag server computes the same from its tags (scada/tags.py). Call it under _lock."""
     share = max(LOOP.flow / LOOP.flow_nominal, 0.05)
-    heat = sum(d.heat_k * d.current for d in all_devices() if d.loop is LOOP)
-    return max(0.0, heat * (1.0 / share - 1.0))
+    q = sum(d.heat_kw() for d in all_devices() if d.loop is LOOP)
+    kw_per_k = CP_KJ_PER_KG_K * LOOP.flow_nominal / 60.0
+    return 1000.0 * max(0.0, q * (1.0 / share - 1.0) + kw_per_k * max(0.0, LOOP.t_supply - LOOP_T_SETPOINT))
 
 
 def trip_reason(d):
-    """Why a machine is off: "overload" while its own relay holds it, else None."""
-    return "overload" if d.tripped and d.overload is not None and d.overload.latched else None
+    """Why a machine is off: "overload" while its own relay holds it, "undervoltage" while its
+    undervoltage protection holds it, else None."""
+    if d.tripped and d.overload is not None and d.overload.latched:
+        return "overload"
+    if d.unit is not None and d.unit.uv.tripped:
+        return "undervoltage"
+    return None
 
 
 def segments_json(now=None):
@@ -1192,14 +1403,19 @@ def metrics_text():
             g("plant_bus_voltage_volts", d.name, d.rail.voltage)
             if d.loop is not None:
                 g("plant_temp_celsius", d.name, d.temp)
-                g("plant_heat_load_watts", d.name, d.heat_k * d.current)
+            if d.heat_loop is not None:                   # LOG-100: real kW into the loop water
+                g("plant_heat_load_watts", d.name, 1000.0 * d.heat_kw())
             if d.commanded():             # only a real PLC command, never a fallback
                 g("plant_commanded_speed_pct", d.name, float(d.cmd_speed_pct) if d.cmd_run else 0.0)
-        g("plant_trip_threshold_celsius", "cool-1", TRIP_C)
+        for d in all_devices():                           # LOG-100: each machine's own trip
+            if d.loop is not None and d.trip_c is not None:
+                g("plant_trip_threshold_celsius", d.name, d.trip_c)
+        g("plant_supply_temp_celsius", LOOP.name, LOOP.t_supply)
+        g("plant_air_pressure_bar", COMP.name, AIR.reading())
         for n in COOLED:                                  # PLC trip coils, mirrored per machine
             g("plant_trip_active", n, 1.0 if BASE_BY_NAME[n].tripped else 0.0)
-        # PS2: the chiller's own overload relay. It is not an OpenPLC trip. The ratio is for
-        # display only: it ramps in every normal compressor window.
+        # The chiller's own overload relay (IEC class 10). It is not an OpenPLC trip. The ratio is
+        # for display only.
         for d in all_devices():
             if d.overload is not None:
                 g("plant_motor_tripped", d.name, 1.0 if trip_reason(d) else 0.0)
@@ -1235,7 +1451,13 @@ def state_json():
                                "amps": round(feeder_amps(r), 2)} for r in RAILS},
             "loop": {"name": LOOP.name, "flow": round(LOOP.flow, 1),
                      "flow_nominal": LOOP.flow_nominal,
-                     "pump_health": round(LOOP.pump_health, 2)},
+                     "pump_health": round(LOOP.pump_health, 2),
+                     "t_supply": round(LOOP.t_supply, 2), "t_setpoint": LOOP_T_SETPOINT,
+                     "heat_kw": round(LOOP.q_load, 2), "chiller": chiller_json()},
+            "air": {"pressure": round(AIR.pressure, 3), "reading": round(AIR.reading(), 3),
+                    "pt_fault": AIR.pt_fault is not None, "venting": AIR.venting,
+                    "load_bar": AIR_LOAD_BAR, "unload_bar": AIR_UNLOAD_BAR,
+                    "loaded": COMP.current > 0.6 * COMP.i_base},
             "trip_c": TRIP_C,
             "devices": {d.name: {"amps": round(d.current, 2),
                                  "temp": round(d.temp, 1) if d.loop else None,
@@ -1244,6 +1466,7 @@ def state_json():
                                  "cooled": d.loop is not None,
                                  "tripped": d.tripped,
                                  "trip_reason": trip_reason(d),
+                                 "trip_c": d.trip_c,
                                  "kind": d.kind,
                                  "cell": d.cell.name if d.cell else None,
                                  "controller": d.cell.controller if d.cell else None,
@@ -1255,6 +1478,19 @@ def state_json():
             "segments": segments_json(),
             "plc": dict(PLC_STATE),
             "active_faults": sorted(ACTIVE)}
+
+
+def chiller_json():
+    """chiller-1's unit state for /state. Call it under _lock."""
+    d = LOOP.driver
+    unit = getattr(d, "unit", None)
+    if unit is None:
+        return None
+    wait = max(0.0, CHILLER_ANTI_RECYCLE_S - (time.time() - T0 - unit.last_start)) if not unit.running else 0.0
+    return {"name": d.name, "running": unit.running, "capacity_kw": round(unit.capacity(LOOP.t_supply), 2),
+            "heat_removed_kw": round(unit.q_removed, 2), "load_pct": round(100.0 * unit.load_frac(), 1),
+            "at_capacity": unit.at_capacity(LOOP.t_supply), "demand_limit_pct": round(100.0 * unit.demand_limit, 1),
+            "undervoltage": unit.uv.tripped, "anti_recycle_s": round(wait, 1), "rla": CHILLER_RLA_A}
 
 
 def reset_plant():
@@ -1271,7 +1507,9 @@ def reset_plant():
         d.tripped = False
         d.replay = None
         if d.overload is not None:
-            d.overload.reset()            # PS2 is clear first, so the chiller does not re-trip
+            d.overload.reset()
+        if d.unit is not None:
+            d.unit.uv.reset()             # the unit restarts after its anti-recycle wait
         if not d.running():
             d.throughput = 0.0
         elif d.commanded():

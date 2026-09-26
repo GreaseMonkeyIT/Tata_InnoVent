@@ -17,10 +17,21 @@ spec:
     metadata:
       labels: { app: tag-server }
     spec:
+      automountServiceAccountToken: false
+      securityContext:              # LOG-095: non-root, the default seccomp profile
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
       containers:
       - name: tag-server
         image: localhost:5000/skn/tag-server:v0.1
         imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+        securityContext:              # LOG-095: no privilege escalation, no capabilities, read-only root
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: { drop: [ALL] }
         env:
           - { name: PLC_HOST, value: "openplc.plant.svc" }
           - { name: PLC_PORT, value: "502" }
@@ -29,19 +40,21 @@ spec:
           # LOG-076: the DSN carries no password. libpq reads PGPASSWORD from Secret plant/historian-auth,
           # which deploy/historian-auth.sh makes (deploy/golive.sh runs it first).
           - { name: HISTORIAN_DSN, value: "host=historian-db.plant.svc dbname=postgres user=postgres" }
-          - name: PGPASSWORD
-            valueFrom: { secretKeyRef: { name: historian-auth, key: password } }
+          # LOG-095: Secrets arrive as files. The tag server reads PGPASSWORD_FILE into PGPASSWORD for libpq.
+          - { name: PGPASSWORD_FILE, value: "/run/secrets/historian-auth/password" }
           - { name: TZ, value: "Asia/Kolkata" }
           # FLEET.md 8: vPLC enrollment key and the SCADA write token. When the Secret or a key
           # is missing, the variable stays empty and that path fails closed (no enrollment, no writes).
-          - name: FLEET_ENROLL_KEY
-            valueFrom: { secretKeyRef: { name: visr-fleet, key: enroll-key, optional: true } }
-          - name: SCADA_WRITE_TOKEN
-            valueFrom: { secretKeyRef: { name: visr-fleet, key: scada-write-token, optional: true } }
+          - { name: FLEET_ENROLL_KEY_FILE,  value: "/run/secrets/visr-fleet/enroll-key" }
+          - { name: SCADA_WRITE_TOKEN_FILE, value: "/run/secrets/visr-fleet/scada-write-token" }
         ports: [{ containerPort: 9300, name: metrics }]
+        volumeMounts:
+          - { name: tmp, mountPath: /tmp }
+          - { name: historian-auth, mountPath: /run/secrets/historian-auth, readOnly: true }
+          - { name: visr-fleet, mountPath: /run/secrets/visr-fleet, readOnly: true }
         resources:
           requests: { cpu: 50m,  memory: 64Mi }
-          limits:   { cpu: 200m, memory: 128Mi }
+          limits:   { cpu: 200m, memory: 128Mi, ephemeral-storage: 128Mi }
         readinessProbe: { httpGet: { path: /healthz, port: 9300 } }
         # PS6 (SCENARIOS 2.7) drives the working set toward the 128Mi limit. Under that pressure
         # a single slow /healthz must not read as Unhealthy and restart the pod before the OOM
@@ -51,6 +64,13 @@ spec:
           httpGet: { path: /healthz, port: 9300 }
           timeoutSeconds: 3
           failureThreshold: 6
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: historian-auth
+          secret: { secretName: historian-auth }
+        - name: visr-fleet     # optional: without it, enrollment and writes fail closed
+          secret: { secretName: visr-fleet, optional: true }
 ---
 apiVersion: v1
 kind: Service

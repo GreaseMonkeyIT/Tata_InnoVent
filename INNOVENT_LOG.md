@@ -1776,3 +1776,513 @@ fault-shell). Panel 4 for press-1 over 13:13 to 13:22 replaces the plant model c
 `deploy/api.yaml`, `deploy/grafana-plant-dashboard.yaml`, `deploy/slowdisk.yaml`,
 `deploy/values/prometheus-storage.yaml`, `deploy/values/prometheus.yaml`, `deploy/skctl`,
 `deploy/prometheus-storage.sh`, `PIVOT_SETUP.md`, `BOOK.md`, `INNOVENT_LOG.md`.
+
+**LOG-089 · 2026-09-26 · The engine learns during the soak, then the operator locks the baselines.**
+**Why (operator):** the code freeze is lifted (2026-09-25). After two long Scenario 2 runs, every normal
+compressor-1 cycle on forge raised a compressor-1 root. The engine case history shows no such case in the
+36 h before the runs and one case per cycle after them.
+**Found:** the rail B baselines (psu-b, compressor-1, chiller-1, conveyor-1, furnace-1) had 25 updates in
+three days. Rail A had 24,160. The storm rule skips any ring whose 90th percentile is above the band.
+Every normal rail B ring holds compressor ON samples, so rail B learned only from flat rings, and the
+flattest rail B ring is the 374 V plateau that PS2 leaves after furnace-1 trips. The live band was median
+26.33 V of sag, MAD 0.167, threshold 26.91. Normal OFF samples have a median of 26.83, and 28 % of them sit
+above 26.91. In 18 of 157 two-minute tails, a compressor window pushed the gate quantile over the band.
+**Tried and dropped:** a duty-cycle-aware learning rule with a hold on incident domains. In the idle lab it
+gave 242 of 300 false passes, worse than no change. Online learning keeps a path for a fault to leak in.
+**Change:**
+- `engine/state.py`: `GraphMemory.locked`. Locked, a mature baseline never changes. An immature baseline
+  (a new asset) still learns until it is mature.
+- `service.py`: the lock file `baselines.lock` next to `MEMORY_DB` (env `BASELINE_LOCK_FILE`), read on
+  every pass. `meta.baselines` reports `learning` or `locked`.
+- `deploy/engine-baselines.sh` (status, lock, unlock), no sudo. `deploy/factory-up.sh`: the wipe also
+  removes the lock file, so a fresh memory always learns.
+- `correlation/tests/idle_lab.py`: the PS2 lab with an engine pass every 10 s from the start (2 h normal,
+  17.5 min PS2, reset, 1 h normal). It counts idle passes with a root.
+**Verified:** correlation tests 81 pass (2 new in `test_state.py`). Idle lab: learning never stops gives
+threshold 26.84 and 78 of 300 idle passes with a compressor-1 root after the reset (the box symptom). Learn,
+then lock gives threshold 27.40 and 0 of 300. Offline replay unchanged (PS1 PASS, PS2 PASS, PS7 FAIL).
+**Not deployed.** Day 3 of the plan: one image push, the wipe, the soak, then `engine-baselines.sh lock`.
+**Next:** scheduled learning runs (exclude incident windows, validate, version, promote with the operator's
+approval), in the architecture roadmap for the December prototype.
+**Files:** `correlation/engine/state.py`, `correlation/service.py`, `correlation/tests/test_state.py`,
+`correlation/tests/idle_lab.py`, `deploy/engine-baselines.sh`, `deploy/factory-up.sh`, `SCENARIOS.md`
+(4.4, 10), `BOOK.md` (8.1), `PIVOT_SETUP.md` (step 5), `POC_SCRIPT.md` (step 1.3), `INNOVENT_LOG.md`.
+
+**LOG-090 · 2026-09-26 · A bare correlation between two machines on a rail or in the coolant loop no longer votes for root.**
+**Why:** the full-length watch of 2026-09-25/26 put the root on cnc-1, a victim, in Scenario 2 (after the
+furnace-1 trip) and twice in Scenario 5. cnc-1 has the shortest thermal time constant (90 s), so it heats
+first and its bare `stat/loop` edges seem to lead the other machines. The cnc-1 roots came right after a
+trip unloaded rail A, which also rules out a test on the leader's own load.
+**Found:** in the watch data every true plant root has a `write` edge in every poll (Scenario 1: 42 of 42,
+2: 45 of 45, 4B: 30 of 30, 5: 46 of 46). Scenario 3 is different: hmi-gw roots on a bare `stat/net` edge in
+35 of 41 polls, so the network medium keeps bare votes.
+**Change:** `engine/ranking.py` `votes()`: on the `rail` and `loop` media an edge votes only with `write` or
+`common_mode` evidence. The pass (`pipeline.py`), the memory render (`state.py`), and the merge (`merge.py`)
+rank with it. A bare edge still renders as context.
+**Verified:** correlation tests 84 pass (3 new in `test_merge.py`, and the two plant tests fail without the
+rule). Root timelines through the real pass (scratch lab, 600 s after the fire, a pass every 20 s):
+- Scenario 2: old compressor-1 13, press-1 16, chiller-1 1. New compressor-1 17, then chiller-1 13 after
+  the furnace-1 trip (the current driver). No victim root.
+- Scenario 5: old chiller-1 11, cnc-1 8, furnace-1 3. New chiller-1 17, furnace-1 4, no cnc-1. The furnace-1
+  polls follow its own trip: the trip drops its current and lifts rail B, a real `write/rail` coupling of a
+  consequence. The incident record (to-do C1) must treat a tripped machine as a consequence.
+- Scenario 1: the press-1 root ends 80 s sooner after the press-1 trip (old bare `stat/loop` edges held
+  it). The incident record (C1) keeps the incident open while a machine is tripped.
+- PS2 lab at 0.60: window 240 s from t+60 (180 s before). Offline replay: PS1 PASS, PS2 PASS, PS7 FAIL
+  (incomer-1 score 0.21, was 0.15).
+**Not deployed.** Day 3 image push.
+**Files:** `correlation/engine/ranking.py`, `correlation/engine/pipeline.py`, `correlation/engine/state.py`,
+`correlation/engine/merge.py`, `correlation/tests/test_merge.py`, `SCENARIOS.md` (4.3), `BOOK.md` (8.7),
+`INNOVENT_LOG.md`.
+
+**LOG-091 · 2026-09-26 · Trip cards fit the leveling-off curve. No card or proposal for a stopped machine. A trip card on a controllable machine proposes a derate.**
+**Why:** the full-length watch of 2026-09-25/26. Trip cards stayed on machines that levelled off below
+78 °C (press-1 at 74 °C in Scenario 2, cnc-1 at 65 °C in Scenario 5), and on tripped, cooling machines
+(Scenarios 1 and 5). The Scenario 1 countdown said 79 s where the trip came 180 s later. A derate
+stayed on offer after press-1 tripped (Scenario 1) and appeared after the Scenario 4B reset for a press
+back at its normal 43 A. Scenario 5 tripped three machines and proposed nothing, although press-1 and
+press-2 sit on the stamping PLC.
+**Change (engine, `correlation/engine/forecast.py`, `service.py`):**
+- `first_order_eta`: least-squares fit of T(t) = T_inf + C·exp(−(t − t_now)/τ) over the last 48 samples
+  of the climb, τ on a 20 to 1200 s grid. A card needs C < 0 (rising) and T_inf above the limit. The
+  ETA is τ·ln((T_inf − T_now)/(T_inf − limit)). The fit must agree at 0, 10, and 20 s back
+  (`THERMAL_CONFIRM`). The card adds `t_inf`, `tau_s`, `model`. `FORECAST_THERMAL_MODEL=linear` restores
+  the line. The memory-leak card keeps the line.
+- `stopped_pods`: a machine under 1 A (or under 10 % of its ring median) gets no trip card.
+- `service.forecast_cards()` holds the forecast step, and `tests/ps2_lab.py` now calls it, so the lab
+  cannot drift from the service.
+**Change (api, `api/fleet.py`, `api/main.py`):** `proposals()` gets two sources. `reason: "root"` needs
+the root to draw 15 % above its normal current (median over the last hour from Prometheus, cached
+60 s). `reason: "forecast"` proposes a derate for each controllable machine with an open trip card,
+earliest first, with an id that holds while the card counts down. Neither source proposes for a
+tripped machine. The Actions card needs no change.
+**Tried and dropped:** a cap on τ (300, 400, 600 s) did not remove the early flashes. It only stretched
+their ETAs. The three-point agreement did.
+**Verified:** correlation 88 pass (4 new in `test_forecast.py`), api 69 pass (3 new in `test_fleet.py`).
+The recorded forge evening (Prometheus, 5 s, 19:00 to 00:30) through both forecasters, a pass every 10 s:
+
+| | straight line | curve |
+|---|---|---|
+| Card passes on machines that never tripped (S2 run 1, S2 run 2, S4B, S5) | 254 | 12 |
+| Card passes on tripped machines | 12 | 1 |
+| First countdown vs the real trip: S1 press-1 | 79 s vs 180 s | 167 s |
+| S5 furnace-1, press-1, press-2 | 66, 112, 120 s vs 95, 120, 310 s | 75, 63, 319 s |
+| Idle 19:50 to 23:15 | no cards | no cards |
+
+**Known:** 9 card passes remain on press-2 in Scenario 2 run 1 (it levelled at 70 °C). Scheduled learning
+of each machine's τ (the December twin) is the real fix.
+**Not deployed.** Day 3 image push (engine and api).
+**Files:** `correlation/engine/forecast.py`, `correlation/service.py`, `correlation/tests/test_forecast.py`,
+`correlation/tests/ps2_lab.py`, `api/fleet.py`, `api/main.py`, `api/tests/test_fleet.py`, `FLEET.md` (10),
+`SCENARIOS.md` (4.4), `BOOK.md` (9), `INNOVENT_LOG.md`.
+
+**LOG-092 · 2026-09-26 · The incident record: origin, current driver, phases, and the end of an incident.**
+**Why (operator):** "root cause shift should also be shown as long as an event is active", and the LLM must
+say why the driver changed. On forge the verdict vanished while press-1 was still tripped (Scenario 1), the
+engine tail kept a root minutes after a reset (Scenario 5: 306 s), and a normal compressor cycle raised roots.
+**Change:** `api/incident.py` `Tracker`, fed every `INCIDENT_S` (5 s) by a background thread in `api/main.py`,
+served at `GET /api/incident`.
+- Opens on a root, a forecast card, an integrity finding, a tripped machine, or a blind SCADA view.
+- The current driver is the top root that is off normal, held 15 s (`INCIDENT_HOLD_S`) before it replaces the
+  last one. A process machine stopped by its trip is a consequence and never the driver. A tripped chiller may
+  drive (lost cooling). A root whose own drive is normal (current within 15 % of its hourly median, loop flow
+  at 90 % of nominal, segment under 50 %, supply not dipped) is a verdict tail or a duty cycle. The first
+  driver is the origin.
+- Every change is a numbered phase (open, origin, driver, trip, card, integrity, blind, action, relief,
+  recovering, close) with a reason made of measured numbers. The last phase number is the tag.
+- B4, the clear rule: RECOVERING once the origin's drive is back to normal and no machine is tripped
+  (sticky, so a duty cycle cannot flap it). Close after `INCIDENT_CALM_S` (30 s) with no physical sign.
+**Verified:** `api/tests/test_incident.py` (5 tests) and a route test. The recorded forge runs of 2026-09-25/26
+through the tracker (scratch replay): one incident per scenario, no compressor false incidents, Scenario 1
+stays open while press-1 is tripped and closes 27 s after the reset, Scenario 5 names chiller-1 at +10 s
+(loop flow 53 of 120 L/min) and closes 32 s after the reset, Scenario 4A opens on the integrity finding at
++41 s naming rogue-ews.
+**Files:** `api/incident.py`, `api/main.py`, `api/tests/test_incident.py`, `api/tests/test_scenarios_api.py`.
+
+**LOG-093 · 2026-09-26 · The narrator writes the incident in fixed sections, locked to its phase. Suggestions for every scenario. Ask VISR.**
+**Why (operator):** the narrator "speaks in a different way every 5 seconds"; the shape and the voice must stay
+consistent without reading like fill in the blanks. Suggestions for every scenario, not only Scenario 1, and
+an agent that lets the model reason with the engine. On forge the narrator said "Steady state" through the
+whole 4A attack and after the 6 crash, called a coolant fault "rail voltage contention", and wrote "$t=830.0$s".
+**Change:**
+- `api/narrator.py`: a case file from the incident, one template sentence per section (headline, origin,
+  driver, chain, evidence, forecast, suggestion). The model (gemma4 e4b, JSON output, temperature 0, seed 7)
+  rewrites it as prose under a style sheet and one example, and sees its previous text. A checker rejects a
+  section with a number not in the case file, and strips markup (keeps underscores for tag names). The text
+  is locked to (incident, tag). The model runs in a background thread, and the template shows until it answers.
+- `api/advice.py`: the verbs derate, restore, stop, isolate, restart, inspect, hold. Executable only through the
+  checked paths (the derate proposals, the Restore of an unsigned hold). Everything else is advisory.
+  `GET /api/actions` adds `advice`.
+- `api/agent.py`, `GET /api/ask?q=`: the model answers with three read-only tools (the incident, one asset's
+  readings, the checked suggestions), at most 3 rounds, an answer with an unknown number is replaced.
+- Console (`dashboard/`): the Verdict follows the incident (driver, "started by" origin, reason, incident chain,
+  tripped machines, the last six phases, the Ask box, the settle temperature on a trip card). ActLoop lists the
+  advice. The dev mocks carry an incident and a narrative per review state. The old narrator code is removed.
+**Verified:** api tests 83 pass (`test_narrator.py` 6, `test_agent.py` 2, the route test). On forge, the recorded
+case files through gemma4: 7.5 to 14.7 s per phase once warm, every section passed the checker. A tool-call
+test: the right tools every time, 4.6 to 10.6 s per question. `npm run build` passes. The dev preview at
+1920x1080 renders all seven review states and the Ask answer.
+**Not deployed.** Day 3 image push (api, dashboard).
+**Files:** `api/narrator.py`, `api/advice.py`, `api/agent.py`, `api/main.py`, `api/tests/test_narrator.py`,
+`api/tests/test_agent.py`, `dashboard/app/Verdict.jsx`, `dashboard/app/ActLoop.jsx`,
+`dashboard/app/lib/useConsoleData.js`, `dashboard/app/lib/mock.js`, `dashboard/app/globals.css`,
+`dashboard/README.md`, `SCENARIOS.md` (7), `FLEET.md` (10), `BOOK.md` (11, 12), `INNOVENT_LOG.md`.
+
+**LOG-094 · 2026-09-26 · Frozen field inputs read STALE. The PR #1 follow-ups: unmapped slots read BAD, clamps are listed.**
+**Why:** in Scenario 3 the storm cut the stamping cell's field link, and the stamping PLC kept its last input
+values while it still answered SCADA over S7. Correction to the verification note of 2026-09-25: the 41 base
+tags of `/tags` come from OpenPLC over the trip link, which is off the storm segment by design, so they stayed
+GOOD correctly. The affected tags are the fleet tags of `plc-stamping` on `/fleet`. PR #1 left four follow-ups.
+**Change:**
+- `scada/fleet.py` `track_field`, `field_frozen_for`, `mark_field_stale`: when every AMPS and TEMP input of one
+  PLC has held the same raw value for `FIELD_FROZEN_S` (10 s), that PLC's input tags (%IX, %IW) read STALE with
+  `reason: "field inputs frozen for N s"`. A live analog value always jitters. THROUGHPUT and VOLTS are left
+  out because they can hold still legitimately. Setpoints are not inputs and keep their quality.
+- `fleet.only_mapped`: with a vendor register map, a tag whose slot the map does not list gets no record, so it
+  reads BAD with value null (never a GOOD zero into the engine or the current-balance check).
+- `/fleet` lists `clamped`: the slots the driver clamped to INT16 on the last read.
+- `FLEET.md` 4.4 documents register maps. The PR #1 files end with one newline and no trailing blanks.
+**Also:** the Python edits of this session had written CRLF line endings on Windows into 15 files. They are LF
+again (the repo pins `eol=lf`). `INNOVENT_PLAN.md` and `dashboard/app/EventLog.jsx` were CRLF before this
+session and are untouched.
+**Verified:** scada 101 pass in a `python:3.11-slim` container on forge (2 new; the PR #1 end-to-end test now
+also asserts that an unmapped slot reads BAD).
+**Not deployed.** Day 3 image push (tag server).
+**Files:** `scada/fleet.py`, `scada/tagserver.py`, `scada/drivers/modbus.py`, `scada/drivers/s7.py`,
+`scada/requirements.txt`, `scada/tests/test_fleet.py`, `scada/tests/test_regmap_drivers.py`, `FLEET.md` (4.4),
+`INNOVENT_LOG.md`.
+
+**LOG-095 · 2026-09-26 · Pod-level security: network zones, least privilege, secrets as files, no side doors, disk limits, no internet from the plant.**
+**Why (operator):** "the pods are the ones that follow the cybersecurity measures, right?" The audit of
+2026-09-25 found no NetworkPolicy, six pods as root with no securityContext, tokens in every pod, secrets
+as environment variables, plain-HTTP NodePorts that skip the TLS login (api 30088, Prometheus 30090,
+Grafana 30030), the test attacker running at all times, and no historian retention.
+**Found:** Caretta (eBPF) on forge listed every real pod-to-pod connection. It also showed `historian-db`
+opening connections to an AWS host on port 443: the TimescaleDB usage telemetry, on an air-gapped box.
+**Change:**
+- G1 `deploy/netpol.yaml` + `deploy/netpol.sh` (verify, apply, remove): deny by default in `aiops`,
+  `plant`, and `fleet`; allow only the observed paths; the node bridge 10.42.0.1 for probes and NodePorts;
+  egress from `plant` and `fleet` only to pods in the cluster. Scenario 4A: `rogue-ews`
+  (`visr/role: fault-injector`) may reach port 102, a labeled test exception. apply rolls back on a failed
+  check and stops during a soak, a proof run, or a verification run.
+- G2 securityContext: api, tag-server, plant-sim, the vPLCs (static and UI-created), and rogue-ews run as
+  user 10001 with no capabilities, no privilege escalation, a read-only root with `/tmp` on an emptyDir,
+  and the default seccomp profile. The vPLCs get the safe sysctl `net.ipv4.ip_unprivileged_port_start=0`
+  for port 102. The engine and the aggregator (already non-root) get the same limits. Listed root
+  exceptions: the dashboard (nginx), OpenPLC, and the historian (it drops to postgres itself); they get
+  seccomp, no escalation, and no NET_RAW.
+- G3 `automountServiceAccountToken: false` on every pod except the api (the fleet manager).
+- G4 Secrets as files: `_secret()` in the api, the tag server, and `vplc/ews.py`, `_file_or()` in
+  `vplc/main.py` read `NAME_FILE` first. The manifests mount the Secrets at `/run/secrets/...`. The
+  historian uses `POSTGRES_PASSWORD_FILE`. The dashboard keeps its env (nginx envsubst, listed exception).
+- G5 the api Service is ClusterIP. `values/prometheus.yaml` and the overlay `values/prometheus-exposure.yaml`
+  make Grafana and Prometheus ClusterIP (applied with the LOG-088 helm step, PIVOT_SETUP 5.2c).
+  `faults.sh`, `proof-run.sh`, `refusals.sh`, `factory-up.sh`, `golive.sh`, and `prometheus-storage.sh` find
+  the services by ClusterIP, so they work before and after. OpenPLC 30081 stays (operator decision).
+- G6 `rogue-ews` rests at 0 replicas. `faults.sh` (`f 4a`, `r 4a`, `r all`) and `proof-run.sh` start and
+  stop it. golive checks that it rests at 0.
+- G7 the tag server sets a TimescaleDB retention policy on `plant_tags` (`HISTORIAN_RETENTION`, 30 days).
+  Every pod has an ephemeral-storage limit. The historian runs with `timescaledb.telemetry_level=off`, and
+  its image is pinned to the digest that ran on forge. Scenario 6B (a full disk) is not built.
+**Verified:**
+- A server-side dry run of every changed manifest and of the 13 policies on forge: all accepted.
+- The current images in throwaway Docker containers as user 10001, read-only root, `--cap-drop ALL`,
+  no-new-privileges: the api, the tag server, plant-sim, the vPLC, and rogue-ews answer `/healthz`, and the
+  vPLC listens on port 102 as uid 10001 with the sysctl.
+- `netpol.sh verify` on the live cluster before the policies: all 14 allowed paths pass, and all 5 denied
+  paths are open today (api and plant-sim to the historian, plant-sim to port 102, the plant to the
+  internet), which is the gap the policies close.
+- The retention SQL on the running TimescaleDB, on a throwaway table in a rolled-back transaction.
+  `plant_tags` holds 4.0 GB since 2026-09-15.
+- Ephemeral use per pod today: 0.1 to 12.7 MiB, under every new limit. api tests 83, scada 101.
+**Not deployed.** Day 3: the image push, `kubectl apply` of the manifests (golive), then `netpol.sh apply`.
+**Files:** `deploy/netpol.yaml`, `deploy/netpol.sh`, `deploy/api.yaml`, `deploy/engine.yaml`,
+`deploy/aggregator.yaml`, `deploy/dashboard.yaml`, `deploy/fleet.yaml`, `deploy/openplc.yaml`,
+`deploy/rogue-ews.yaml`, `plant/deploy.yaml`, `scada/deploy.yaml`, `deploy/values/prometheus.yaml`,
+`deploy/values/prometheus-exposure.yaml`, `deploy/faults.sh`, `deploy/proof-run.sh`, `deploy/refusals.sh`,
+`deploy/factory-up.sh`, `deploy/golive.sh`, `deploy/prometheus-storage.sh`, `api/main.py`, `api/fleet.py`,
+`api/tests/test_fleet.py`, `scada/tagserver.py`, `vplc/main.py`, `vplc/ews.py`, `BOOK.md` (13),
+`PIVOT_SETUP.md` (5.2b, 5.2c, 5.2e), `SCENARIOS.md` (2.4), `FLEET.md` (6), `FIELD_RESEARCH.md` (S1 to S4,
+S6, S8), `INNOVENT_LOG.md`.
+
+**LOG-096 · 2026-09-26 · The proof run measures behavior after detection. The video tools: a read-only SCADA feed page, window placement, capture.**
+**Why:** the proof run stopped at the first hit, so it never saw a root drift, a false card, or a narrator that
+rewrites itself. The video plan (POC_SCRIPT.md) needs the SCADA view beside the console and Grafana.
+**Change:**
+- `deploy/proof-run.sh`: every snapshot also records the incident status, origin, and driver, and the
+  narrator tag and text. After the first hit, PS2, PS3, PS4A, and PS4B stay on for `PROOF_HOLD_S` (120 s),
+  and `behavior()` reports root changes, the root hold against the expected root, cards on tripped
+  machines, cards without a trip, narrator texts and tags, and the incident origin and drivers. The
+  summary gets a behavior table.
+- `deploy/feed.py`: a read-only page on forge (127.0.0.1:8765, reached by SSH tunnel). Once a second one line
+  from the tag server (press-1 AMPS, TEMP, DERATE_PCT with quality, rail psu-a VOLTS), and every new ledger
+  row (fire, reset, Execute with its write and ack, relief). It only sends GET requests and logs every line
+  with its epoch time to `/var/tmp/visr-feed-<start>.log`.
+- `video/layout.ps1` (layout A or B by window title, Win32 MoveWindow) and `video/record.ps1` (ffmpeg gdigrab
+  to `video/takes/<name>.mkv`, gitignored).
+**Verified:** the embedded proof-run Python parses (483 lines). The feed ran on forge for 4 min: real lines every
+second (42.9 A, 58.2 C, DERATE 100 %, psu-a 360.2 V), the page rendered through the tunnel in the browser pane.
+`layout.ps1` compiles and places a window at the exact layout B rectangle (1280,540 to 1920,1080, tested on a
+Notepad window).
+**Not deployed.** The feed runs only for the take.
+**Files:** `deploy/proof-run.sh`, `deploy/feed.py`, `video/layout.ps1`, `video/record.ps1`, `.gitignore`,
+`POC_SCRIPT.md` (2, 4), `SCENARIOS.md` (10), `INNOVENT_LOG.md`.
+
+**LOG-097 · 2026-09-26 · Day-3 deploy of LOG-088 (api half) to LOG-096 on forge. Two catches on the way.**
+**Order:** the six running images tagged `pre-log096` in the local registry (rollback = retag), then
+`deploy/netpol.sh apply`, then `deploy/factory-up.sh` (push, golive, memory backup and wipe, PS0 watcher).
+**Catch 1, the network policies (fixed in `deploy/netpol.yaml`):** the first apply passed 19 of 20 checks and
+rolled itself back: plant-sim still reached `historian-db:5432`. A test with the plant egress policy removed
+proved the cause: in the embedded kube-router of k3s v1.35.5, a broad egress allow on the source ("any pod in
+the cluster") let a packet past the ingress policy of a pod in the SAME namespace. Cross-namespace denials held.
+The fix is precise egress per source (plant-sim, tag-server, rogue-ews, the vPLCs, from the Caretta flows)
+plus a DNS-only default, and every peer names its namespace. `netpol.sh verify` gained two same-namespace
+denied checks. The second apply passed 22 of 22, and 17 policies are in force. The live plant kept its cell
+link, 41 of 41 base tags GOOD, the historian writing, and plc-stamping in RUN with 23 GOOD tags.
+**Catch 2, the api image (fixed in `api/Dockerfile`):** the first factory-up rolled every image out hardened
+except the api, whose new pod crashed with "No module named 'advice'". The Dockerfile copied a fixed list of
+files and lacked `metrics.py` (LOG-088, so the planned PIVOT_SETUP 5.2d would have hit the same crash),
+`incident.py`, `narrator.py`, `advice.py`, and `agent.py`. The old api pod kept serving. The fixed image was
+built on forge and imported as user 10001 with a read-only root before `ONLY=api factory-up` ran.
+**Result:** golive 42 PASS, 0 failures. factory-up exit 0 at 04:16:30. Every pod Running on the new images;
+the api, the tag server, and plc-stamping run as uid 10001; rogue-ews at 0 replicas; the api Service is
+ClusterIP; `/api/health` auth enforced; `/api/incident` live; `meta.baselines` learning after the wipe. LOG-088
+verdict series live (ServiceMonitor `api-verdict`, 148 `visr_*` series in Prometheus, the plant dashboard
+applied by golive). The engine memory backup is in `~/visr-backups`.
+**Armed:** screen `visr-auto` waits for the soak (120 watcher lines, the last 30 QUIET), then runs
+`engine-baselines.sh lock`, then the full-length watch of all seven scenarios (session runner), log
+`/var/tmp/visr-auto.log`.
+**Operator, still open:** PIVOT_SETUP 5.2c (`prometheus-storage.sh apply`, sudo once: the slow-disk storage and
+the Grafana and Prometheus NodePorts close), the take (POC_SCRIPT.md).
+**Files:** `api/Dockerfile`, `deploy/netpol.yaml`, `deploy/netpol.sh`, `INNOVENT_LOG.md`.
+
+**LOG-098 · 2026-09-26 · Two fixes found on the live box after the deploy: SCADA-blind always true, and pod roots read as machines.**
+**Found on forge (04:20):** the first incident after the deploy stayed "SCADA is blind" although the tag server
+answered. `_scada_blind()` read `/healthz` with the JSON reader, and the tag server answers plain text "ok", so
+every pass failed and reported blind. The route test hid it: its fake tag server answered `/healthz` with JSON.
+The restart churn also made the engine root `openplc` by pod pressure, and the advice said "unload or stop
+openplc at the machine".
+**Change:** `_scada_blind()` uses the reachability probe `_probe()`. `api/incident.py` gives a root that is not a
+plant asset the kind `workload` ("leads the verdict on the edge node: its CPU, memory, or disk pressure moved
+first"), and `api/advice.py` suggests "check the <pod> pod on the edge node". The route test no longer fakes
+`/healthz`.
+**Verified:** api tests 85 pass (2 new). Built and pushed the api alone (`make push ONLY=api`, rollout restart);
+the live incident reads blind false.
+**Files:** `api/main.py`, `api/incident.py`, `api/advice.py`, `api/tests/test_incident.py`,
+`api/tests/test_narrator.py`, `api/tests/test_scenarios_api.py`, `INNOVENT_LOG.md`.
+
+**LOG-099 · 2026-09-26 · B5: the full-length watch on the locked baselines, and ten fixes from its numbers.**
+**Watch:** 06:17:58 to 07:36:08 on forge, right after the soak and the baseline lock (LOG-097). Scenarios 1, 2,
+3, 4A, 4B, 5, and 6, each for a fixed time with no operator action, then `reset all`. One row every 5 s with the
+incident, the advice, and the narrator tag. Evidence: forge `/var/tmp/visr-verify-20260926-061758`. Times count
+from the fire.
+
+| Scenario | 2026-09-25 (HANDOFF 00.1) | 2026-09-26, B5 |
+|---|---|---|
+| 1 | verdict gone at +326 s while press-1 is tripped, proposal and card on the tripped press | card +80 s (countdown 130 s, real 141 s), root +90 s, the incident stays open to the reset, proposal withdrawn at the trip (+221 s), no card on the tripped press |
+| 2 | root drifts to cnc-1 (a victim), cards on press-1, press-2, cnc-1 for minutes | root compressor-1 +25 s, chiller-1 drives from +377 s with its reason, the origin stays compressor-1, no victim root. Short false cards: cnc-1 for 60 s, press-1 for 45 s with a derate proposal |
+| 3 | root hmi-gw +85 s, clear 60 s | root hmi-gw +95 s (41 of 58 rows), advice "isolate hmi-gw", clear 55 s |
+| 4A | the narrator says "Steady state" for the whole attack | integrity +50 s, the narrator describes the unsigned write, advice "hold press-1" and "isolate rogue-ews", but also "isolate plant-sim" |
+| 4B | a derate proposal after the reset, a card on a press that levels off, clear 140 s | current balance +15 s, root press-1 +90 s, card for 2 passes, no proposal after the reset, clear 55 s. Advice "stop press-1" after the reset |
+| 5 | root moves to cnc-1 twice, cnc-1 card 5 min, no proposal, "rail voltage contention", 34 texts, clear 306 s | root chiller-1 +90 s (76 of 76 rows), cards +35 s (furnace-1 countdown 93 s, real 85 s), derates for press-1 then press-2 by countdown, each withdrawn at its trip, 13 texts, the incident closes 30 s after the reset |
+| 6 | "Steady state" after the kill, no restart advice, the blind gap missed | leak card +95 s (countdown 124 s, real about 115 s), blind phase caught (+211 s to +216 s), advice "restart tag-server" |
+
+On every scenario: no compressor-1 duty-cycle root (the locked baselines hold), and 4 to 15 narrator texts per
+incident. The engine root can trail a reset by up to 291 s (Scenario 5). The incident and the console do not
+wait for it.
+**Defects in the numbers, and the fixes:**
+1. `reset all` answered 503 in 6 of 7 scenarios: rogue-ews has 0 replicas outside 4A (LOG-095), so its Service
+   refused the connection. A refused connection now means "stopped": the setpoint restore still runs, the owner
+   reads `stopped`, and the catalogue reads PS4A inactive (before: PS0 unknown). `api/main.py` `_stopped()`.
+2. Empty narrator texts: one pass in Scenarios 2 and 3 (an incident without an origin yet), and after the 4A
+   reset (no sign left). The first root now becomes the origin in the same pass, and a quiet incident gets a
+   headline from its phases ("The setpoint change with no signed record is cleared.").
+3. Stale present tense: "press-1 draws 85 A" after the trip, "loop flow is 54" after the reset. The origin
+   sentence changes to "At the start, press-1 drew 85 A ..." once the origin tripped, another machine drives,
+   or the plant recovers. `reason_line(past=True)`. The console reason line uses the same words (`was`).
+4. The narrator never mentioned an operator action. A new section, `actions`, lists them ("Done so far: ...").
+5. "isolate plant-sim" in 4A: Caretta keeps a 0-byte plant-sim series on port 102 (plant-sim uses the field port
+   5020). `caretta_clients()` skips a link with 0 bytes.
+6. "stop press-1" after the 4B reset: no origin or driver advice once the incident status is `recovering`.
+7. The false trip cards: every one had its fitted time constant at the grid edge (1200 s), so the level it
+   settles at was a guess (100 to 179 °C). Every real card had 88 to 502 s. `THERMAL_TAU_MAX_S = 600`. Offline
+   replay of the watch: the Scenario 2 cnc-1 card goes. Replay of the 2026-09-25 evening: false card passes
+   press-2 9 to 3, cnc-1 2 to 0, 4B 1 to 0, idle 0. Real cards come 10 s to 20 s later, still 75 s to 130 s
+   before the trip.
+8. The api dropped `t_inf` and `tau_s` from the cards of the engine, so the console and the narrator never said where
+   a temperature settles. `/api/graph` passes them through.
+9. The Scenario 6 leak card stayed 15 s to 20 s after the restart ("limit in about 18 s"). The tracker drops a
+   tag-server leak card for 60 s after SCADA answers again.
+10. All 41 base tags read not GOOD for 10 s in 4B (+95 s), with no poll error. The base poll wrote the
+    historian inline and shared its lock with the fleet writer, so a slow write held the poll. The base poll
+    now queues its batch like the fleet polls. The historian log of that minute had rotated, so the stall
+    itself is not proven.
+**Not a defect:** Scenario 3 kept 41 of 41 base tags GOOD. `/api/tags` is the OpenPLC base path. The frozen-input
+rule of LOG-094 is on the fleet path (plc-stamping), which the runner did not record.
+**B6, the re-watch on the new images (10:22 to 11:16, after the operator's rollout restart; evidence forge
+`/var/tmp/visr-verify-20260926-102226`, the runner also records the fleet tag quality and `t_inf`):**
+- `reset all` answered 200 in 5 of 5 scenarios (B5: 1 of 7). The catalogue reads PS0 active with rogue-ews stopped.
+- Scenario 2: the origin compressor-1 at the first pass (+25 s), no empty text, chiller-1 drives from +376 s. One
+  trip card only, the real one: furnace-1 at +148 s, countdown 139 s, real 163 s, settles at 91 °C. No cnc-1 or
+  press-1 card, no false derate. The incident closed 30 s after the reset. 12 narrator texts.
+- Scenario 3: root hmi-gw +91 s, clear 57 s. The plc-stamping fleet tags went STALE twice (13 of 23 GOOD for 5 s)
+  while the field link flapped, so the LOG-094 rule shows on the fleet path.
+- Scenario 4A: the writer is rogue-ews only. After the reset: "The setpoint change with no signed record is
+  cleared. Done so far: fault-shell restored press-1 to 100 %."
+- Scenario 4B: no trip card, no proposal, the 41 base tags GOOD the whole run, no "stop press-1" after the reset.
+- Scenario 6: leak card +107 s (countdown 108 s), OOM kill about +210 s.
+**Two more fixes from B6:**
+11. The driver sentence stayed present tense while recovering ("loop flow is 71 of 120 L/min"). It is now "After
+    that, chiller-1 drove it: ... loop flow was 71 of 120 L/min."
+12. Fix 9 did not fire in Scenario 6: the kill and the restart fell between two 5 s passes, so no blind phase
+    came, the old leak card stayed 26 s, and the text stayed on "about 108 s". The tag server now reports
+    `started_at` in `/tags`. The api reads `/tags` each pass (`_scada_state()`), and a new start time is a restart
+    phase ("tag-server restarted, and SCADA answers again"), which drops the stale card and unlocks the narrator.
+**Still open (engine):** the raw top root flips to a victim for about a minute (furnace-1 in 4B, a chiller-1 tail
+at the start of Scenario 3). The incident ignores both, because their own drive is normal.
+**Verified (laptop and forge):** api 94 (9 new), correlation 89 (1 new, it fails without the cap), scada 102 in
+a python:3.11 container on forge (2 new), `next build` passes.
+**Deploy (08:43):** the running api, correlation-engine, tag-server, and dashboard images are tagged
+`pre-log099` in the box registry (rollback = retag). `make push ONLY="api correlation-engine tag-server dashboard"`
+built and pushed the new `v0.1` images on forge. The auto-mode classifier blocked the rollout restart for
+Claude, so the operator runs it. No wipe: the engine memory and `baselines.lock` stay on their volume. The
+operator restarted the four at about 10:20. Fixes 11 and 12: api, tag-server, and dashboard rebuilt and pushed
+at 11:20 (rollback tags `pre-log099b`), rollout restart again by the operator.
+**Files:** `api/main.py`, `api/incident.py`, `api/narrator.py`, `api/advice.py`, `api/integrity.py`,
+`correlation/engine/forecast.py`, `scada/tagserver.py`, `dashboard/app/Verdict.jsx`, the tests of each,
+`HANDOFF.md` (B5, B6), `SCENARIOS.md`, `BOOK.md`, `INNOVENT_LOG.md`.
+
+**LOG-100 · 2026-09-26 · The realism pass: plant values from published sources, a new Scenario 2, three more PLCs, and the SCADA read switch.**
+**Why:** the operator asked for a plant that a plant engineer accepts, with every value researched first. A
+review found three defects. The chiller relay of Scenario 2 tripped at about 1.04 times its rated current,
+and IEC 60947-4-1 says a class 10 relay must not trip at 1.05 times. The rails dropped 10 % in normal
+running (rail A at 361 V). Every cooled machine tripped at one 78 °C line, whatever its medium.
+**Plant (`plant/sim/main.py`, sources in SCENARIOS.md 12):**
+- Rails: 0.12 ohm, so a rail drops 3 to 4 % at full load (IEC 60364-5-52). Rail A idles near 386 V, and cnc-1
+  and qa-scanner-1 run at 100 %.
+- Loop `cool-1`: a supply water temperature (setpoint 28 °C, 150 L of water) and a chiller unit with a
+  capacity limit (46 kW, 1 % more per K). Heat above the capacity warms the supply for every machine.
+- chiller-1: an IEC class 10 overload relay (`Overload`, tau 283 s), ANSI 27 undervoltage (`Undervoltage`,
+  90 % for 10 s, 85 % for 2 s), a 5 min anti-recycle timer, and a 100 % RLA current limit.
+- compressor-1: an air receiver (`AirSystem`, load 6.9 bar, unload 7.5 bar, safety valve 8.5 bar), 25 %
+  current unloaded, and 80 % of its input into the loop water.
+- A trip per machine (`TRIP_LIMITS`): 80 °C press and cnc, 55 °C furnace coil water. `plant_heat_load_watts` is
+  now real heat in W, and `plant_cooling_shortfall_watts` adds the warm-supply part.
+- PS2 is new: the compressor pressure transducer fails low (5.5 bar), the compressor never unloads, and its
+  heat exceeds the chiller. Offline: supply +1 °C per minute, furnace-1 trips at +941 s, nothing else in 25 min.
+- PS7: the chiller stops on undervoltage, not on its relay. Offline: furnace-1 +270 s, press-1 +416 s.
+**Controllers:** `vplc/tasks/utilities.st` (compressor load band and run command, chiller demand limit),
+`machining.st` (cnc-1 feed enable, feed hold, feed override), `furnace.st` (heat enable, power limit). Three
+static PLCs in `deploy/fleet.yaml` (`plc-utilities`, `plc-machining`, `plc-furnace`) and `deploy/plc-tokens.sh`
+for their device tokens. `plant/deploy.yaml` wires four base cells. OpenPLC `plc/program.st` trips each
+machine at its own limit. REGISTER_MAP `%MW16` supply temperature, `%MW17` the transducer reading.
+**SCADA and the engine:** tags `SUPPLY_TEMP`, `AIR_PRESSURE`, `HEAT`, `TRIP_LIMIT`, `COOLING_SHORTFALL`. The
+SCADA read switch: `scada/cutover-servicemonitor.yaml` scrapes the tag server, and the plant-sim
+ServiceMonitor keeps only the instrument feeds (SCENARIOS.md 4.6). `deploy/engine.yaml` adds the compressor
+to the loop domain and the new PLCs to the field segment.
+**api:** `api/drift.py` trip cards from the supply water drift. A stop proposal for compressor-1 (its
+DERATE_PCT is its run command), never an action on chiller-1. Chiller reason lines: at its capacity limit,
+stopped on undervoltage, relay tripped. `deploy/console-load.sh` gives the soak one open console's reads.
+**Measured (laptop):** plant 52, scada 103, vplc 49, api 101, correlation 89 (scada and vplc in a
+python:3.11 container on forge). `ps2_lab.py` 1200 s: root compressor-1 in 46 of 60 passes from the first,
+the loop hop from +240 s, furnace-1 trips near +1000 s. `idle_lab.py`: 0 of 180 idle passes with a root
+before the fault.
+**Files:** `plant/sim/main.py`, `plant/deploy.yaml`, `plant/tests/*`, `plc/program.st`, `plc/REGISTER_MAP.md`,
+`vplc/tasks/{utilities,machining,furnace}.{st,json}`, `vplc/tests/*`, `scada/tags.py`, `scada/tests/test_tags.py`,
+`scada/cutover-servicemonitor.yaml`, `api/drift.py`, `api/main.py`, `api/fleet.py`, `api/incident.py`,
+`api/advice.py`, `api/narrator.py`, `api/tests/*`, `correlation/tests/ps2_lab.py`, `deploy/fleet.yaml`,
+`deploy/plc-tokens.sh`, `deploy/console-load.sh`, `deploy/golive.sh`, `deploy/factory-up.sh`,
+`deploy/engine.yaml`, `deploy/proof-run.sh`, `SCENARIOS.md` (status, 1, 2.0, 2.2, 2.8, 2.9, 3, 4.6, 9, 10, 12),
+`FLEET.md` (5.3, 7, 12), `BOOK.md`, `PIVOT_SETUP.md`, `POC_SCRIPT.md` (3.2), `README.md`, `INNOVENT_PLAN.md`,
+`HANDOFF.md` (J1), `INNOVENT_LOG.md`.
+
+**LOG-101 · 2026-09-26 · The LOG-100 deploy: a missing `---` removed two PLC Services, and three leftovers of the old Scenario 2.**
+**Try 1 (17:50, operator screen `visr-factory`):** `openplc-rollout.sh deploy` passed at 17:51 (probe `200 302
+plant_trips 000`), and factory-up pushed all six images. golive failed 4 checks: the utilities and machining
+cells stayed fail-open ("no route to PLC field port"), and the tag server could not enroll `plc-utilities` or
+`plc-machining`. factory-up stopped before the wipe, so the engine memory and the lock stayed as they were.
+**Cause:** `deploy/fleet.yaml` had no `---` before the three new Deployments. Each Service document ran into
+the next Deployment, the later keys won, and kubectl applied a Deployment with no error. The Services
+`plc-utilities` and `plc-machining` never existed. `plc-stamping` kept its Service only because it was
+already on the cluster. The other ten manifests parsed to the right count.
+**Fixes:**
+1. `deploy/fleet.yaml`: the three separators. A client dry run gives 12 of 12 objects.
+2. `deploy/golive.sh` preflight: each manifest must parse to one object per top-level `kind:` line, or the run
+   stops before any apply. 12 of 12 manifests pass on forge.
+3. The api catalogue still named Scenario 2 "Power sag trips the chiller" with the old mechanism, and
+   Scenario 5 said "the 78 C trip". Now "A failed pressure sensor overheats the loop". The Azure anchor
+   was checked against press reports of the Microsoft incident review: the chilled water ran too warm to
+   restart the chillers, and the capacity left could not carry the load.
+4. The console colored every machine against one trip (`plant.trip_c`, 80 °C), so furnace-1 at 52 °C read
+   calm. `Assets.jsx` and `Selected.jsx` use each device's `trip_c`. The api fallback trip is 80, and the
+   narrator example numbers follow the new rails.
+**Try 2 (18:47, operator, `ONLY="api dashboard" ALLOY=0`):** golive 53 PASS, 0 FAIL. Memory backup
+`~/visr-backups/engine-memory-20260926-185039.tar`, wipe, engine up, PS0 watcher and `visr-console-load`
+from 18:51:38. Live: four cells closed-loop, four PLCs in RUN, trips 80/80/80/55, rails 386 V and 388 V,
+supply water 29.2 °C, the chiller near 100 % load. Prometheus reads the temperatures from the tag server,
+and plant-sim serves no PLC-read signal. The auto-mode classifier blocked Claude's re-run, so the operator
+started both tries.
+**Verified:** api 101, `next build`. The re-run built the dashboard on forge from source.
+**Files:** `deploy/fleet.yaml`, `deploy/golive.sh`, `api/main.py`, `api/fleet.py`, `api/advice.py`,
+`api/incident.py`, `api/narrator.py`, `dashboard/app/Assets.jsx`, `dashboard/app/Selected.jsx`,
+`dashboard/app/lib/palette.js`, `dashboard/app/lib/mock.js`, `scada/tags.py` (a comment), `FLEET.md` (12),
+`SCENARIOS.md` (9), `BOOK.md` (17), `HANDOFF.md` (J2), `INNOVENT_LOG.md`.
+
+**LOG-102 · 2026-09-26 · The soak kit on the LOG-095 and LOG-100 box, for the one-day run after the recordings.**
+**Why:** `soak/soak.sh` could not run on the current box. The api has had no NodePort since LOG-095, and the
+kubectl proxy path cannot send the operator token, so the preflight would stop. `rogue-ews` rests at 0
+replicas, so every Scenario 4A fire would fail. The new Scenario 2 needs about 16 min to trip furnace-1 and
+about 23 min to cool, so the old 300 s window and 150 s cooldown would start the next scenario on a warm loop.
+**Change:**
+- `soak/soak.sh`: the api ClusterIP and the token from Secret `aiops/visr-auth` when neither is set (the same as
+  `deploy/proof-run.sh`). `ews 1` before a 4A fire and `ews 0` after its reset (`EWS=0` skips).
+  `OBSERVE_PS2=600`, `COOLDOWN_PS2=1500`. `OUT_ROOT` defaults to `/var/tmp/visr-soak`, so a 24 h run never
+  syncs to the laptop or lands in git.
+- `soak/record.py`: the PS2 row no longer expects a chiller trip. Every sample still records one.
+- `soak/README.md`: the run steps (after the PS0 soak and the baseline lock), the one-day screen line, one
+  cycle of about 69 min (about 21 cycles a day), the knobs. `.gitignore`: `soak/runs/`.
+**Not run yet:** the kit fires faults, so it waits for the recordings. `bash -n` passes and `record.py` parses.
+**Files:** `soak/soak.sh`, `soak/record.py`, `soak/README.md`, `.gitignore`, `HANDOFF.md` (J4), `INNOVENT_LOG.md`.
+
+**LOG-103 · 2026-09-27 · The scenario watch on the LOG-100 plant, three takes, and throughput graded against learned bands.**
+**Soak and lock (2026-09-26):** the PS0 soak passed at 20:51 (15 NOISY lines from the redeploy, then 105
+QUIET). `engine-baselines.sh lock` at 20:53. Rail B has 12 voltage updates (the maturity count), because the
+storm rule skips every window with a compressor run.
+**Watch (21:16 to 22:53, evidence forge `/var/tmp/visr-verify-20260926-211603`):** one run of each scenario,
+recorded every 5 s. Times count from the fire.
+
+| Scenario | Result |
+|---|---|
+| 1 | card +62 s, root press-1 +95 s, derate proposal, press-1 tripped +213 s (model 213 s), clear 5 s |
+| 2 | root compressor-1 +21 s (160 of 195 rows), loop edge +189 s, drift cards from +92 s, furnace-1 tripped +958 s (model 941 s), stop proposal for compressor-1, clear 694 s |
+| 3 | root hmi-gw (34 of 54 rows), clear 78 s. The origin was chiller-1 for 18 rows: the loop was still warm 18 min after the Scenario 2 reset |
+| 4A | unsigned write +56 s, writer rogue-ews, clear 5 s |
+| 4B | current balance +15 s (17 A gap on press-1 AMPS), root press-1 +94 s |
+| 5 | cards 76 s, 87 s, and 163 s before the press-1, furnace-1, and press-2 trips, root chiller-1 |
+| 6 | leak card +91 s, the restart phase caught, clear 5.5 s |
+
+**Open from the watch (tame, not fixed yet):** a current-balance finding in Scenario 3 on the
+`plc-utilities` compressor AMPS channel (gap 2.9 A against a 2.76 A threshold, while the stormed link lagged
+the compressor's load steps). Trip cards on cnc-1 in Scenario 5 (peak 77.2 °C) and press-1 in Scenario 4B,
+which settle just under their new 80 °C trip. Derate proposals for every cooled machine in Scenarios 2 and 5.
+**Takes (2026-09-26 and 27):** take 1 and take 2 by the operator, take 3 driven by Claude through the Claude
+in Chrome extension with the operator's approval of the Execute, Confirm, and Restore clicks. Take 3: fire
+7:15, root press-1 8:42, Execute 9:19, relief 9:23 (44 A, peak 75 °C, no trip), reset 10:19. `reset all` also
+restored DERATE_PCT to 100. The capture shows what a screenshot tool hides (a Claude window on top, the
+screen-control glow, the Edge debugging bar), so POC_SCRIPT.md 4 records the rules for a driven take.
+`video/record.ps1` gained `-NoCursor`, and `video/layout.ps1` gained `CONSOLE_TITLE` and `CONSOLE_TOP`.
+**Throughput grades:** since LOG-100, compressor-1 reports its load, and the console's fixed rule (under 70 %
+is a fault) showed its normal unloaded 25 % in red, with a "▼25%" derate badge, in a STEADY plant. A first
+fix hid the grade for the compressor and the chiller by name. The operator rejected it as tampering, and it
+was reverted before any deploy. The fix that stays learns each machine's range the way the engine learns
+its baselines: `engine-baselines.sh lock` (or `bands <end>`) takes p01 and p99 of `plant_throughput_pct` over
+the 2 h before the lock into ConfigMap `aiops/display-bands`. The api mounts it and attaches `thru_band` on
+`/api/plant`. The console grades every machine from its learned low edge with the old margins (18 points
+strained, 30 points hot), and shows the derate badge only under that edge. No band means the low edge 100,
+the old rule exactly. The soak of 2026-09-26 learned compressor-1 25 to 100 %, chiller-1 86.8 to 100 %, and
+every production machine 100 %. The factory-up wipe deletes the ConfigMap with the lock.
+**Verified:** api 102 (1 new), `next build`, the dev preview (compressor-1 at 25 % neutral, no badge).
+**Files:** `deploy/engine-baselines.sh`, `deploy/factory-up.sh`, `deploy/api.yaml`, `api/main.py`,
+`api/tests/test_scenarios_api.py`, `dashboard/app/lib/palette.js`, `dashboard/app/Assets.jsx`,
+`dashboard/app/Selected.jsx`, `dashboard/app/lib/mock.js`, `video/record.ps1`, `video/layout.ps1`,
+`SCENARIOS.md` (7), `FLEET.md` (11), `PIVOT_SETUP.md`, `POC_SCRIPT.md` (4), `INNOVENT_LOG.md`.

@@ -40,29 +40,44 @@ spec:
     metadata:
       labels: { app: plant-sim }
     spec:
+      automountServiceAccountToken: false
+      securityContext:              # LOG-095: non-root, the default seccomp profile
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
       containers:
       - name: plant-sim
         image: localhost:5000/skn/plant-sim:v0.1
         imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+        securityContext:              # LOG-095: no privilege escalation, no capabilities, read-only root
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: { drop: [ALL] }
         env:
           # 2F field wiring: sensors -> OpenPLC %MW words, trip coils -> contactors. The sim
           # runs OPEN-LOOP (identical to pre-2F) while this host is unreachable, so the plant
           # never depends on the PLC pod existing.
           - { name: PLC_HOST, value: "openplc.plant.svc" }
-          # 2H cells (FLEET.md 7): the base PLC plc-stamping commands press-1 and press-2 over its
-          # field port. Format: cell|host:port|failopen|machine,machine;... The cell is fail-open:
-          # while the PLC is unreachable, the presses run at full speed as before. An empty value
-          # removes every base cell.
-          - { name: BASE_CELLS, value: "stamping|plc-stamping.fleet.svc.cluster.local:5020|failopen|press-1,press-2" }
+          # 2H cells (FLEET.md 7): a base PLC commands its machines over its field port. Format:
+          # cell|host:port|failopen|machine,machine;... Every base cell is fail-open: while its PLC
+          # is unreachable, the machines run at full speed and compressor-1 follows its own pressure
+          # switch. LOG-100 adds utilities (compressor-1, chiller-1), machining (cnc-1), and
+          # thermal (furnace-1). An empty value removes every base cell.
+          - name: BASE_CELLS
+            value: "stamping|plc-stamping.fleet.svc.cluster.local:5020|failopen|press-1,press-2;utilities|plc-utilities.fleet.svc.cluster.local:5020|failopen|compressor-1,chiller-1;machining|plc-machining.fleet.svc.cluster.local:5020|failopen|cnc-1;thermal|plc-furnace.fleet.svc.cluster.local:5020|failopen|furnace-1"
           # SCENARIOS.md 2.3: the field network segment (a queue model) that the cell links cross.
           # Format: name|talkers|capacity frames per second|buffer. OpenPLC stays off the segment.
           - { name: FIELD_SEGMENTS, value: "field-1|hmi-gw|1000|50" }
         ports: [{ containerPort: 9200, name: metrics }]
         resources:
           requests: { cpu: 50m,  memory: 64Mi }
-          limits:   { cpu: 200m, memory: 128Mi }
+          limits:   { cpu: 200m, memory: 128Mi, ephemeral-storage: 128Mi }
         readinessProbe: { httpGet: { path: /healthz, port: 9200 } }
         livenessProbe:  { httpGet: { path: /healthz, port: 9200 } }
+        volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]
 ---
 apiVersion: v1
 kind: Service
@@ -91,6 +106,23 @@ spec:
     # keep the sim's OWN namespace/pod labels (they name plant ASSETS, not the
     # scraping pod) - without honorLabels Prometheus would overwrite them.
     honorLabels: true
+    # LOG-100, the SCADA read switch: the engine reads what a PLC reads through the tag server
+    # (scada/cutover-servicemonitor.yaml). This scrape keeps ONLY the instrument feeds that no PLC
+    # in this plant reads: the power meters (feeders and the incomer), the managed switch (the
+    # field segment), the chiller relay contact, and the model's own status. scada/tags.py
+    # INSTRUMENT_METRICS lists the same set.
+    metricRelabelings:
+      - sourceLabels: [__name__, pod]
+        separator: ";"
+        regex: "plant_(feeder_current_amps|net_offered_fps|net_latency_ms|net_utilization_ratio|net_drop_ratio|motor_tripped|overload_ratio|supply_nominal_volts|commanded_speed_pct|cell_connected|plc_connected|fault_active);.*|plant_(bus_voltage_volts|current_draw_amps);incomer-1"
+        targetLabel: __tmp_instrument
+        replacement: "1"
+        action: replace
+      - sourceLabels: [__tmp_instrument]
+        regex: "1"
+        action: keep
+      - regex: __tmp_instrument
+        action: labeldrop
 ---
 # Historian: a real TimescaleDB storing plant signals on the 64Gi slowdisk.
 # (Wiring the SCADA/ingest path into it is a 2B'-follow-up; the claim binds now
@@ -109,25 +141,38 @@ spec:
     metadata:
       labels: { app: historian-db }
     spec:
+      automountServiceAccountToken: false
+      securityContext:                # LOG-095: the image starts as root and drops to postgres itself
+        seccompProfile: { type: RuntimeDefault }
       containers:
       - name: timescaledb
-        image: timescale/timescaledb:latest-pg16
+        # LOG-095: pinned to the digest that ran on forge on 2026-09-26 (was the floating latest-pg16)
+        image: timescale/timescaledb:latest-pg16@sha256:ba149561ad4ddff5940d6eb0a0df60aefd1355cee1a450928f271267038fc888
+        # LOG-095: Caretta saw the historian open connections to an AWS host on port 443, the
+        # TimescaleDB usage telemetry. An air-gapped plant box sends nothing out.
+        args: ["postgres", "-c", "timescaledb.telemetry_level=off"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities: { drop: [NET_RAW] }
         env:
+        - { name: TIMESCALEDB_TELEMETRY, value: "off" }
         # LOG-076: the password lives in Secret plant/historian-auth (deploy/historian-auth.sh).
         # POSTGRES_PASSWORD acts only when the data folder is empty. A running database keeps its
         # password, so the script changes it in the database before it writes the Secret.
-        - name: POSTGRES_PASSWORD
-          valueFrom: { secretKeyRef: { name: historian-auth, key: password } }
+        - { name: POSTGRES_PASSWORD_FILE, value: "/run/secrets/historian-auth/password" }   # LOG-095: a file
         - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
         ports: [{ containerPort: 5432 }]
         resources:
           requests: { cpu: 100m, memory: 256Mi }
-          limits:   { cpu: 500m, memory: 512Mi }
+          limits:   { cpu: 500m, memory: 512Mi, ephemeral-storage: 1Gi }
         volumeMounts:
         - { name: historian-data, mountPath: /var/lib/postgresql/data }
+        - { name: historian-auth, mountPath: /run/secrets/historian-auth, readOnly: true }
       volumes:
       - name: historian-data
         persistentVolumeClaim: { claimName: historian-data }
+      - name: historian-auth
+        secret: { secretName: historian-auth }
 ---
 apiVersion: v1
 kind: Service

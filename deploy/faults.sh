@@ -20,7 +20,7 @@
 # ends the soak. Without a terminal, the fire stops unless FORCE=1.
 set -uo pipefail
 export KUBECONFIG="$HOME/.kube/config"
-API=${API:-http://127.0.0.1:30088}
+API=${API:-http://$(kubectl -n aiops get svc api -o jsonpath='{.spec.clusterIP}'):8088}   # LOG-095: the ClusterIP (no NodePort)
 ACTOR=${ACTOR:-fault-shell}
 SESSION=visr-faults
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -91,14 +91,28 @@ fire() {
       echo "STOP the PS0 soak runs (screen visr-ps0). Set FORCE=1 to fire anyway."; return 1
     fi
   fi
+  [ "$sid" = PS4A ] && { ews 1 || return 1; }
   post "/api/scenarios/$sid/trigger" "FIRED scenario ${sid#PS}"
 }
 
+# LOG-095: the test attacker rogue-ews runs only during Scenario 4A. ews 1 starts it and waits until it
+# answers, ews 0 stops it. The reset of 4A (or of all) runs first, so the api can clear it.
+ews() {
+  kubectl -n plant scale deploy/rogue-ews --replicas="$1" >/dev/null || { echo "STOP could not scale rogue-ews"; return 1; }
+  if [ "$1" = 1 ]; then
+    kubectl -n plant rollout status deploy/rogue-ews --timeout=120s >/dev/null \
+      || { echo "STOP rogue-ews did not start"; return 1; }
+    echo "rogue-ews started (Scenario 4A only)"
+  fi
+}
+
 reset() {
-  if [ "${1:-}" = all ]; then post "/api/scenarios/reset-all" "RESET all"; return; fi
+  if [ "${1:-}" = all ]; then post "/api/scenarios/reset-all" "RESET all"; ews 0; return; fi
   local sid
   sid=$(to_sid "${1:-}") || { echo "no scenario '${1:-}' (use 1, 2, 3, 4a, 4b, 5, 6, all)"; return 1; }
   post "/api/scenarios/$sid/reset" "RESET scenario ${sid#PS}"
+  [ "$sid" = PS4A ] && ews 0
+  return 0
 }
 
 usage() {

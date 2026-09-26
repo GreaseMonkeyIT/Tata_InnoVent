@@ -1,15 +1,11 @@
-# 2F CUTOVER — single-path telemetry (LOG-033 decision). Apply ONLY after the tag server has
-# proven stable on the box (values match the sim's debug tap, quality GOOD, historian rows
-# growing through at least one PS1 + PS5 run). Then, in this order:
-#
-#   kubectl apply -f scada/cutover-servicemonitor.yaml
-#   kubectl -n plant delete servicemonitor plant-sim
-#
-# From that moment Prometheus's plant_* series come from the PLC-read tag path; plant-sim's
-# /metrics remains as an UNSCRAPED debug tap (curl it directly to compare). Rollback = the
-# reverse two commands. Grafana caveat: any panel charting plant_fault_active/plant_plc_connected
-# (sim-plane meta, not PLC-readable) goes empty after cutover — check skn-plant panels and
-# either keep those on the sim tap or drop them; the engine itself queries only the parity set.
+# The SCADA read switch (LOG-033 decision, done in LOG-100). deploy/golive.sh applies this file.
+# Prometheus reads every plant signal that a PLC reads from the tag server: the OpenPLC registers
+# (temperatures, currents, rail volts, flow, pump health, throughput, trips, the supply water
+# temperature, the compressor pressure reading) and the SCADA calculated tags (heat, trip limits,
+# cooling shortfall). The plant-sim ServiceMonitor (plant/deploy.yaml) keeps only the instrument
+# feeds that no PLC reads: the power meters, the managed switch, and the chiller relay contact.
+# Rollback: kubectl -n plant delete servicemonitor tag-server, and remove the metricRelabelings
+# block of the plant-sim ServiceMonitor.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

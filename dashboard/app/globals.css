@@ -236,6 +236,25 @@ button { font-family: inherit; color: inherit; }
 .fc-row .eta { color: var(--amber); white-space: nowrap; }
 .fc-row .val { color: var(--text-weak); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .vd-narr { margin: 0; line-height: 1.5; }
+/* LOG-092: the incident record in the verdict. INCIDENT (integrity or blind, no driver) takes the alarm
+   color, RECOVERING the normal teal. The origin line and the reason are plain text under the name. */
+.vd.incident .vd-state { color: var(--red); background: var(--red-dim); }
+.vd.recovering .vd-state { color: var(--teal); background: var(--teal-dim); }
+.vd.recovering .vd-who { color: var(--text-weak); }
+.vd-origin { margin-top: -6px; font-family: var(--mono); font-size: calc(11px * var(--fz)); color: var(--text-weak); }
+.vd-origin b { color: var(--red); font-weight: 600; }
+.vd-reason { font-size: calc(12.5px * var(--fz)); line-height: 1.45; color: var(--text); }
+.c-trip { margin-left: 6px; color: var(--red); }
+.vd-ph { display: flex; flex-direction: column; gap: 3px; padding-top: 8px; border-top: 1px solid var(--line); }
+.vd-ph .ph { display: grid; grid-template-columns: 10px calc(58px * var(--fz)) minmax(0, 1fr); align-items: baseline; gap: 6px; font-family: var(--mono); font-size: calc(10.5px * var(--fz)); color: var(--text-weak); }
+.vd-ph .ph .t { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.vd-ph .ph .x { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vd-ph .ph:last-child { color: var(--text); }
+.vd-ask { display: flex; flex-direction: column; gap: 6px; }
+.vd-ask .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.vd-ask input { background: var(--void); color: var(--text); border: 1px solid var(--line-2); border-radius: 4px; padding: 4px 8px; font-family: var(--mono); font-size: calc(11.5px * var(--fz)); }
+.vd-ask .ans { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border-left: 2px solid var(--blue-edge); background: rgba(90, 95, 230, 0.06); line-height: 1.45; }
+.vd-ask .ans small { font-family: var(--mono); font-size: calc(10px * var(--fz)); color: var(--text-faint); }
 .echips { display: flex; gap: 6px; flex-wrap: wrap; }
 .echip { font-family: var(--mono); font-size: calc(11px * var(--fz)); padding: 1px 10px; border-radius: 3px; border: 1px solid var(--line-2); color: var(--text); }
 

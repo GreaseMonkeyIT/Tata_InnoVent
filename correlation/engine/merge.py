@@ -9,7 +9,7 @@ layer owns the per-signal passes.
 """
 from __future__ import annotations
 
-from .ranking import blast_radius, build_graph, rank_root_causes
+from .ranking import blast_radius, build_graph, rank_root_causes, votes
 
 # per-signal stats that sum across the merged signals
 _STAT_KEYS = ("edge_memory", "visible_memory_edges", "cases", "families", "open_mistakes", "held_edges")
@@ -33,7 +33,7 @@ def merge_graphs(per_signal: dict[str, dict], primary: str | None = None) -> dic
             # for root only when its source is a current finding of the SAME signal. A finding on
             # another signal must not wake it: a bus-voltage finding on cnc-1 let a held coolant
             # edge cnc-1 -> press-1 out-vote live evidence, and PS1 blamed cnc-1 (2026-09-19).
-            if e.get("source") != "memory" or e["src"] in own:
+            if (e.get("source") != "memory" or e["src"] in own) and votes(e):
                 voting.append(tagged)
         for f in g.get("findings", []) or []:
             findings.append({**f, "signal": f.get("signal", sig)})

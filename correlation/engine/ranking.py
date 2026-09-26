@@ -13,6 +13,22 @@ DECAY = 0.7
 CUT = 0.15
 UPSTREAM_PENALTY = 0.5
 
+# LOG-090: on a rail every member sees the same bus voltage, and in a coolant loop the temperatures are
+# slow integrators, so the member with the shortest time constant (cnc-1, 90 s) always seems to lead.
+# A bare correlation between two such members is not a cause. On these media an edge votes for root
+# only with source evidence (the leader's load or lost cooling moved first) or common-mode evidence.
+# It still renders as context. The network medium keeps bare votes: segment latency differs per member.
+SOURCE_ONLY_MEDIA = ("rail", "loop")
+VOTING_EVIDENCE = ("write", "common_mode")
+
+
+def votes(edge: dict) -> bool:
+    """True when this edge may vote for root. A bare rail or loop edge may not."""
+    ev = edge.get("evidence") or []
+    if not any(k in ev for k in SOURCE_ONLY_MEDIA):
+        return True
+    return any(k in ev for k in VOTING_EVIDENCE)
+
 
 def build_graph(edges: list[dict]) -> nx.DiGraph:
     g = nx.DiGraph()

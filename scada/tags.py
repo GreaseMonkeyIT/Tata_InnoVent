@@ -17,29 +17,55 @@ invented; the engine correctly sees a gap instead of a lie.
 """
 from __future__ import annotations
 
+import math
 import time
 
 NS = "plant"
 MW = 1024            # OpenPLC %MW0 offset in holding space (PLC_MW_BASE; REGISTER_MAP.md)
 N_REGS = 32          # MW0..31 read block
-TRIP_C = 78.0
 
 # Static plant topology — mirrors plant/sim/main.py DEVICES (order = the register contract).
-# heat_k is the sim's thermal calibration; carried here as SCADA calibration data.
+# heat_frac (share of electrical power into the loop water) and trip_c (the OpenPLC trip) are
+# SCADA calibration data, the same values as the sim (LOG-100).
 MACHINES = [
-    # name           rail     cooled  heat_k
-    ("press-1",      "psu-a", True,   0.55),
-    ("press-2",      "psu-a", True,   0.55),
-    ("cnc-1",        "psu-a", True,   0.55),
-    ("qa-scanner-1", "psu-a", False,  None),
-    ("conveyor-1",   "psu-b", False,  None),
-    ("compressor-1", "psu-b", False,  None),
-    ("furnace-1",    "psu-b", True,   1.0),
-    ("chiller-1",    "psu-b", False,  None),
+    # name           rail     cooled  heat_frac  trip_c
+    ("press-1",      "psu-a", True,   0.5,       80.0),
+    ("press-2",      "psu-a", True,   0.5,       80.0),
+    ("cnc-1",        "psu-a", True,   0.4,       80.0),
+    ("qa-scanner-1", "psu-a", False,  None,      None),
+    ("conveyor-1",   "psu-b", False,  None,      None),
+    ("compressor-1", "psu-b", False,  0.8,       None),   # water-cooled: heat, no temperature
+    ("furnace-1",    "psu-b", True,   0.3,       55.0),
+    ("chiller-1",    "psu-b", False,  None,      None),
 ]
 COOLED = [m[0] for m in MACHINES if m[2]]          # press-1, press-2, cnc-1, furnace-1
+HEATED = [m[0] for m in MACHINES if m[3]]          # every machine that heats the loop water
+TRIP_LIMITS = {m[0]: m[4] for m in MACHINES if m[4] is not None}
+TRIP_C = TRIP_LIMITS["press-1"]                    # the press trip, kept for older readers
 RAILS = ["psu-a", "psu-b"]
 LOOP = "cool-1"
+CHILLER = "chiller-1"
+COMPRESSOR = "compressor-1"
+# Loop calibration for the calculated cooling shortfall (the same formula as the sim).
+PF_NOMINAL = 0.85
+LOOP_T_SETPOINT = 28.0
+FLOW_DESIGN_LPM = 120.0
+CP_KJ_PER_KG_K = 4.186
+
+
+def heat_w(frac: float, volts: float, amps: float) -> float:
+    """A SCADA calculated tag: the heat a machine puts into the loop water, in W."""
+    return frac * math.sqrt(3.0) * volts * amps * PF_NOMINAL
+
+
+def shortfall_w(heats: dict, flow: float, t_supply: float) -> float:
+    """The cooling the machines lose against design, in W (plant/sim/main.py cooling_shortfall):
+    flow below design keeps q(1/s - 1) at each cooled machine, and supply water above the
+    setpoint carries cp * design flow * the excess back to all of them."""
+    share = max(flow / FLOW_DESIGN_LPM, 0.05)
+    q = sum(heats.values()) / 1000.0
+    kw_per_k = CP_KJ_PER_KG_K * FLOW_DESIGN_LPM / 60.0
+    return 1000.0 * max(0.0, q * (1.0 / share - 1.0) + kw_per_k * max(0.0, t_supply - LOOP_T_SETPOINT))
 
 _tagname = lambda asset, sig: f"PLANT.{asset.upper().replace('-', '_')}.{sig}"
 
@@ -64,12 +90,18 @@ def tag_table() -> list[dict]:
         add(name, "THROUGHPUT", "pct", "measured", f"%MW{24 + i}", 10)
     for i, name in enumerate(COOLED):                       # coils 0..3 trips
         add(name, "TRIP", "bool", "measured", f"%QX0.{i}", None)
+    add(LOOP, "SUPPLY_TEMP", "degC", "measured", "%MW16", 10)          # LOG-100
+    add(COMPRESSOR, "AIR_PRESSURE", "bar", "measured", "%MW17", 100)  # the transducer reading
     for name, rail, *_r in MACHINES:                        # derived: volts a machine sees
         add(name, "VOLTS", "V", "derived", f"= {_tagname(rail, 'VOLTS')}", None)
-    for name in COOLED:                                     # derived: heat = k * I
-        k = next(m[3] for m in MACHINES if m[0] == name)
-        add(name, "HEAT", "W", "derived", f"= {k} * {_tagname(name, 'AMPS')}", None)
-    add(LOOP, "TRIP_LIMIT", "degC", "derived", f"= const {TRIP_C}", None)
+    for name, _rail, _c, frac, _t in MACHINES:              # derived: heat into the loop water
+        if frac:
+            add(name, "HEAT", "W", "derived",
+                f"= {frac} * sqrt3 * {_tagname(name, 'VOLTS')} * {_tagname(name, 'AMPS')} * {PF_NOMINAL}", None)
+    for name, limit in TRIP_LIMITS.items():                 # derived: each machine's own trip
+        add(name, "TRIP_LIMIT", "degC", "derived", f"= const {limit}", None)
+    add(CHILLER, "COOLING_SHORTFALL", "W", "derived",
+        f"= heat * (1/share - 1) + cp * design flow * ({_tagname(LOOP, 'SUPPLY_TEMP')} - {LOOP_T_SETPOINT})", None)
     return t
 
 
@@ -97,10 +129,18 @@ def decode(regs: list[int] | None, coils: list[bool] | None, ts: float) -> dict[
             put(name, "AMPS", amps)
             put(name, "VOLTS", rail_v[rail])                 # derived
             put(name, "THROUGHPUT", regs[24 + i] / 10.0)
-        for name, rail, cooled, heat_k in MACHINES:          # derived heat
-            if cooled:
-                put(name, "HEAT", heat_k * out[_tagname(name, "AMPS")]["value"])
-        put(LOOP, "TRIP_LIMIT", TRIP_C)
+        put(LOOP, "SUPPLY_TEMP", regs[16] / 10.0)
+        put(COMPRESSOR, "AIR_PRESSURE", regs[17] / 100.0)
+        cooled_heat = {}
+        for name, rail, cooled, frac, _t in MACHINES:        # derived heat into the loop water
+            if frac:
+                w = heat_w(frac, rail_v[rail], out[_tagname(name, "AMPS")]["value"])
+                put(name, "HEAT", w)
+                if cooled:
+                    cooled_heat[name] = w
+        for name, limit in TRIP_LIMITS.items():
+            put(name, "TRIP_LIMIT", limit)
+        put(CHILLER, "COOLING_SHORTFALL", shortfall_w(cooled_heat, regs[4] / 10.0, regs[16] / 10.0))
     if coils is not None:
         for i, name in enumerate(COOLED):
             put(name, "TRIP", 1.0 if (i < len(coils) and coils[i]) else 0.0)
@@ -131,6 +171,9 @@ _METRIC = {
     "THROUGHPUT": "plant_throughput_pct",
     "TRIP": "plant_trip_active",
     "TRIP_LIMIT": "plant_trip_threshold_celsius",
+    "SUPPLY_TEMP": "plant_supply_temp_celsius",
+    "AIR_PRESSURE": "plant_air_pressure_bar",
+    "COOLING_SHORTFALL": "plant_cooling_shortfall_watts",
 }
 
 
@@ -153,4 +196,15 @@ def engine_parity_metrics() -> set[str]:
     cutover contract. Tested so a rename here can't silently break the repoint."""
     return {"plant_bus_voltage_volts", "plant_current_draw_amps", "plant_temp_celsius",
             "plant_coolant_flow_lpm", "plant_heat_load_watts", "plant_throughput_pct",
-            "plant_trip_threshold_celsius"}
+            "plant_trip_threshold_celsius", "plant_cooling_shortfall_watts"}
+
+
+# LOG-100: the series that stay on plant-sim after the cutover, because no PLC in this plant reads
+# them. A real plant reads them from other instruments: the power meters (energy monitoring), the
+# managed switch (SNMP), and the chiller's own relay contacts. The plant-sim ServiceMonitor
+# (plant/deploy.yaml metricRelabelings) keeps exactly these. The rest comes from the tag server.
+INSTRUMENT_METRICS = {"plant_feeder_current_amps", "plant_net_offered_fps", "plant_net_latency_ms",
+                      "plant_net_utilization_ratio", "plant_net_drop_ratio", "plant_motor_tripped",
+                      "plant_overload_ratio", "plant_supply_nominal_volts", "plant_commanded_speed_pct",
+                      "plant_cell_connected", "plant_plc_connected", "plant_fault_active"}
+INSTRUMENT_BOARD = {"plant_bus_voltage_volts", "plant_current_draw_amps"}   # for pod incomer-1 only

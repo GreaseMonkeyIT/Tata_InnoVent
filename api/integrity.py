@@ -260,13 +260,19 @@ def set_clients(state, event, clients):
 
 
 def caretta_clients(result, plc: str, port: str = "102", exclude=("tag-server",)) -> list[str]:
-    """Workloads that Caretta saw talk to the PLC on its protocol port, other than the tag server."""
+    """Workloads that Caretta saw talk to the PLC on its protocol port, other than the tag server. A link
+    with 0 bytes is skipped: Caretta keeps such a series for plant-sim on port 102, although plant-sim
+    uses the field port (LOG-099, Scenario 4A named plant-sim as a writer)."""
     out = set()
     for s in result or []:
         m = s.get("metric") or {}
         c = m.get("client_name")
+        try:
+            quiet = "value" in s and float(s["value"][1]) <= 0
+        except (TypeError, ValueError, IndexError):
+            quiet = False
         if m.get("server_name") == plc and str(m.get("server_port")) == str(port) and c \
-                and c not in exclude and c != plc:
+                and c not in exclude and c != plc and not quiet:
             out.add(c)
     return sorted(out)
 

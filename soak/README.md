@@ -16,7 +16,7 @@ a real engine on a live model, not a scripted replay.
 | `soak.sh` | The loop: baseline, fire a fault, sample the verdict, reset, cool down. It repeats for `DURATION_H`. |
 | `record.py` | Flattens each `/api/graph` snapshot to `samples.jsonl` + `timeline.csv`, and builds `report.html`. |
 | `report_template.html` | The report page (dark theme, vanilla SVG, no external libraries, works offline). |
-| `runs/<timestamp>/` | One folder per run: `samples.jsonl`, `timeline.csv`, `meta.json`, `soak.log`, `report.html`. |
+| `/var/tmp/visr-soak/<id>/` (`OUT_ROOT`) | One folder per run on the box: `samples.jsonl`, `timeline.csv`, `meta.json`, `soak.log`, `report.html`. |
 
 ## Requirements
 
@@ -26,29 +26,34 @@ python3**. It needs no extra packages and no internet.
 ## Run it
 
 1. Warm the stack first. **PS0 must be silent** (`/api/graph` shows `findings: []`) before you trust
-   cycle 1. After a restart, run the long PS0 soak from `POC_SCRIPT.md` step 0.3. This harness fires
-   faults, so it cannot run that soak. `deploy/factory-up.sh` starts a PS0 watcher that fires nothing.
-2. If the API enforces 2E auth, forward the API port and export the operator token:
-
-   ```bash
-   kubectl port-forward svc/api -n aiops 8088:8088 &
-   export API_BASE=http://localhost:8088
-   export VISR_OPERATOR_TOKEN=<operator-token from the visr-auth Secret>
-   ```
-
-3. Start the soak from the repo root:
+   cycle 1. After a restart or a `deploy/factory-up.sh`, let the PS0 watcher pass (the last 30 lines of
+   `/var/tmp/visr-ps0-soak.log` QUIET), then lock the baselines with `deploy/engine-baselines.sh lock`.
+   Locked, the faults of this harness cannot teach the engine that a fault is normal (LOG-089). This
+   harness fires faults, so it cannot run the PS0 soak itself.
+2. Start the soak from the repo root on the box. It finds the api by its ClusterIP and reads the operator
+   token from Secret `aiops/visr-auth` (LOG-102), so it needs no port-forward and no pasted token:
 
    ```bash
    bash soak/soak.sh                  # 3 hours, scenarios PS1 PS2 PS3 PS4A PS4B PS5, sample every 12s
    ```
 
-4. Stop early with **Ctrl-C** if you need to. The script still builds the report from the captured
-   samples. At the end it prints the report path. Open `soak/runs/<id>/report.html` in a browser.
+   For the one-day run, start it in a screen, so it survives the SSH session:
 
-Without `API_BASE`, the script uses the **kubectl service proxy**
-(`/api/v1/namespaces/aiops/services/api:8088/proxy/...`). That path cannot send the operator token,
-so it works only with auth disabled. If the API enforces auth and no token is set, the preflight
-check stops the run.
+   ```bash
+   screen -dmS visr-soak24 bash -c 'DURATION_H=24 bash ~/Tata_InnoVent/soak/soak.sh'
+   ```
+
+3. Stop early with **Ctrl-C** (or `screen -S visr-soak24 -X quit`). The script still builds the report
+   from the captured samples. At the end it prints the report path, `/var/tmp/visr-soak/<id>/report.html`.
+   Copy that file to the laptop to open it.
+
+**One cycle takes about 69 minutes** with the defaults: 6.5 min for each of PS1, PS3, PS4A, PS4B, and PS5,
+and 36 min for PS2 (1 min baseline, 10 min fault, 25 min for the loop to cool). A 24 h run gives about 21
+cycles. Nothing else may use the plant during the run: no demo, no recording, and no proof run.
+
+`API_BASE` overrides the api address. With no ClusterIP, the script falls back to the kubectl service
+proxy (`/api/v1/namespaces/aiops/services/api:8088/proxy/...`), which cannot send the token, so it works
+only with auth disabled. If the API enforces auth and no token is found, the preflight check stops the run.
 
 ### Knobs (all env vars)
 
@@ -59,16 +64,18 @@ check stops the run.
 | `SAMPLE_S` | `12` | Seconds between verdict samples. |
 | `BASELINE_S` / `OBSERVE_S` / `COOLDOWN_S` | `60` / `180` / `150` | Watch windows before the fire, during the fault, and after the reset. |
 | `NARR_EVERY` | `5` | Capture `/api/narrative` every Nth sample (it is LLM-backed, so the script keeps it sparse). |
-| `OUT_ROOT` | `soak/runs` | Where runs go. Point it elsewhere to keep runs off the synced folder. |
-| `API_BASE` | _(unset)_ | If set (for example `http://localhost:8088`), the script uses `curl`. Otherwise it uses the kubectl service proxy. |
-| `VISR_OPERATOR_TOKEN` | _(unset)_ | The 2E operator token. The script sends it as `X-Auth-Token` on the curl path. |
+| `OBSERVE_<ID>` / `COOLDOWN_<ID>` | `OBSERVE_PS2=600`, `COOLDOWN_PS2=1500`, `OBSERVE_PS6=420`, `COOLDOWN_PS6=240` | Per-id windows. They win over the global values. |
+| `EWS` | `1` | Start `rogue-ews` before PS4A and stop it after the reset (LOG-095). `0` leaves it alone. |
+| `OUT_ROOT` | `/var/tmp/visr-soak` | Where runs go. Box-local, so a run never lands in the synced repo folder (LOG-102). |
+| `API_BASE` | the api ClusterIP | The api address for `curl`. With no ClusterIP, the kubectl service proxy. |
+| `VISR_OPERATOR_TOKEN` | Secret `aiops/visr-auth` | The 2E operator token. The script sends it as `X-Auth-Token` on the curl path. |
 
 ## Rebuild the report from an existing run
 
 The report is a view over the captured data. You can rebuild it at any time, also mid-run:
 
 ```bash
-python3 soak/record.py report soak/runs/<id> soak/report_template.html
+python3 soak/record.py report /var/tmp/visr-soak/<id> soak/report_template.html
 ```
 
 ## What the report shows
@@ -84,7 +91,7 @@ python3 soak/record.py report soak/runs/<id> soak/report_template.html
 
 - A fresh deploy needs the engine warm-up (LOG-035) before PS0 is silent. Start the soak after that.
 - Every fire and reset lands in the 2E audit ledger with the actor `soak`.
-- `runs/` grows over a long run (a few MB of JSONL). It lives in the synced folder. Set
-  `OUT_ROOT=/var/tmp/soak` to keep runs local to the box.
+- A run grows over a long run (a few MB of JSONL). It stays in `/var/tmp/visr-soak` on the box. An
+  older run in `soak/runs/` is ignored by git.
 - The harness only *reads* the verdict and *fires the existing console scenarios*. It changes
   nothing in the engine or the product.

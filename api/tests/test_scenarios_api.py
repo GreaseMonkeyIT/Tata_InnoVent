@@ -47,7 +47,7 @@ def api(tmp_path, monkeypatch):
         "engine": {"root_cause_ranking": [], "edges": [], "blast_radius": [], "findings": [], "meta": {}},
         "caretta": [{"metric": {"client_name": "rogue-ews", "server_name": "plc-stamping", "server_port": "102"}},
                     {"metric": {"client_name": "tag-server", "server_name": "plc-stamping", "server_port": "102"}}],
-        "down": set(),
+        "down": set(), "stopped": set(),
     }
     posts, calls = [], []
 
@@ -55,12 +55,15 @@ def api(tmp_path, monkeypatch):
         u = urlsplit(url)
         if u.hostname in world["down"]:
             raise urllib.error.URLError("connection refused")
+        if u.hostname in world["stopped"]:                   # a Service with no endpoints
+            raise urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
         return u.hostname, u.path
 
     def fake_get(url, timeout=8):
         host, path = route(url)
         table = {("plant.test", "/state"): world["plant"], ("scada.test", "/fleet"): world["scada"],
                  ("scada.test", "/tags"): world["tags"], ("scada.test", "/chaos"): world["chaos"],
+
                  ("ews.test", "/state"): world["ews"], ("engine.test", "/graph"): world["engine"],
                  ("prom.test", "/api/v1/query"): {"data": {"result": world["caretta"]}}}
         if (host, path) not in table:
@@ -110,6 +113,11 @@ def test_catalogue_lists_every_id_and_reads_active_from_each_owner(api):
     world["down"].add("ews.test")
     act = {s["id"]: s["active"] for s in client.get("/api/scenarios").json()}
     assert act["PS4A"] is None and act["PS0"] is None and act["PS2"] is True
+    world["down"].discard("ews.test")
+    world["stopped"].add("ews.test")                          # LOG-099: rogue-ews at 0 replicas is no fault
+    world["plant"]["active_faults"], world["chaos"]["active"] = [], False
+    act = {s["id"]: s["active"] for s in client.get("/api/scenarios").json()}
+    assert act["PS4A"] is False and act["PS0"] is True
 
 
 def test_trigger_dispatches_to_each_owner(api):
@@ -183,6 +191,13 @@ def test_reset_all_resets_every_owner_with_one_row(api):
     last = main.AUDIT.entries()[-1]
     assert (last["target"], last["status"]) == ("ALL", "error") and last["evidence"]["owners"]["ews"] == "error"
     assert last["evidence"]["owners"]["plant"] == "reset"
+    world["down"].discard("ews.test")
+    world["stopped"].add("ews.test")                          # LOG-099: a stopped rogue-ews passes the reset
+    world["scada"] = _scada(derate=30)
+    r = client.post("/api/scenarios/reset-all", headers=H)
+    assert r.status_code == 200, r.text
+    assert r.json()["owners"] == {"plant": "reset", "scada": "reset", "ews": "stopped"}
+    assert calls[-1][1] == "http://scada.test:9300/fleet/plc-stamping/write"   # the setpoint is still restored
 
 
 # --------------------------------------------------------------- integrity --
@@ -298,4 +313,49 @@ def test_plant_entities_include_segments_and_members(api):
                                                           "plc-stamping": {"kind": "plc"}}}}
     main._PLANT_ENTITIES_TS = 0.0
     assert {"field-1", "hmi-gw", "plc-stamping", "press-1", "psu-a"} <= main._plant_entities()
-    assert main.SIGNAL_RESOURCE["field_latency"] == "field network latency"
+    assert "field network" in main.narrator.EVIDENCE_WORDS["net"]      # LOG-093 words, not resource labels
+
+
+# ------------------------------------------------ incident, narrator, ask (LOG-092, LOG-093) --
+def test_incident_narrative_and_ask_routes(api):
+    main, client, _, world, _, _ = api
+    assert client.get("/api/incident").json()["active"] is None
+    steady = client.get("/api/narrative").json()
+    assert steady["source"] == "steady" and steady["text"].startswith("Steady:")
+    world["engine"] = {"root_cause_ranking": [{"pod": "press-1", "score": 0.9, "onset_s": 80.0}],
+                       "edges": [{"src": "press-1", "dst": "psu-a", "r": 0.9, "lag_s": 5,
+                                  "evidence": ["write", "rail", "temporal"]}],
+                       "blast_radius": [{"pod": "psu-a", "impact": 0.6, "eta_s": 5}],
+                       "findings": [{"pod": "psu-a", "onset_s": 80.0}], "meta": {}}
+    world["plant"]["devices"]["press-1"]["amps"] = 85.0
+    main._NORMAL_AMPS.update(ts=1e12, map={"press-1": 43.0})
+    main._incident_pass(now=1000.0)
+    main._incident_pass(now=1005.0)
+    inc = client.get("/api/incident").json()["active"]
+    assert inc["origin"]["asset"] == "press-1" and "85 A" in inc["origin"]["reason"]
+    n = client.get("/api/narrative").json()
+    assert n["incident"] == inc["id"] and n["tag"] == inc["tag"] and n["source"] in ("template", "llm", "mixed")
+    assert n["sections"]["headline"].startswith("press-1 started an incident")
+    assert client.get("/api/ask").status_code == 400
+    assert client.get("/api/ask", params={"q": "why press-1?"}).json()["source"] == "fallback"   # no model here
+
+
+# ------------------------------------------------------------- display bands (LOG-103) --
+def test_plant_carries_the_learned_display_bands(api, tmp_path):
+    """A machine with a learned band gets thru_band. No file, or a bad file: no band, nothing else changes."""
+    main, client, _, world, _, _ = api
+    world["plant"]["devices"]["compressor-1"] = {"amps": 13.7, "throughput": 25.0, "rail": "psu-b"}
+    main.BANDS_FILE = str(tmp_path / "missing.json")
+    s = client.get("/api/plant").json()
+    assert "thru_band" not in s["devices"]["compressor-1"] and "display_bands" not in s
+    f = tmp_path / "bands.json"
+    f.write_text('{"signal": "plant_throughput_pct", "quantiles": [0.01, 0.99], "hours": 2, '
+                 '"end": "2026-09-26T20:51:00+0530", "bands": {"compressor-1": [25.0, 100.0], "press-1": [100.0, 100.0]}}')
+    main.BANDS_FILE = str(f)
+    s = client.get("/api/plant").json()
+    assert s["devices"]["compressor-1"]["thru_band"] == [25.0, 100.0]
+    assert s["devices"]["press-1"]["thru_band"] == [100.0, 100.0]
+    assert s["display_bands"]["hours"] == 2 and s["display_bands"]["end"].startswith("2026-09-26T20:51")
+    f.write_text("not json")
+    world["plant"]["devices"]["compressor-1"] = {"amps": 13.7, "throughput": 25.0, "rail": "psu-b"}   # a fresh read
+    assert "thru_band" not in client.get("/api/plant").json()["devices"]["compressor-1"]

@@ -17,7 +17,7 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Any
 
-from .ranking import blast_radius, build_graph, rank_root_causes
+from .ranking import blast_radius, build_graph, rank_root_causes, votes
 
 
 SCHEMA_VERSION = "l3-memory-v5"  # v5: + baselines (per-workload steady-state; incident = deviation)
@@ -92,6 +92,11 @@ class GraphMemory:
     def __init__(self, db_path: str, config: MemoryConfig | None = None):
         self.db_path = db_path
         self.config = config or MemoryConfig()
+        # Learn, then lock (LOG-089). While locked, a MATURE baseline never changes, so a long fault
+        # cannot teach the engine its own plateau (2026-09-25: a 17 min PS2 left rail B flagging
+        # every normal compressor cycle). An immature baseline (a new asset) still learns until it
+        # matures. The service sets this from the lock file on every pass.
+        self.locked = False
         parent = os.path.dirname(db_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -489,7 +494,7 @@ class GraphMemory:
             # writer). Live edges always vote; they were formed from this pass's data.
             finding_pods = {f["pod"] for f in graph.get("findings", [])}
             rank_edges = [e for e in out["edges"]
-                          if e.get("source") != "memory" or e["src"] in finding_pods]
+                          if (e.get("source") != "memory" or e["src"] in finding_pods) and votes(e)]
             g = build_graph(rank_edges)
             seeds = [f["pod"] for f in graph.get("findings", [])]
             onset_s = {f["pod"]: f.get("onset_s") for f in graph.get("findings", [])}
@@ -664,6 +669,8 @@ class GraphMemory:
                 )
                 continue
             n, omed, omad = int(row["n"]), float(row["median"]), float(row["mad"])
+            if n >= cfg.base_min_n and self.locked:
+                continue  # locked: a mature baseline keeps what the soak taught it
             if n >= cfg.base_min_n and float(np.percentile(arr, 90)) > omed + cfg.dev_k * max(omad, cfg.mad_floor):
                 continue  # this workload is storming -> don't learn it into the baseline
             a = cfg.base_alpha

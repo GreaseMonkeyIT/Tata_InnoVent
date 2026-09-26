@@ -11,6 +11,15 @@ this file disagree, fix one of them in the same change.
 soak passed at 14:54. The third box proof run passed all seven scenarios and every refusal. PS2 passed for the
 first time: root `compressor-1` with the loop hop after 304 s.
 
+**Realism pass (LOG-100, 2026-09-26).** Each new plant value comes from a published source or is marked a
+project choice (section 12). The rails drop 3 to 4 % at full load, not 10 %. The loop has a supply water
+temperature and a chiller with a capacity limit, an IEC class 10 overload relay, ANSI 27 undervoltage
+protection, and an anti-recycle timer. compressor-1 has an air receiver and a load and unload band, and it
+gives 80 % of its input to the loop water. Each cooled machine trips at its own limit. PS2 has a new fault
+(section 2.2), and PS7 now stops the chiller on undervoltage (section 2.8). Three more PLCs command the
+utilities, cnc-1, and furnace-1 (FLEET.md), and the engine reads the plant through SCADA (section 4.6).
+The images went live on forge at 18:51 on 2026-09-26, after one failed try (LOG-101).
+
 **Supply boundary (2026-09-20, this change).** The plant had no supply above its rails. `Rail.step` used a
 constant source voltage, so every sag in the model started inside the plant. A power quality meter at the
 distribution board measures the supply above the plant load, and that measurement separates an external cause
@@ -32,13 +41,13 @@ anchor. The plant plane is a physics model and says so. The inference on top of 
 |---|---|---|---|---|---|
 | PS0 | Steady plant | none | all | none | No root, no findings, no integrity finding |
 | PS1 | Rail-sag cascade | plant-sim | plant | Milford Haven refinery, 1994: 275 alarms in the last 11 minutes | Root `press-1` along rail `psu-a` |
-| PS2 | A stuck load trips the chiller | plant-sim | plant | Azure Australia East, 2023: the chillers tripped and the cooling cascade followed. PS2 reproduces the cascade. PS7 reproduces the trigger. | Root `compressor-1`. Chain: rail `psu-b`, then `chiller-1` trips, then loop `cool-1`, then the cooled machines. Trip forecasts. |
+| PS2 | A failed pressure sensor overheats the loop | plant-sim | plant | Azure Australia East, 2023: the cooling capacity left could not carry the heat load. PS2 reproduces that cascade. PS7 reproduces the power-sag trigger. | Root `compressor-1`. Chain: its heat into loop `cool-1`, `chiller-1` at its capacity limit, then the cooled machines. Trip cards from the supply water drift. |
 | PS3 | Control network storm | plant-sim (segment model) | network | Browns Ferry Unit 3, 2006: network traffic stopped both recirculation pump drives | Root `hmi-gw` along segment `field-1`. The stamping cell link lags and drops. |
 | PS4A | Setpoint write with no record | `rogue-ews` pod | integrity | Stuxnet 2010, FrostyGoop 2024, Ukraine grid 2015 | Integrity finding `unsigned_write` on `FLEET.PLC_STAMPING.PRESS_1.DERATE_PCT` |
 | PS4B | Current report contradicts the feeder | plant-sim | integrity | Stuxnet replayed normal values. Buncefield 2005: a stuck gauge. | Integrity finding `current_balance` on rail `psu-a`, channel `FLEET.PLC_STAMPING.PRESS_1.AMPS` |
-| PS5 | Coolant pump degradation | plant-sim | plant | LG Polymers, Visakhapatnam, 2020: the tank heated with no sensor at the top | Root `chiller-1` (its cooling shortfall leads the loop), and trip forecast cards before the 78 °C trip |
+| PS5 | Coolant pump degradation | plant-sim | plant | LG Polymers, Visakhapatnam, 2020: the tank heated with no sensor at the top | Root `chiller-1` (its cooling shortfall leads the loop), and trip forecast cards before each machine's trip |
 | PS6 | The monitor runs out of memory | tag-server | edge | Toyota, 2023: a full disk stopped 12 plants. Northeast blackout, 2003: the alarm system stopped with no warning. | Forecast card class `leak` on `tag-server`. After the kill, the console shows that the SCADA view is blind. |
-| PS7 | The supply dips and the plant loses cooling | plant-sim | plant | Azure Australia East, 2023: an external supply disturbance tripped the chillers. | Root `incomer-1`, never a machine. Chain: supply `incomer-1`, then every rail, then `chiller-1` trips, then loop `cool-1`, then the cooled machines. |
+| PS7 | The supply dips and the plant loses cooling | plant-sim | plant | Azure Australia East, 2023: an external supply disturbance tripped the chillers. | Root `incomer-1`, never a machine. Chain: supply `incomer-1`, then every rail, then `chiller-1` stops on undervoltage, then loop `cool-1`, then the cooled machines. |
 
 **IDs:** upper case, `^PS[0-9]+[A-Z]?$`. The API and plant-sim change a lower-case id to upper case.
 **Display names (LOG-078):** the console and the deck show "Scenario 1" for PS1. The fault rows show the
@@ -51,7 +60,9 @@ number only. The API, the scripts, the ledger, and this file keep the PS IDs.
 
 ### 2.0 Thermal time constants
 
-OpenPLC trips a cooled machine at 78 C and latches the trip. The engine holds a plant root until a signal stays
+OpenPLC trips a cooled machine at its own limit and latches the trip: 80 °C for the press hydraulic oil and
+the cnc-1 spindle motor, and 55 °C for the furnace-1 coil cooling water (LOG-100, section 12). Until LOG-100
+every machine tripped at 78 °C. The engine holds a plant root until a signal stays
 out of band for most of 2 min (`GATE_Q=35`), so a root takes about 80 s. A scenario must leave that time before
 the first trip. The time constants are press-1 120 s, press-2 165 s, cnc-1 90 s, and furnace-1 270 s (LOG-070).
 At the old 30 to 90 s, press-1 tripped 77 s after PS1, before the verdict. The temperature noise per tick is
@@ -62,57 +73,86 @@ Offline with these constants: PS1 trips press-1 at about +220 s when nobody acts
 prevents the trip. PS2 shows the loop hop at +130 s, before the first trip at +160 s. In PS5 every tripped
 machine gets its own card first (furnace-1 86 s ahead, press-1 117 s ahead).
 
+Offline after LOG-100 (plant model alone, seed 7, the OpenPLC latch emulated): PS1 trips press-1 at +213 s.
+PS5 trips press-1 at +124 s, furnace-1 at +132 s, and press-2 at +262 s. PS2 trips furnace-1 at +941 s. PS7
+trips furnace-1 at +270 s, press-1 at +416 s, press-2 at +543 s, and cnc-1 at +556 s. The PS5 trips come
+sooner than before LOG-100, so the next box watch must confirm that each card still leads its trip.
+
 ### 2.1 PS1 (unchanged)
 
 `press-1.friction` goes to 1.9. Reset puts it back to 1.0.
 
-### 2.2 PS2: power sag trips the chiller
+### 2.2 PS2: a failed pressure sensor overheats the loop (LOG-100)
 
-**Fault:** `compressor-1` duty becomes 1.0 (stuck on), as before.
+**Why it changed.** The old PS2 tripped the chiller relay at about 1.04 times its rated current. IEC 60947-4-1
+says that a class 10 relay does not trip at 1.05 times its setting, so no real relay trips there. The old chiller
+also drew more current when the compressor sagged rail B, which a real chiller does not do in a 4 % drop. The
+operator chose a fault with a real mechanism in its place.
 
-**New physics in plant-sim:**
+**Fault:** the pressure transducer of `compressor-1` fails low. It reads `PT_FAIL_BAR` (5.5 bar) until the
+reset. The receiver pressure itself (`AIR.pressure`) stays true.
 
-1. `chiller-1` gets a motor overload relay (class `Overload`). The relay uses no random numbers.
-   - `pickup`: current above `1.02 × 22.0 A` (the rated current).
-   - Above pickup, `heat += 1.0 × dt`. Else `heat = max(0, heat - 0.5 × dt)`.
-   - The relay trips at `heat >= 90`. The trip latches until `/reset`.
-   - Env overrides: `CHILLER_OL_PICKUP=1.02`, `CHILLER_OL_UP_PER_S=1.0`, `CHILLER_OL_DOWN_PER_S=0.5`, `CHILLER_OL_TRIP=90`.
-   - A normal 60 s compressor window adds about 61 heat, then drains in the idle 240 s. It never trips.
-   - PS2 keeps rail B low, so the relay trips about 30 s to 90 s after the fault, by cycle phase.
-2. A trip sets `chiller-1.tripped = True`. The existing tripped branch cuts its current.
-3. `CoolantLoop` gets a `driver` (`chiller-1`). While the driver is tripped,
-   `flow = max(flow_nominal × pump_health × CHILLER_RESIDUAL_FLOW + noise, 5.0)`, with
-   **`CHILLER_RESIDUAL_FLOW=0.60`** (was 0.45 until 2026-09-20, LOG-073).
-   Keep one `gauss` draw per step, so the random stream does not change.
-4. `plant_pump_health_ratio` stays equal to `pump_health`. In PS2, flow falls while pump health stays 1.0.
-5. `/reset` clears the relay heat and the trip.
+**Physics in plant-sim:**
 
-**Why the residual flow is 0.60.** At 0.45 the loop fell to 54 L/min, three cooled machines reached the 78 C
-latch, and their contactors opened. That unloaded rail B, the sag went away, and the rail hop died before the
-loop hop settled. That is the PS2 failure in one sentence. `correlation/tests/ps2_lab.py` measures the window
-where the root is `compressor-1` AND the loop hop is up, one process per setting:
+1. `AirSystem`: the controller loads the compressor at 6.9 bar and unloads it at 7.5 bar, on the transducer
+   reading. `plc-utilities` runs this band (`vplc/tasks/utilities.st`). With no PLC link, the compressor
+   follows the same band as its own pressure switch. Loaded, the compressor draws 55 A. Unloaded, it draws
+   25 % of that. At normal demand it runs loaded for about 60 s in every 300 s.
+2. The reading stays at 5.5 bar, so the compressor never unloads. The receiver climbs to the 8.5 bar safety
+   valve in about 150 s and vents there.
+3. The compressor is water-cooled: 80 % of its electrical input goes into loop `cool-1`. Loaded all the time,
+   it raises the loop heat from about 40 kW to 58 kW.
+4. `chiller-1` removes at most 46 kW at the 28 °C setpoint (1 % more per K above it). The heat above that
+   warms the 150 L of loop water, so the supply water rises about 1 °C per minute at first.
+5. Each cooled machine sits above the supply water, so each one warms with it. furnace-1 has the least
+   headroom (normal coil water 42 °C, trip 55 °C), so it trips first.
+6. The chiller does not trip. It runs at its current limit (100 % RLA, 30 A), and its overload relay holds
+   at about 0.8 of the trip level.
 
-| `CHILLER_RESIDUAL_FLOW` | first pass | window | machines that latched | max temp |
+**Measured offline** (plant model alone, seed 7, 900 s warm-up, the OpenPLC latch emulated):
+
+| After the fault | Supply water | press-1 | furnace-1 | Receiver |
 |---|---|---|---|---|
-| 0.45 (old) | t+60 | 120 s | press-1, press-2, furnace-1 | 78.0 |
-| 0.50 | t+60 | 140 s | press-1, furnace-1 | 77.5 |
-| 0.55 | t+60 | 160 s | furnace-1 | 78.0 |
-| **0.60** | **t+60** | **180 s** | **furnace-1** | **77.7** |
-| 0.65 | t+60 | 180 s | furnace-1 | 77.8 |
-| 0.70 | t+60 | 180 s | none | 76.5 |
-| 0.75 | t+80 | 160 s | none | 74.0 |
+| +60 s | 29.3 °C | 57.6 °C | 42.6 °C | 7.84 bar |
+| +300 s | 33.4 °C | 60.3 °C | 46.1 °C | 8.50 bar, venting |
+| +600 s | 37.7 °C | 65.1 °C | 50.5 °C | 8.50 bar |
+| +900 s | 41.1 °C | 68.9 °C | 54.3 °C | 8.50 bar |
 
-0.60 sits at the start of the plateau and keeps one real trip, so the trip forecast still predicts an event
-that arrives. Above 0.70 nothing latches and the cards promise a trip that never comes. **The lab is not the
-box:** it runs two signals where the box runs six, and PS2 passes in the lab even at 0.45. The table measures
-the improvement between settings. Only a box proof run settles the box. On 2026-09-22 it did: PS2 passes at 0.60 (LOG-079).
+furnace-1 trips at +941 s. After that the supply water levels off near 42.5 °C and press-1 near 71 °C, under
+its 80 °C trip. Nothing else trips in 25 min. After the reset the transducer reads true again and the
+compressor unloads. The supply water is at 32.7 °C 10 min after the reset, and the idle lab (section 10)
+counts about 23 min to a steady loop.
 
-**Load budget:** extra running load on `psu-b` above about 30 A can trip the relay in normal operation.
-Keep new cells on `psu-c`. The fleet API default rail is `psu-c`.
+**Engine and api:**
 
-**Anchor note.** At Azure Australia East the trigger was an external supply disturbance. PS2 starts inside the
-plant, so it reproduces the cascade after the chiller trip and not the trigger. PS7 reproduces the trigger.
-State both claims this way on the console and in the deck.
+- `correlation/tests/ps2_lab.py` (1200 s): root `compressor-1` from the first pass, the loop hop (an edge from
+  `compressor-1` or `chiller-1` with loop evidence) from +240 s, and `compressor-1` in 46 of 60 passes. The
+  other 14 root `chiller-1`, mostly after +880 s, when the chiller has run at its limit for many minutes.
+- The first-order trip fit of the engine gives no card: the climb is too slow to show a bend (best `tau`
+  above `THERMAL_TAU_MAX_S`). The api adds a drift card (`api/drift.py`): the least-squares rise of the
+  supply water over 5 min, at least 0.1 °C per minute with r of 0.8 or more. Each cooled machine then gets
+  "trips in about (trip - temperature) / rate". A card shows only inside 25 min, and never for a tripped
+  machine.
+- The proposal for the root is a stop, not a derate: the DERATE_PCT word of `compressor-1` is its run
+  command in `plc-utilities` (0 stops it). The api never proposes an action on `chiller-1`, because less
+  cooling only makes the loop hotter (`api/fleet.py` `STOP_ASSETS`, `NEVER_PROPOSE`).
+- The incident names the chiller state: "chiller-1 is at its capacity limit, and the supply water is 38 C
+  against its 28 C setpoint". The advice is to remove the extra heat at `compressor-1` first, then to
+  bring a standby chiller online if there is one.
+- `deploy/proof-run.sh` passes PS2 on root `compressor-1` and a loop edge from `compressor-1` or `chiller-1`
+  in the same poll, within 600 s.
+
+**Load budget:** extra running load on `psu-b` sags the rail and puts more heat into the loop, if the new
+machines are water-cooled. Keep new cells on `psu-c`. The fleet API default rail is `psu-c`.
+
+**Anchor note.** At Azure Australia East, 2023, a power sag tripped the chillers. The chilled water then ran
+too warm for them to restart, and the capacity that was left could not carry the heat load until servers were
+shut down. PS2 reproduces the second half: heat that the cooling capacity cannot carry. PS7 reproduces the
+trigger. State both claims this way on the console and in the deck.
+
+**History.** Until LOG-100, PS2 set the compressor duty to 1.0 and tripped a chiller overload relay that
+cut the loop flow to `CHILLER_RESIDUAL_FLOW` (0.60). That model and its lab table are in LOG-073 and
+LOG-079. The class `Overload` now follows the IEC curve, and PS2 no longer uses the residual flow.
 
 ### 2.3 PS3: control network storm
 
@@ -153,6 +193,10 @@ python-snap7. Label `app: rogue-ews`, `visr/role: fault-injector`. It is not a P
 **API reset of PS4A:** the API writes the task default (100) through the SCADA write path and appends a `restore`
 row with evidence `reason: "scenario reset"`. Then it calls `rogue-ews /reset`.
 
+**Runs only during PS4A (LOG-095):** `rogue-ews` rests at 0 replicas. `deploy/faults.sh` (`f 4a`) and
+`deploy/proof-run.sh` start it before the fire and stop it after the reset. The network policy lets it
+reach S7 port 102 as a labeled test exception (`visr/role: fault-injector`, `deploy/netpol.yaml`).
+
 ### 2.5 PS4B: current report contradicts the feeder
 
 **Fault in plant-sim:**
@@ -182,8 +226,14 @@ row with evidence `reason: "scenario reset"`. Then it calls `rogue-ews /reset`.
 **Expected:** the working set climbs from about 31 MiB toward the 128 MiB limit. The engine forecast card appears
 after the working set passes half of the limit. At 0.5 MiB/s the kill comes about 3 minutes after the fault.
 
-**Honesty:** before the tag-server ServiceMonitor cutover, the engine plant plane reads plant-sim directly.
-The claim is "the SCADA view and the historian go blind, and the console says so". It is not "VISR goes blind".
+**Restart signal (LOG-099):** `/tags` carries `started_at`. The api reads it every 5 s, and a new value is a
+`restart` phase in the incident, even when the kill and the restart fall between two passes.
+
+**Honesty:** until LOG-100 the engine plant plane read plant-sim directly, and the claim was "the SCADA view
+and the historian go blind, and the console says so". It was not "VISR goes blind". Since the SCADA read switch
+(section 4.6), the PLC-read signals of the engine also pass through the tag server, so the kill leaves a gap in
+the engine plant plane too. The edge plane (the pod memory and the restart) stays visible. Measure the claim
+again in the next box watch before the deck uses it.
 
 ### 2.8 PS7: the supply dips and the plant loses cooling
 
@@ -213,11 +263,15 @@ way far more often than they expose a PLC there, so this is the common instrumen
 
 - Every rail sags together, by the same volts.
 - Constant-power loads answer with more current. The existing brownout branch does this.
-- The `chiller-1` overload relay sees the higher current and trips, the same as PS2.
-- The loop flow falls to the residual, and the cooled machines heat.
+- `chiller-1`'s undervoltage protection (ANSI 27, LOG-100) stops the unit: rail B stays under 85 % of 400 V
+  for 2 s (stage 2) or under 90 % for 10 s (stage 1). Until LOG-100 the overload relay tripped here.
+- The pump keeps the flow, but no heat leaves the water. The supply water rises about 3.5 °C per minute,
+  and the cooled machines heat.
+- After the reset the undervoltage trip clears above 95 % of the rating. The unit restarts when 5 min have
+  passed since its last start (the anti-recycle timer).
 
-**Expected:** at `SUPPLY_DIP_PCT=0.85` the chiller relay trips 30 s to 90 s after the fault, by cycle phase,
-the same band as PS2. The engine needs about 80 s to hold a root at `GATE_Q=35`. PS7 therefore carries the
+**Expected (LOG-100):** at `SUPPLY_DIP_PCT=0.85` the chiller stops within seconds, and furnace-1 trips at
+about +270 s (section 2.0). Until LOG-100 the chiller relay tripped 30 s to 90 s after the fault. The engine needs about 80 s to hold a root at `GATE_Q=35`. PS7 therefore carries the
 same two-hop timing risk as PS2 (section 4.4).
 
 **Measured, 2026-09-20 (laptop).** The physics work. A dip to 0.85 drops every rail together, `psu-c` by the
@@ -253,11 +307,12 @@ state, a PS verdict, or the random stream. The offline replay and the PS2 lab gi
    timeout. The old single-threaded server let one silent connection freeze `/metrics` and `/healthz`.
 
 **Kept on purpose (calibration, not bugs):**
-- Rail A idles at about 360 V, under the 368 V brownout line (0.92 of 400 V, LOG-032). cnc-1 and qa-scanner-1
-  therefore run at about 89 % throughput with no fault, and the rail A machines draw about 2 % more current.
-  Every PS threshold and every box result is calibrated on this.
-- `plant_heat_load_watts` is `heat_k x current`, a heat index and not real watts (press-1 shows about 23).
-  The engine is scale-free, so the value works. A rename touches the aggregator, the tag server, and the engine.
+- Superseded by LOG-100: rail A idled at about 360 V, under the 368 V brownout line, so cnc-1 and
+  qa-scanner-1 ran at about 89 % throughput with no fault. With 0.12 ohm, rail A idles near 386 V and both
+  run at 100 %.
+- Superseded by LOG-100: `plant_heat_load_watts` was `heat_k x current`, a heat index. It is now the real
+  heat into the loop water, `heat_frac x sqrt(3) x V x I x PF` in W, and the water-cooled compressor exports
+  it too.
 - The plant runs 24/7 with no shifts and no planned stops.
 
 ## 3. Plant-sim interface additions
@@ -267,7 +322,12 @@ state, a PS verdict, or the random stream. The offline replay and the PS2 lab gi
 - `rails.<name>.amps` (feeder meter).
 - `supply`: `{"name": "incomer-1", "volts", "nominal_volts", "amps", "target_pct", "dipped"}`.
   `dipped` is true while `target_pct` is below 1.0.
-- `devices.chiller-1.trip_reason`: `"overload"` while tripped, else null. Other devices: null.
+- `devices.chiller-1.trip_reason`: `"overload"` while its relay holds it, `"undervoltage"` while its ANSI 27
+  protection holds it, else null. Other devices: null. Every device has its own `trip_c` (LOG-100).
+- `loop` adds `t_supply`, `t_setpoint`, `heat_kw`, and `chiller`: `{running, capacity_kw, heat_removed_kw,
+  load_pct, at_capacity, demand_limit_pct, undervoltage, anti_recycle_s, rla}` (LOG-100).
+- `air`: `{pressure, reading, pt_fault, venting, load_bar, unload_bar, loaded}` (LOG-100). `reading` is the
+  transducer value that the PLC sees. `pressure` is the true receiver pressure.
 - `segments`: `{"field-1": {"capacity_fps", "utilization", "latency_ms", "drop_ratio",
   "members": {"hmi-gw": {"kind": "talker", "offered_fps", "latency_ms"},
   "plc-stamping": {"kind": "plc", "cell": "stamping", "offered_fps", "latency_ms", "sync_age_s", "failures"}}}}`.
@@ -290,7 +350,10 @@ state, a PS verdict, or the random stream. The offline replay and the PS2 lab gi
 | `plant_supply_nominal_volts` | `incomer-1` | Fixed nominal. Display and ratio only. Never a forecast pair. |
 | `plant_motor_tripped` | `chiller-1` | 1 while the overload relay holds the chiller off. Not an OpenPLC trip. |
 | `plant_overload_ratio` | `chiller-1` | Relay heat / trip level. Display only. Never a forecast pair. |
-| `plant_cooling_shortfall_watts` | `chiller-1` | Heat the loop fails to remove: `Σ_cooled heat_k × I × (1/share - 1)`, never below 0 |
+| `plant_cooling_shortfall_watts` | `chiller-1` | Cooling lost against design, in W (LOG-100): the flow part `Σ_cooled q × (1/share - 1)` plus the supply part `cp × design flow × (t_supply - setpoint)`, never below 0 |
+| `plant_supply_temp_celsius` | `cool-1` | Loop supply water temperature (LOG-100). OpenPLC `%MW16`. |
+| `plant_air_pressure_bar` | `compressor-1` | The transducer reading, not the truth (LOG-100). OpenPLC `%MW17`. |
+| `plant_trip_threshold_celsius` | each cooled machine | That machine's own trip (LOG-100) |
 | `plant_net_offered_fps` | each segment member | Frames per second that the member offers |
 | `plant_net_latency_ms` | each segment member | Latency that the member sees, with retransmits |
 | `plant_net_utilization_ratio` | each segment | `ρ` |
@@ -332,6 +395,11 @@ state, a PS verdict, or the random stream. The offline replay and the PS2 lab gi
   earliest upstream root. For PS2 the root is `compressor-1`, and the edges include
   `compressor-1 → chiller-1` (rail evidence) and `chiller-1 → <cooled machine>` (loop evidence).
 - PS1 must still root `press-1`. PS0 must stay silent. Fixture tests prove both.
+- **Who may vote for root (LOG-090):** on the `rail:` and `loop:` media an edge votes only with `write` or
+  `common_mode` evidence. A bare correlation (`stat`) between two members still renders, but it never
+  votes. Every rail member sees the same bus voltage, and the loop temperatures are integrators, so the
+  shortest time constant (cnc-1, 90 s) always seems to lead. On forge (2026-09-25/26) that made cnc-1 the
+  root in PS2 and PS5. The `net:` medium keeps bare votes: PS3 roots hmi-gw on a bare edge in 35 of 41 polls.
 
 ### 4.4 Engine fixes from the September soak
 
@@ -347,6 +415,15 @@ Also:
 - A trip forecast fires only for a pod whose recent level sits above its learned band
   (`FORECAST_BASELINE_FLOOR=1`). Steady coolant temperatures sit at 75 to 85 % of the trip limit, so the
   fraction-of-limit rule alone gave trip cards in a calm plant.
+- **The trip card fits the first-order curve (LOG-091).** `forecast.first_order_eta` fits
+  T(t) = T_inf + C·exp(−(t − t_now)/τ) over the last 4 min of the climb (τ on a 20 to 1200 s grid,
+  least squares for T_inf and C). A card needs a rising curve (C < 0) that settles above the limit
+  (T_inf above the machine's own trip, LOG-100), and the fit must agree now, 10 s ago, and 20 s ago. A best τ above 600 s
+  (`THERMAL_TAU_MAX_S`) gives no card: the bend is not visible yet, so T_inf is a guess (LOG-099). The card
+  carries `t_inf` and `tau_s`, and `/api/graph` passes both to the console. A machine that draws under 1 A (a trip or a PLC stop) gets no trip card
+  (`forecast.stopped_pods`). `FORECAST_THERMAL_MODEL=linear` restores the straight line. On the
+  recorded forge evening of 2026-09-25/26: cards on machines that never tripped fell from 254 passes to
+  12, cards on tripped machines from 12 to 1, and every real trip kept its card.
 - A plant family pairs its source-only members, so `chiller-1` (no temperature, only a cooling shortfall) shares
   the loop with the machines it cools.
 - The merge (`engine/merge.py`) lets a held memory edge vote for root only when its source is a finding of the
@@ -355,6 +432,27 @@ Also:
 
 Tests: `correlation/tests/test_enablers.py`, and `test_merge.py` for the merge vote. The offline replay (the real plant physics through the real
 service loop, engine started before the ring is full) is the acceptance check before a box run.
+
+**Learn, then lock (LOG-089, 2026-09-26).** Two long PS2 runs on 2026-09-25 (11 min and 17.5 min) left the
+box in a state where every normal compressor-1 cycle raised a compressor-1 root. The cause is the storm rule
+for learning: a baseline skips any ring whose 90th percentile is above its band. Rail B carries the
+compressor duty cycle, so every normal rail B ring holds ON samples and is skipped. Rail B learned only
+from flat rings, and the flattest rail B ring is the 374 V plateau that PS2 leaves after furnace-1 trips.
+The learned band then sat inside the normal OFF noise (median 26.33 V of sag, MAD 0.167, threshold 26.91,
+while 28 % of normal OFF samples sit above 26.91).
+
+The fix: the engine learns during the soak, and the operator then locks the baselines with
+`deploy/engine-baselines.sh lock` (a lock file in the memory volume, read on every pass, reported as
+`meta.baselines`). A locked mature baseline never changes. A new asset still learns until its baseline is
+mature. The factory-up wipe removes the lock file, so a fresh memory always learns.
+
+| Idle lab (`correlation/tests/idle_lab.py`): 2 h normal, PS2 for 17.5 min, reset, 1 h normal | psu-b sag threshold | Idle passes with a root after the reset |
+|---|---|---|
+| Learning never stops (the box on 2026-09-25) | 26.84 | 78 of 300 |
+| Learn, then lock at the fault | 27.40 | 0 of 300 |
+
+Scheduled learning runs that exclude incident windows, validate, and version the baselines are the
+planned next step (the `model_versions` table exists and is not used yet).
 
 ### 4.5 The common-mode rule (PS7)
 
@@ -422,6 +520,27 @@ which is the source path that PS1, PS2, and PS4B all depend on, so it needs its 
 regression run. It is also the inference that a board meter exists to make: it separates a load that answers
 a disturbance from a load that causes one.
 
+### 4.6 The SCADA read switch (LOG-100)
+
+Since LOG-100 the engine reads every plant signal that a PLC reads through the tag server, the way a plant
+historian reads it. `scada/cutover-servicemonitor.yaml` scrapes the tag server `/metrics` every 5 s with
+`honorLabels`, so each series keeps its asset `pod` label. The plant-sim ServiceMonitor (`plant/deploy.yaml`,
+`metricRelabelings`) keeps only the instrument feeds that no PLC in this plant reads: the power meters (the
+feeders and `incomer-1`), the managed switch (the field segment), the chiller relay contact, and the status
+of the model itself. `scada/tags.py` `INSTRUMENT_METRICS` names the same set. No test holds the two lists
+together, so change both in one edit.
+
+- The tag server adds calculated tags with the formulas of the sim: `HEAT` for each machine that heats the
+  loop (`heat_frac x sqrt(3) x V x I x PF`), `TRIP_LIMIT` for each cooled machine, and `COOLING_SHORTFALL`
+  on `chiller-1`.
+- `deploy/golive.sh` checks both halves: Prometheus has at least four `plant_temp_celsius` series from
+  `service="tag-server"`, and none from `service="plant-sim"`.
+- A tag server outage now removes the PLC-read signals from the engine plant plane too. After the PS6 kill,
+  expect gaps in those series until the tag server restarts. The next box watch must record what the
+  engine and the console show in that gap (section 2.7).
+- Rollback: delete ServiceMonitor `plant/tag-server`, and remove the `metricRelabelings` block of the
+  plant-sim ServiceMonitor.
+
 ## 5. API interface additions
 
 ### 5.1 Scenario catalogue
@@ -435,6 +554,8 @@ a disturbance from a load that causes one.
 - `expect_s`: seconds to the expected verdict, for the console message.
 - Trigger and reset use a dispatch table, not a hard-coded id tuple. Unknown or non-triggerable ids give 501.
 - `POST /api/scenarios/reset-all` (operator gate) resets every owner and writes one `reset` row with target `ALL`.
+  rogue-ews has 0 replicas outside 4A, so a refused connection to it means "stopped": the setpoint restore still
+  runs, the owner reads `stopped`, and the catalogue reads PS4A inactive (LOG-099).
 - A reset that fails with a network error writes an `error` row and answers 503.
 - Env: `EWS_URL` (default `http://rogue-ews.plant.svc.cluster.local:8090`).
 
@@ -472,6 +593,7 @@ The thread starts at app startup when `INTEGRITY_BACKGROUND` is not `0`.
 | `balance` | `mismatch`, then `cleared` | `{rail, feeder_amps, reported_amps, gap_amps, channel}` |
 
 `clients` is best effort: Caretta `caretta_links_observed` clients of the PLC on port 102 other than `tag-server`.
+A link with 0 bytes does not count (LOG-099: Caretta keeps a 0-byte plant-sim series on port 102).
 
 **Exposure:** `GET /api/integrity` returns `{source, checked_at, findings: [{id, kind, status, ...evidence}]}`.
 `GET /api/graph` adds an `integrity` key with the open findings.
@@ -497,6 +619,13 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
 
 ## 7. Console behavior
 
+- **Throughput grades (LOG-103):** each machine's throughput is graded against its own range, learned over
+  the PS0 soak at the baseline lock (`deploy/engine-baselines.sh`, ConfigMap `aiops/display-bands`, p01 to
+  p99 of `plant_throughput_pct` over 2 h). The api attaches it as `thru_band` on `/api/plant`. One rule for
+  every machine: 18 points under the learned low edge is strained, 30 points under is hot, and the derate
+  badge shows a drive under the low edge. With no band the low edge is 100 (the old fixed rule). The soak of
+  2026-09-26 learned compressor-1 25 to 100 %, chiller-1 86.8 to 100 %, and every production machine 100 %.
+  Since LOG-100, compressor-1 reports its load, so the fixed rule showed its normal unloaded 25 % as a fault.
 - **Fault injection (LOG-081):** the console has no fault controls and no "injected" banner. The fault shell
   `deploy/faults.sh` runs on the box and calls the same endpoints: `trigger`, `reset`, and `reset-all`, with
   the operator token from the Secret `aiops/visr-auth` and the actor `fault-shell`. Its status reads
@@ -504,9 +633,21 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
 - **Verdict:** an integrity block above the state band when `graph.integrity` has open findings. The block does not
   replace a root. A blind band takes priority when `/api/tags` answers `source: "unavailable"`:
   "SCADA view blind · last good HH:MM:SS · physics tap live".
+- **Incident (LOG-092):** the Verdict follows `/api/incident`, not the raw 10 s verdict. States: STEADY (no incident),
+  FORECAST (cards, no driver), ROOT CAUSE (a driver), INCIDENT (integrity or blind, no driver), RECOVERING (the
+  origin is back to normal). The name is the current driver. "started by <origin>" shows when the origin differs,
+  with the driver's reason line under it. Once the plant recovers or the driver has tripped, the reason line is
+  the past-tense `was` ("press-1 drew 85 A", LOG-099). The last six phases list under the narrative with their times.
+- **Narrative (LOG-093):** `/api/narrative` returns `sections` (headline, origin, driver, chain, actions, evidence,
+  forecast, suggestion) and `text`, locked to (incident, tag). Every phase has a headline. The origin sentence goes
+  to the past tense ("At the start, ...") once the origin tripped, another machine drives, or the plant recovers.
+  `actions` lists the operator actions and the measured relief (LOG-099). An **Ask** box under the phases calls
+  `/api/ask`.
 - **Chain:** the chain line walks the accepted edges from the root through rails, loops, segments, and machines.
+  With an incident it shows the incident chain (origin, then drivers), the machines reached, and the tripped ones.
 - **Event log:** verbs `unsigned` and `balance` render red. `format.js` gives each a detail line.
-- **Actions:** an unsigned hold shows a red pill. A blocked asset shows its reason.
+- **Actions:** an unsigned hold shows a red pill. A blocked asset shows its reason. The advisory suggestions of
+  `/api/actions` `advice` list under the executable ones (LOG-093).
 - **Assets:** a segment group (latency, drops, members). `chiller-1` shows "tripped · overload".
 - **Command bar:** an `integrity` lamp. The refresh clock turns amber after 15 s and red after 30 s without an update.
 - **Palette:** no new color. Red means an alarm or an integrity finding. Amber means a warning or STALE.
@@ -549,11 +690,21 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
   static base PLC, only after it confirms the label `visr/managed=static`). It prints the new ledger rows and
   `chain_ok`. It reads the operator token from the cluster Secret, like `factory-up.sh`.
 - After any signal-set change, run `factory-up.sh` with the default `WIPE=1`, then soak PS0 again.
+- LOG-100: `deploy/golive.sh` runs `deploy/plc-tokens.sh` (the device token Secret of each static PLC),
+  applies `scada/cutover-servicemonitor.yaml`, and checks the four base cells and the four static PLCs.
+  `deploy/factory-up.sh` also starts `deploy/console-load.sh` in screen `visr-console-load`: the read load
+  of one open console, so the baselines learn the api as the demo runs it. `CONSOLE_LOAD=0` skips it.
+- LOG-101: before any apply, `deploy/golive.sh` checks that each manifest parses to one object per
+  top-level `kind:` line (`kubectl apply --dry-run=client -o name`). A missing `---` merged two objects
+  into one with no kubectl error, and the `plc-utilities` and `plc-machining` Services never existed.
 
 ## 10. Tests
 
-- plant: the relay never trips over 3600 s of normal cycles with 10 seeds. PS2 trips it within 100 s from any
-  cycle phase. The PS3
+- plant (LOG-100): the relay follows the IEC class 10 points (no trip at 1.05 x, a trip at 1.2 x, about 7 s
+  at 7.2 x), never trips in normal running, and does not trip in PS2. Each rail stays within about 4 % of
+  400 V. PS2 keeps the compressor loaded, vents the receiver, and warms the supply water. PS7 stops the
+  chiller on undervoltage, and it restarts after its anti-recycle wait. Before LOG-100 the relay never
+  tripped over 3600 s of normal cycles with 10 seeds, and PS2 tripped it within 100 s. The PS3
   segment drops frames only above `ρ ≈ 1`. PS4B changes the vPLC AMPS channel only. Feeder amps equal the device sum.
   `test_cells.py` equality guard updated for the relay.
 - plant PS7: at nominal, every rail voltage matches the pre-change model for the same seed. A dip to 0.85
@@ -567,13 +718,21 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
 - engine PS7: a common-mode fixture roots `incomer-1` and not a rail. A PS1 fixture with a leading machine
   load must not fire the common-mode rule. `COMMON_MODE=0` restores the old verdict on both fixtures.
 - **PS2 two-hop lab:** `correlation/tests/ps2_lab.py` runs both plant families through the real GraphMemory,
-  the real merge, and the real forecaster, one pass every 20 s, and it emulates the OpenPLC 78 C latch. It
+  the real merge, and the real forecaster, one pass every 20 s, and it emulates the OpenPLC latch at each
+  machine's own trip (LOG-100). It
   reports the window where `deploy/proof-run.sh`'s own PS2 predicate holds. Run one process per setting. It
   measures relative improvement between settings and never predicts a box pass. See section 2.2.
 - **Offline replay:** `correlation/tests/replay_offline.py` drives the real plant model, samples it on the
   engine's 5 s grid, and runs the real `run_pass`. It prints one row per scenario with the expected root and
   the measured root, and it exits non-zero on any miss. It runs UNGATED (no learned baselines), so it compares
   roots under a fault and never judges silence. Run it before any box run. Today: PS1 PASS, PS2 PASS, PS7 FAIL.
+- **Behavior after detection (LOG-096):** `deploy/proof-run.sh` keeps each fault step (PS2, PS3, PS4A, PS4B)
+  on for `PROOF_HOLD_S` (120 s) after its first hit. The summary adds root changes, the root hold, cards on
+  tripped machines, cards without a trip, narrator texts, and the incident origin and drivers.
+- **Idle lab:** `correlation/tests/idle_lab.py` reuses the PS2 lab, but it runs an engine pass every 10 s from
+  the start, so the baselines learn as they do on the box. It counts idle passes with a root before and after
+  a long PS2. It judges silence after a fault, which the replay and the PS2 lab cannot. `IDLE_LAB_LOCK=0`
+  keeps learning on (section 4.4). Today: 0 of 300 locked, 78 of 300 unlocked.
 - api: catalogue dispatch, reset-all, unsigned change (explained by intent, by row, by restart, and not explained),
   balance open and close, blocked proposals, refusal rows.
 - scada: `/chaos` token gate and bounded behavior, historian queue fields.
@@ -590,3 +749,28 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
   dip leaves no sample. Correlation cannot see it, and precedence inside a short window is a different
   primitive. PS7 uses a held dip instead, which the 5 s grid does see.
 - Any change to the Stage 2 deck. The deck reads this file.
+
+## 12. Sources for the plant values (LOG-100)
+
+Each value in the realism pass of `plant/sim/main.py` comes from one of these, or the code marks it a
+project choice. A project choice sits inside the range that the source gives.
+
+| Value in the model | Source | What the source sets |
+|---|---|---|
+| Rail source resistance 0.12 ohm, a 3 to 4 % drop at full load | IEC 60364-5-52 | about 4 % steady voltage drop for motor circuits |
+| Motors run within 5 % of rating, no brownout in PS1 | NEMA MG1 | motors run at plus or minus 10 % of rated voltage |
+| chiller-1 overload relay, `OL_TAU_S` 283 s, trip at 1.125^2 | IEC 60947-4-1, trip class 10 | no trip at 1.05 x Ir, a trip at 1.2 x Ir, a trip within 240 s at 1.5 x Ir, and in 4 s to 10 s at 7.2 x Ir from cold |
+| Undervoltage stages 90 % for 10 s and 85 % for 2 s, reset at 95 % | ANSI/IEEE device 27 (undervoltage relay) | typical stages. The delays are project choices, longer than a motor-start dip |
+| Anti-recycle 300 s start to start | Trane chiller unit controls | 5 min from one start to the next |
+| Load at 6.9 bar, unload at 7.5 bar | Atlas Copco compressor controls | at least 0.6 bar between load and unload |
+| Unloaded compressor current 25 % | compressor vendor data (the code gives the range, not the vendor) | 15 % to 35 % of full-load power unloaded |
+| 80 % of compressor input into the cooling water | Compressed Air Best Practices, heat recovery | most of the input power of a water-cooled compressor leaves as heat in the water |
+| Trip 80 °C for press hydraulic oil | hydraulic system practice | alarm at 80 °C to 85 °C |
+| Trip 80 °C for the cnc-1 spindle motor | CNC spindle motor practice | 80 °C to 100 °C as the usual conservative limit |
+| Trip 55 °C for the furnace-1 coil cooling water, supply setpoint 28 °C | induction heating coil water practice | inlet water under 35 °C, outlet at most 55 °C |
+| The excess-temperature limit stays out of `plc-furnace` | NFPA 86 | an excess-temperature limit on its own sensor and its own device |
+| cnc-1 feed enable, feed hold, and feed override 0 to 100 % | CNC PMC interface (Fanuc) | the line PLC sends feed hold and feed override, and the CNC keeps its own program |
+
+Project choices, marked in the code: the loop volume (150 L), the chiller capacity (46 kW) and its rise
+with the supply temperature (1 % per K), the heat share of each machine, the power factor (0.85), the air
+fill and demand rates, and the transducer failure value (5.5 bar).

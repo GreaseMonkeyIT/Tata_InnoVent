@@ -258,6 +258,13 @@ def objects_for(plc: str, profile: str, task: str, st: str, manifest: dict, toke
                 "metadata": {"labels": labels},
                 "spec": {
                     "automountServiceAccountToken": False,
+                    # LOG-095: non-root, the default seccomp profile, and the safe sysctl that lets a
+                    # non-root process bind S7comm port 102 (the same as deploy/fleet.yaml).
+                    "securityContext": {
+                        "runAsNonRoot": True, "runAsUser": 10001, "runAsGroup": 10001, "fsGroup": 10001,
+                        "seccompProfile": {"type": "RuntimeDefault"},
+                        "sysctls": [{"name": "net.ipv4.ip_unprivileged_port_start", "value": "0"}],
+                    },
                     "containers": [{
                         "name": "vplc", "image": image, "imagePullPolicy": "Always",
                         "env": [
@@ -266,17 +273,22 @@ def objects_for(plc: str, profile: str, task: str, st: str, manifest: dict, toke
                             {"name": "TASK_NAME", "value": task},
                             {"name": "TASK_DIR", "value": "/task"},
                             {"name": "TZ", "value": "Asia/Kolkata"},
-                            {"name": "DEVICE_TOKEN",
-                             "valueFrom": {"secretKeyRef": {"name": f"{plc}-token", "key": "token"}}},
+                            {"name": "DEVICE_TOKEN_FILE", "value": "/run/secrets/device/token"},
                         ],
+                        "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                                            "capabilities": {"drop": ["ALL"]}},
                         "ports": [{"name": x["name"], "containerPort": x["port"]} for x in ports],
-                        "volumeMounts": [{"name": "task", "mountPath": "/task", "readOnly": True}],
+                        "volumeMounts": [{"name": "task", "mountPath": "/task", "readOnly": True},
+                                         {"name": "tmp", "mountPath": "/tmp"},
+                                         {"name": "device", "mountPath": "/run/secrets/device", "readOnly": True}],
                         "readinessProbe": {"httpGet": {"path": "/healthz", "port": CONTROL_PORT},
                                            "initialDelaySeconds": 2},
                         "resources": {"requests": {"cpu": "25m", "memory": "48Mi"},
-                                      "limits": {"cpu": "250m", "memory": "128Mi"}},
+                                      "limits": {"cpu": "250m", "memory": "128Mi", "ephemeral-storage": "128Mi"}},
                     }],
-                    "volumes": [{"name": "task", "configMap": {"name": f"{plc}-task", "optional": True}}],
+                    "volumes": [{"name": "task", "configMap": {"name": f"{plc}-task", "optional": True}},
+                                {"name": "tmp", "emptyDir": {}},
+                                {"name": "device", "secret": {"secretName": f"{plc}-token"}}],
                 },
             },
         },
@@ -376,35 +388,88 @@ def derate_tag(entry: dict, asset: str) -> dict | None:
     return next((t for t in entry.get("tags") or [] if t.get("tag") == want), None)
 
 
-def proposals(graph: dict, scada_fleet: list, plant: dict, target_pct: int,
-              blocked: set | None = None) -> list[dict]:
-    """Execute proposals from the CURRENT verdict. Every condition of FLEET.md 10 must hold.
-    An asset in `blocked` has an open integrity finding on its controller channel: no proposal."""
-    root = (graph.get("root") or [None])[0]
-    if not root:
-        return []
-    asset = root["pod"]
-    if asset in (blocked or ()):
-        return []
-    edges = [e for e in graph.get("edges") or [] if e.get("src") == asset and e.get("evidence")]
-    if not edges:
-        return []
-    edge = max(edges, key=lambda e: abs(e.get("r") or 0.0))
+EXCESS_FRAC = 0.15      # a root derate needs the asset to draw at least 15 % above its normal current
+# LOG-100: what a proposal does per asset. The compressor's DERATE_PCT is its run command
+# (vplc/tasks/utilities.st): the useful action is to stop it, 0. A chiller is never an action target:
+# less cooling only makes the loop hotter. Every other controllable machine is derated.
+STOP_ASSETS = {"compressor-1"}
+NEVER_PROPOSE = {"chiller-1"}
+
+
+def _derate_channel(asset: str, scada_fleet: list, plant: dict, blocked: set | None):
+    """(controller entry, DERATE_PCT tag) when VISR may derate `asset` now, else None. The checks of
+    FLEET.md 10, plus: never act on a machine that a protective trip stopped (LOG-091)."""
+    if asset in (blocked or ()) or asset in NEVER_PROPOSE:
+        return None
+    if ((plant.get("devices") or {}).get(asset) or {}).get("tripped"):
+        return None
     entry = controller_of(asset, scada_fleet)
     if entry is None or not entry.get("connected"):
-        return []
+        return None
     tag = derate_tag(entry, asset)
     if tag is None or tag.get("quality") != "GOOD" or tag.get("value") != 100:
-        return []
-    rail = ((plant.get("devices") or {}).get(asset) or {}).get("rail")
-    return [{
-        "id": proposal_id("derate", asset, asset, (edge["src"], edge["dst"])),
-        "verb": "derate", "asset": asset, "plc": entry["name"], "tag": tag["tag"],
-        "from": 100, "to": int(target_pct),
-        "cites": {"root": asset, "edge": f"{edge['src']}→{edge['dst']}", "evidence": edge.get("evidence") or [],
-                  "confidence": edge.get("confidence"), "signal": edge.get("signal")},
-        "expected": f"{asset} draws less current" + (f", rail {rail} recovers" if rail else ""),
-    }]
+        return None
+    return entry, tag
+
+
+def proposals(graph: dict, scada_fleet: list, plant: dict, target_pct: int,
+              blocked: set | None = None, normal_amps: dict | None = None) -> list[dict]:
+    """Execute proposals from the CURRENT verdict. Every condition of FLEET.md 10 must hold.
+    An asset in `blocked` has an open integrity finding on its controller channel: no proposal.
+
+    Two sources (LOG-091):
+    - the root: derate the root machine when it still draws more than its normal current. normal_amps
+      is each asset's median current over the last hour. After a reset the verdict lags the plant for
+      a minute or two, and the root machine is already back at its normal draw: no proposal then.
+    - a trip forecast: derate a machine that VISR can control when its own trip card is open, the
+      earliest trip first. The card is the reason, so the proposal cites it.
+    """
+    out, seen = [], set()
+    devices = plant.get("devices") or {}
+    root = (graph.get("root") or [None])[0]
+    if root:
+        asset = root["pod"]
+        edges = [e for e in graph.get("edges") or [] if e.get("src") == asset and e.get("evidence")]
+        amps = (devices.get(asset) or {}).get("amps")
+        normal = (normal_amps or {}).get(asset)
+        excess = normal is None or amps is None or amps > normal * (1 + EXCESS_FRAC)
+        ch = _derate_channel(asset, scada_fleet, plant, blocked) if edges and excess else None
+        if ch:
+            entry, tag = ch
+            edge = max(edges, key=lambda e: abs(e.get("r") or 0.0))
+            rail = (devices.get(asset) or {}).get("rail")
+            stop = asset in STOP_ASSETS
+            out.append({
+                "id": proposal_id("stop" if stop else "derate", asset, asset, (edge["src"], edge["dst"])),
+                "verb": "stop" if stop else "derate", "asset": asset, "plc": entry["name"], "tag": tag["tag"],
+                "from": 100, "to": 0 if stop else int(target_pct), "reason": "root",
+                "cites": {"root": asset, "edge": f"{edge['src']}→{edge['dst']}",
+                          "evidence": edge.get("evidence") or [],
+                          "confidence": edge.get("confidence"), "signal": edge.get("signal")},
+                "expected": (f"{asset} stops: its heat leaves the loop" if stop else f"{asset} draws less current")
+                            + (f", rail {rail} recovers" if rail else ""),
+            })
+            seen.add(asset)
+    cards = sorted((c for c in graph.get("incipient") or [] if c.get("class") == "trip"),
+                   key=lambda c: c.get("eta_s") if c.get("eta_s") is not None else 1e9)
+    for card in cards:
+        asset = card.get("pod")
+        if not asset or asset in seen or asset in STOP_ASSETS:
+            continue
+        ch = _derate_channel(asset, scada_fleet, plant, blocked)
+        if not ch:
+            continue
+        entry, tag = ch
+        out.append({
+            "id": proposal_id("derate", asset, "forecast", (asset, "trip")),
+            "verb": "derate", "asset": asset, "plc": entry["name"], "tag": tag["tag"],
+            "from": 100, "to": int(target_pct), "reason": "forecast",
+            "cites": {"forecast": asset, "eta_s": card.get("eta_s"), "value": card.get("value"),
+                      "limit": card.get("limit"), "evidence": ["forecast"], "signal": card.get("signal")},
+            "expected": f"{asset} makes less heat and stays below the {card.get('limit') or 80:.0f} °C trip",
+        })
+        seen.add(asset)
+    return out
 
 
 def active_derates(scada_fleet: list) -> list[dict]:

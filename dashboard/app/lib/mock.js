@@ -66,9 +66,11 @@ const INCIDENT = {
       "cnc-1":        { amps: 28.7, temp: 50.6, throughput: 84.4, rail: "psu-a", cooled: true },
       "qa-scanner-1": { amps: 7.2,  temp: null, throughput: 85.8, rail: "psu-a", cooled: false },
       "conveyor-1":   { amps: 18.2, temp: null, throughput: 100,  rail: "psu-b", cooled: false },
-      "compressor-1": { amps: 6.7,  temp: null, throughput: 100,  rail: "psu-b", cooled: false },
+      // LOG-103: the utilities report their load as throughput, and plc-utilities commands them. The api
+      // attaches thru_band, the range learned over the soak (engine-baselines.sh lock).
+      "compressor-1": { amps: 13.7, temp: null, throughput: 25,   rail: "psu-b", cooled: false, kind: "compressor", cell: "utilities", controller: "plc-utilities", commanded: { run: true, speed_pct: 25 }, speed_pct: 25, thru_band: [25, 100] },
       "furnace-1":    { amps: 30.4, temp: 65.3, throughput: 100,  rail: "psu-b", cooled: true },
-      "chiller-1":    { amps: 22.0, temp: null, throughput: 100,  rail: "psu-b", cooled: false },
+      "chiller-1":    { amps: 27.1, temp: null, throughput: 64,   rail: "psu-b", cooled: false, kind: "chiller", cell: "utilities", controller: "plc-utilities", commanded: { run: true, speed_pct: 100 }, speed_pct: 100, thru_band: [86.8, 100] },
     },
     active_faults: ["PS1"],
   },
@@ -229,11 +231,11 @@ const FORECAST = {
 const CAT = [
   ["PS0", "Steady plant", "no fault · baselines mature · the engine stays silent", "", null],
   ["PS1", "Rail-sag cascade", "press-1 bearing friction → amps up → rail A sags → cnc-1 and qa-scanner-1 degrade", "Milford Haven refinery, 1994: 275 alarms in the last 11 minutes", "plant"],
-  ["PS2", "Power sag trips the chiller", "compressor-1 stuck on → rail B sags → chiller-1 overload trips → coolant flow drops", "Azure Australia East, 2023: a power sag tripped the chillers", "plant"],
+  ["PS2", "A failed pressure sensor overheats the loop", "compressor-1 pressure transducer fails low → the compressor stays loaded → its heat exceeds chiller-1 capacity → the supply water warms → the cooled machines heat", "Azure Australia East, 2023: the cooling capacity left could not carry the heat load", "plant"],
   ["PS3", "Control network storm", "hmi-gw floods segment field-1 → the stamping cell link lags and drops", "Browns Ferry Unit 3, 2006: network traffic stopped both recirculation pump drives", "plant"],
   ["PS4A", "Setpoint write with no record", "a rogue client writes press-1 DERATE over S7comm, outside the SCADA write path", "Stuxnet 2010, FrostyGoop 2024, Ukraine grid 2015", "ews"],
   ["PS4B", "Current report contradicts the feeder", "press-1 AMPS to the PLC replays a normal value while the real current rises", "Stuxnet replayed normal values. Buncefield 2005: a stuck gauge.", "plant"],
-  ["PS5", "Coolant pump degradation", "flow drops → temperatures ramp toward the 78 °C trip (forecast first)", "LG Polymers, Visakhapatnam, 2020: no sensor at the tank top", "plant"],
+  ["PS5", "Coolant pump degradation", "flow drops → temperatures ramp toward each machine's own trip (forecast first)", "LG Polymers, Visakhapatnam, 2020: no sensor at the tank top", "plant"],
   ["PS6", "The monitor runs out of memory", "the tag server leaks toward its 128 MiB limit → forecast → the SCADA view goes blind", "Toyota, 2023: a full disk stopped 12 plants", "scada"],
 ];
 const catalogue = (on) => CAT.map(([id, name, mechanism, anchor, owner]) => ({
@@ -326,6 +328,74 @@ const BLIND = {
 
 const VARIANTS = { steady: STEADY, forecast: FORECAST, chain: CHAIN, network: NETWORK, integrity: INTEGRITY, blind: BLIND };
 
+// LOG-092/093: the incident record and the locked, sectioned narrative for each review state.
+const T0 = Math.floor(Date.now() / 1000);
+function rec(o) {
+  const phases = o.phases.map(([dt, kind, text], i) => ({ n: i + 1, ts: T0 - dt, kind, text }));
+  return { active: { id: "INC-20260926-101500-1", opened_ts: T0 - o.phases[0][0], closed_ts: null, status: "active",
+    tag: phases.length, origin: null, driver: null, chain: [], victims: [], tripped: [], cards: [], integrity: [],
+    blind: false, ...o, phases }, recent: [] };
+}
+const narr = (sections, source = "llm") => ({ text: Object.values(sections).join(" "), sections, source,
+  model: source === "llm" ? "gemma4:e4b-it-qat" : null, tag: 3, status: "active" });
+const P1 = { asset: "press-1", ts: T0 - 40, reason: "press-1 draws 85 A, 99 % above its normal 43 A, and rail psu-a is at 344 V" };
+INCIDENT["/api/incident"] = rec({ origin: P1, driver: P1, chain: ["press-1"], victims: ["cnc-1", "qa-scanner-1"],
+  phases: [[75, "open", "a forecast card opened"], [75, "card", "forecast: press-1 heads for the 78 °C trip in about 167 s"],
+    [40, "origin", "press-1 starts it: " + P1.reason]] });
+INCIDENT["/api/narrative"] = narr({
+  headline: "press-1 is overloading rail psu-a.",
+  origin: "press-1 draws 85 A, about twice its normal 43 A, and pulls the rail down to 344 V.",
+  chain: "The low rail reaches cnc-1 and qa-scanner-1.",
+  evidence: "press-1's current rose before the rail fell, and they all share that rail.",
+  suggestion: "Derate press-1 to 55 % through plc-stamping to take the load off the rail." });
+INCIDENT["/api/ask"] = { answer: "press-1 draws 85 A against a normal 43 A, and it shares rail psu-a with cnc-1 and qa-scanner-1.",
+  tools: [{ tool: "get_incident", args: {} }, { tool: "get_readings", args: { asset: "press-1" } }], source: "llm" };
+STEADY["/api/incident"] = { active: null, recent: [{ id: "INC-20260926-093000-1", opened_ts: T0 - 3600, closed_ts: T0 - 3100,
+  origin: P1, tripped: [] }] };
+STEADY["/api/narrative"] = { text: "Steady: every monitored signal sits inside its learned normal band (16 workloads).",
+  sections: {}, source: "steady", model: null, status: "steady" };
+FORECAST["/api/incident"] = rec({ cards: [{ pod: "press-1", class: "trip", eta_s: 38 }],
+  phases: [[20, "open", "a forecast card opened"], [20, "card", "forecast: press-1 heads for the 78 °C trip in about 58 s"]] });
+FORECAST["/api/narrative"] = narr({ headline: "press-1 is heading for its trip.",
+  forecast: "Its temperature curve levels off at 83 °C, above the 78 °C trip, so it trips in about 38 s unless it makes less heat.",
+  suggestion: "Derate press-1 to 55 % through plc-stamping." });
+const C1 = { asset: "compressor-1", ts: T0 - 170, reason: "compressor-1 draws 57 A, 764 % above its normal 7 A, and rail psu-b is at 363 V" };
+const D1 = { asset: "chiller-1", since_ts: T0 - 70, reason: "chiller-1's overload relay tripped, and loop flow is 54 of 120 L/min" };
+CHAIN["/api/incident"] = rec({ origin: C1, driver: D1, chain: ["compressor-1", "chiller-1"], victims: ["furnace-1", "press-1", "cnc-1"],
+  tripped: ["chiller-1"], phases: [[175, "open", "the engine found a root cause"], [170, "origin", "compressor-1 starts it: " + C1.reason],
+    [95, "trip", "chiller-1 tripped"], [80, "card", "forecast: furnace-1 heads for the 78 °C trip in about 106 s"],
+    [70, "driver", "chiller-1 now drives it: " + D1.reason]] });
+CHAIN["/api/narrative"] = narr({
+  headline: "The stuck compressor-1 knocked out the chiller, and the cooled machines are heating.",
+  origin: "compressor-1 has run nonstop at 57 A instead of its normal 7 A, and rail psu-b sagged to 363 V.",
+  driver: "chiller-1 now drives it: the low rail overloaded its relay, it tripped, and loop flow fell to 54 of 120 L/min.",
+  chain: "The chain runs compressor-1, then chiller-1. It reaches furnace-1, press-1 and cnc-1.",
+  forecast: "furnace-1 heads for 81 °C and trips at 78 °C in about 44 s.",
+  suggestion: "Stop compressor-1 at the machine; derate press-1 to 55 % through plc-stamping; reset the chiller-1 relay only after compressor-1 is fixed." });
+CHAIN["/api/actions"] = { ...CHAIN["/api/actions"], proposals: [{ id: "f1", verb: "derate", asset: "press-1", plc: "plc-stamping",
+  tag: "FLEET.PLC_STAMPING.PRESS_1.DERATE_PCT", from: 100, to: 55, reason: "forecast", expected: "press-1 makes less heat and stays below the 78 °C trip" }],
+  advice: [{ verb: "stop", target: "compressor-1", text: "unload or stop compressor-1 at the machine", why: "no controller VISR can write to holds it" },
+    { verb: "inspect", target: "chiller-1", text: "reset the chiller-1 relay only after compressor-1 is fixed", why: "compressor-1 overloaded it, and a reset now trips it again" },
+    { verb: "stop", target: "furnace-1", text: "reduce the load on furnace-1 before it reaches 78 °C", why: "it trips in about 44 s, and no controller VISR can write to holds it" }] };
+const H1 = { asset: "hmi-gw", ts: T0 - 60, reason: "hmi-gw floods field-1, which runs at 152 % of its capacity" };
+NETWORK["/api/incident"] = rec({ origin: H1, driver: H1, chain: ["hmi-gw"], victims: ["plc-stamping"],
+  phases: [[65, "open", "the engine found a root cause"], [60, "origin", "hmi-gw starts it: " + H1.reason]] });
+NETWORK["/api/narrative"] = narr({ headline: "hmi-gw is flooding the field network.",
+  origin: "It pushes field-1 to 152 % of its capacity, so frames queue and drop.",
+  chain: "The stamping PLC link lags and drops in and out.",
+  suggestion: "Rate-limit or isolate hmi-gw on field-1, and check the derates in force." });
+INTEGRITY["/api/incident"] = rec({ integrity: [{ kind: "unsigned_write", tag: "FLEET.PLC_STAMPING.PRESS_1.DERATE_PCT", clients: ["rogue-ews"] }],
+  phases: [[30, "open", "an integrity check failed"], [30, "integrity", "integrity: FLEET.PLC_STAMPING.PRESS_1.DERATE_PCT changed with no signed record, written by rogue-ews"]] });
+INTEGRITY["/api/narrative"] = narr({ headline: "Someone changed a setpoint with no signed record.",
+  evidence: "PRESS_1.DERATE_PCT went from 100 to 30 % with no ledger row, and the network shows rogue-ews wrote it.",
+  suggestion: "Restore press-1 to 100 % from the unsigned hold, and block rogue-ews from the PLC network." });
+BLIND["/api/incident"] = rec({ blind: true, cards: [{ pod: "tag-server", class: "leak", eta_s: 42 }],
+  phases: [[90, "open", "a forecast card opened"], [90, "card", "forecast: tag-server reaches its memory limit in about 122 s"],
+    [5, "blind", "SCADA is blind: the tag server does not answer"]] });
+BLIND["/api/narrative"] = narr({ headline: "SCADA is blind.",
+  evidence: "The tag server ran out of memory and does not answer, so the SCADA view shows old values.",
+  suggestion: "Watch the plant from the edge view until the tag server answers; restart it in a planned way next time, before its limit." });
+
 export function mockVariant() {
   return typeof window === "undefined" ? "incident" : new URLSearchParams(window.location.search).get("mock") || "incident";
 }
@@ -342,7 +412,8 @@ function jitterPlant(p) {
   return { ...p, devices, rails, loop: p.loop && { ...p.loop, flow: j(p.loop.flow, 0.9) } };
 }
 
-export function mockFor(path) {
+export function mockFor(fullPath) {
+  const path = fullPath.split("?")[0];               // /api/ask?q=... reads the /api/ask mock
   const v = VARIANTS[mockVariant()];
   const out = v && v[path] !== undefined ? v[path] : INCIDENT[path];
   return path === "/api/plant" && out ? jitterPlant(out) : out;

@@ -131,6 +131,11 @@ in a noisy scene. That is the job: make the one important thing visible.
 The best way to understand VISR is to follow one fault through the whole system. This is Scenario 1,
 the rail-sag cascade, as it ran on our edge box on 22 September 2026.
 
+This chapter keeps the numbers of that run. On 26 September a realism pass changed the plant (chapter 5):
+the rails now sag 3 to 4 % at full load instead of 10 %, each machine trips at its own limit (80 °C for
+the presses and cnc-1, 55 °C for the furnace coil water), and four virtual PLCs run the plant. The story
+is the same. The numbers below are the ones from 22 September.
+
 ### The calm plant
 
 Our plant has eight machines. Four of them (press-1, press-2, cnc-1 and qa-scanner-1) share one power
@@ -303,6 +308,11 @@ Each rail has a nominal voltage of 400 V and a small source resistance. The rail
 Think of a garden hose that feeds several sprinklers. When one sprinkler opens wide, the pressure drops
 for all of them. That is exactly how a power sag spreads along a rail.
 
+The source resistance is 0.12 ohm, so a rail at full normal load sits 3 to 4 % under 400 V. That is the
+drop that IEC 60364-5-52 recommends for motor circuits. Before the realism pass of 26 September, rail A
+idled at 360 V, 10 % low, which no plant engineer would accept. Every value of the pass comes from a
+published source or is marked a project choice, and `SCENARIOS.md` section 12 lists them.
+
 Machines react to a sag in two different ways, as real ones do:
 
 - **Voltage-sensitive machines** (like cnc-1 and qa-scanner-1) slow down when the voltage drops.
@@ -326,14 +336,18 @@ When the pump weakens, the flow drops, and every machine on the loop starts to w
 its own pace. That staggered response gives the engine a real lag structure to reason about, instead of
 a set of identical curves.
 
-chiller-1 drives the loop and has a **motor overload relay**, modelled on the real kind: it heats up
-while the motor current stays above its rating, cools down otherwise, and trips when it has absorbed too
-much heat. A normal compressor cycle never trips it. A long sag does.
+chiller-1 cools the loop, and it can remove at most 46 kW. When the machines and the water-cooled
+compressor put in more heat than that, the loop water warms, and every machine on the loop warms with
+it. The chiller has the protections of a real unit: a **motor overload relay** on the IEC 60947-4-1
+class 10 curve (no trip at 1.05 times its rating, a trip in about 7 seconds at 7.2 times), an
+**undervoltage relay** that stops it when its supply stays low, and an **anti-recycle timer** that keeps
+5 minutes between two starts.
 
 ### Duty cycles: the normal that looks like a fault
 
-compressor-1 runs on a duty cycle: about one minute on, four minutes off. Every time it switches on, it
-pulls rail B down. This is the hardest test for any root-cause tool, because it looks exactly like a
+compressor-1 fills an air receiver. Its controller loads it at 6.9 bar and unloads it at 7.5 bar, so it
+runs loaded for about one minute in every five. Every time it loads, it pulls rail B down and puts more
+heat into the loop, because it is water-cooled. This is the hardest test for any root-cause tool, because it looks exactly like a
 fault, several times an hour. VISR must stay silent through it. It does, because a deviation must hold
 for most of two minutes before it counts, and because the learned baseline includes the cycle.
 
@@ -363,8 +377,9 @@ system trips machines when a limit is crossed. VISR keeps that split.
 ### OpenPLC: the real trip interlock
 
 OpenPLC is an open-source PLC runtime that runs IEC 61131-3 programs. Our trip program
-(`plc/program.st`) reads every cooled machine's temperature from the plant, and when one reaches 78 °C,
-it sets that machine's trip coil. The plant model reads the coil and opens the machine's contactor. The
+(`plc/program.st`) reads every cooled machine's temperature from the plant, and when one reaches its own
+trip limit, it sets that machine's trip coil. The limits are 80 °C for the press hydraulic oil and the
+cnc-1 spindle motor, and 55 °C for the furnace-1 coil cooling water. The plant model reads the coil and opens the machine's contactor. The
 trip **latches** until someone resets it, as a real interlock does. The plant model acts as the field
 wiring: it writes sensor words into OpenPLC over Modbus TCP and reads the trip coils back.
 
@@ -387,6 +402,12 @@ online. Each virtual PLC:
 - **enrolls** with SCADA using a signed token, and repeats that as a heartbeat every 30 seconds.
 
 A virtual PLC is a protocol profile, not vendor firmware, and every card on the console says so.
+
+Four virtual PLCs run the base plant. `plc-stamping` runs press-1 and press-2. `plc-utilities` runs
+compressor-1 (its load band and a run command) and chiller-1 (a demand limit). `plc-machining` sends
+cnc-1 the feed hold and the feed override, the way a line PLC talks to a CNC that keeps its own
+program. `plc-furnace` sends furnace-1 its heat enable and power limit. The furnace trip stays in
+OpenPLC, because NFPA 86 wants the excess-temperature limit on its own device.
 
 ### A PLC comes online in 15.6 seconds
 
@@ -449,13 +470,18 @@ Here are its parts, in the order a signal meets them.
 ### 8.1 Baselines: learning what normal looks like
 
 For every signal, the engine learns a normal band from recent history, using outlier-resistant
-statistics (the median and the median absolute deviation) that ignore short spikes. Two rules keep the baselines honest:
+statistics (the median and the median absolute deviation) that ignore short spikes. Three rules keep the baselines honest:
 
 - A baseline learns **only from a window that is at least 90 % full**. After a restart, the window is
   mostly empty, and learning from it would teach the engine that normal is zero. We learned this the hard
   way (chapter 17).
 - Every signal family has a **floor** on its band, so a signal that barely moves does not raise an alarm
   over a tiny wobble.
+- The engine **learns, then locks**. It learns during the soak, and the operator then locks the baselines.
+  A locked baseline never changes, so a long fault cannot teach the engine that the fault is normal. On
+  25 September a 17-minute Scenario 2 did exactly that to rail B while learning was still on, and every
+  normal compressor cycle afterwards looked like an incident. A newly added machine still learns until its
+  own baseline is ready.
 
 ### 8.2 The deviation gate: is it real?
 
@@ -510,6 +536,13 @@ observed trouble it explains through the links that leave it, with a decay per h
 something else explains gets a penalty. Ties go to the earliest onset. The result is a sentence an
 operator can check: "press-1 explains most of the observed degradation".
 
+Not every link may vote. On a power rail every machine sees the same bus voltage, and in the coolant
+loop the temperatures are slow, so the machine that heats fastest always seems to move first. A link
+between two machines on these media votes only when the leader's own load, or the lost cooling, moved
+first. A plain correlation between two machines still shows on the map as context, but it never makes a
+machine the root. Before this rule, cnc-1 (the fastest to heat) took the root in the coolant scenarios.
+The network segment keeps plain correlations, because there each member's delay really differs.
+
 ### 8.8 Memory: learning across incidents
 
 The pure pass above has no memory. Around it, the service keeps a small database
@@ -539,9 +572,23 @@ more than that. This rule is built and unit-tested, and its full scenario is sti
 A root cause after the damage is useful. A warning before the damage is better. VISR forecasts two kinds
 of failure by extrapolating a trend to a known limit:
 
-- **Thermal trips.** The engine fits the recent temperature ramp of each cooled machine and projects it
-  to the 78 °C trip line of the OpenPLC interlock. If the crossing falls within the horizon, the console
-  shows a **trip card** with an estimate, for example "press-1 trips in about 75 s".
+- **Thermal trips.** A coolant temperature does not climb in a straight line. After a change in heat or
+  cooling it bends over and levels off, the way a kettle on a low flame stops short of boiling. The
+  engine fits that curve to each cooled machine: the level it settles at, and how fast it gets there.
+  Only when the level lies above the machine's own trip line in the OpenPLC interlock does the console show a
+  **trip card**, with an estimate such as "press-1 trips in about 170 s". A machine that levels off
+  below the line gets no card, and neither does a machine that is stopped or cooling. The fit must
+  agree at three points ten seconds apart, so a guess made before the bend shows never flashes a card.
+- **Slow drifts.** When the loop water warms slowly (Scenario 2), the curve shows no bend for many
+  minutes. The API then uses the rule of a plant engineer: the supply water rises r degrees per minute,
+  the machine is d degrees under its trip, so it trips in about d / r minutes. The rise must be steady
+  and at least 0.1 °C per minute, and the card shows only inside 25 minutes.
+  On the recorded runs of 25 September the old straight line put a card on a machine that never tripped
+  in 254 passes. The curve did it in 12, and its estimate for Scenario 1 was 167 s against a real 180 s,
+  where the line said 79 s. The watch of 26 September found the last false cards: early in a slow climb
+  the curve still looks straight, so the fitted level is a guess (100 to 179 °C). The engine now waits
+  until the bend shows (a time constant under 600 s). Real cards come 10 to 20 s later, still more than
+  a minute before the trip.
 - **Out-of-memory kills.** On the edge plane, the engine projects a service's memory working set to its
   memory limit. A service that leaks gets a card such as "OOM in about 2 minutes", before the kernel
   kills it.
@@ -552,6 +599,9 @@ link to other services. It is a warning about one service, not a causal claim.
 
 On the box, Scenario 5's first trip cards came 30 to 40 seconds after the fault. furnace-1's card came
 76 seconds before its trip, and press-1's came 102 seconds before.
+
+A trip card on a machine that VISR can control also gives the operator a proposal: derate it, so it makes
+less heat and stays below the line. In Scenario 5 that is press-1 and press-2 on the stamping PLC.
 
 ## 10. Integrity: when a report breaks the physics
 
@@ -578,10 +628,33 @@ identity, which are on our roadmap (chapter 13).
 VISR uses one language model, and it runs on the edge box: Google's Gemma 4 in its small E4B edge size,
 served by Ollama with the help of the box's small graphics card. This is our Gen AI.
 
-The narrator has one job: turn a verdict into a short paragraph a person can read in a few seconds. It
-receives the verdict, the evidence, and the chain, and it writes the explanation. It never decides
-anything. The verdict exists before it speaks. If the narrator is slow or down, the console shows a
-template sentence built from the same verdict, and says so.
+The narrator has one job: turn an incident into a few sentences a person can read in seconds. It never
+decides anything. The verdict exists before it speaks. If the narrator is slow or down, the console shows
+template sentences built from the same facts.
+
+**The incident record.** The engine answers every ten seconds, and each answer stands alone. An operator
+needs the story, so the API keeps one (`api/incident.py`). An incident opens at the first sign: a root
+cause, a forecast card, an integrity finding, a tripped machine, or a blind SCADA view. It keeps apart
+the machine that **started** it (the origin) and the machine that **drives** it now. In Scenario 2 the
+compressor that never unloads starts it, and once the chiller has run at its limit for a while, the
+lost cooling can drive it. Each change is a numbered phase with a reason made of measured numbers, for
+example "chiller-1 is at its capacity limit, and the supply water is 38 C against its 28 C setpoint". A new driver must hold for 15 seconds, so a flicker between
+two suspects does not rewrite the story. A machine that its protective trip stopped is a consequence,
+never the driver, and a suspect whose own load is normal is ignored. The incident closes 30 seconds
+after the last physical sign.
+
+**Words locked to the story.** The narrator writes from a case file of these facts, in a fixed order:
+what happened, what started it, what drives it now, the chain, what the operator did, the evidence, the
+forecast, and what to do. Readings from the start of the incident go to the past tense once they stop
+being true: after press-1 trips, the text says "at the start, press-1 drew 85 A", not "draws". It writes a new text only when the incident enters a new phase, so the words stay still while the
+live numbers move in their own places. A checker refuses any sentence with a number that is not in the
+case file, and the template sentence takes its place. On the box, Gemma 4 wrote each phase in 8 to 15
+seconds in the background, and every section passed the checker.
+
+**Ask VISR.** An operator can type a question under the verdict, such as "why is chiller-1 driving it
+now?". The model answers with three read-only tools: the incident, one machine's readings, and the
+checked suggestions. On the box it picked the right tools and answered in 5 to 11 seconds. It cannot
+write anything, and an answer with a number that no tool returned is replaced by a pointer to the panel.
 
 We made this split on purpose. A language model is good at explaining and bad at being sure. The engine
 is the opposite. Each does the job it is good at.
@@ -591,8 +664,13 @@ is the opposite. Each does the job it is good at.
 Most monitoring tools stop at the alert. VISR goes one step further, carefully. The act loop is written
 up in `FLEET.md` section 10. Its rules are strict:
 
-1. **One bounded verb.** Today there is one: derate a machine through its PLC, to a fixed percentage.
-   There is no free-form command.
+1. **Bounded verbs.** VISR can execute two things: derate a machine through its PLC to a fixed
+   percentage, and restore a setpoint that someone changed without a signed record. It proposes a derate
+   for the root machine while that machine draws more than its normal current, and for any machine it
+   can control that has a trip card open. Every other suggestion (stop a stuck load, isolate a noisy
+   network client, restart a leaking service, reset a relay only after its cause is fixed) is advisory:
+   the console shows it, and a person does it. No suggestion acts on a tripped machine. There is no
+   free-form command.
 2. **Cite or die.** Every proposal cites the verdict it acts on: the root, its evidence, and its
    confidence. If the verdict changes before the operator confirms, the API refuses the action with a
    409, and the refusal goes into the ledger.
@@ -617,10 +695,10 @@ We are aligned with 62443 thinking. We are not certified, and we say so.
 | FR1 Identification and authentication | TLS login, an operator token, per-PLC signed enrollment tokens, no vendor default passwords | an account for each person |
 | FR2 Use control | viewer and operator roles, a writable-tag list with limits | per-device keys, then X.509 certificates |
 | FR3 System integrity | a hash-chained audit ledger, integrity checks against the physics | check each PLC task hash against the approved task |
-| FR4 Data confidentiality | TLS at the console, inference on one air-gapped box | Modbus/TCP Security (TLS) where PLCs support it |
-| FR5 Restricted data flow | the safety interlock kept off the control network segment | network zones with deny-by-default policies |
+| FR4 Data confidentiality | TLS at the console, inference on one air-gapped box, Secrets mounted as files, no plant traffic to the internet | Modbus/TCP Security (TLS) where PLCs support it |
+| FR5 Restricted data flow | the safety interlock kept off the control network segment, network zones with deny-by-default policies, no side doors around the login | zones for the monitoring namespace |
 | FR6 Timely response to events | every refused command writes a ledger row | a durable ledger with an anchored chain head |
-| FR7 Resource availability | edge-first, no cloud, forecasts for its own memory | image scanning and a software bill of materials |
+| FR7 Resource availability | edge-first, no cloud, forecasts for its own memory, a memory and a disk limit on every pod, 30 days of history | image scanning and a software bill of materials |
 
 A few details, in plain words:
 
@@ -637,6 +715,19 @@ A few details, in plain words:
   into a Secret and changed it in the running database, so the old value opens nothing (LOG-076). The
   OpenPLC web interface no longer accepts its vendor default login, and its REST API is switched off
   (LOG-077).
+- **Zones and conduits.** Each namespace is a zone: the plant floor, the PLC fleet, and VISR itself.
+  A deny-by-default network policy lets through only the connections that the eBPF map saw in real
+  use: the plant model to the PLCs, SCADA to the PLCs and the historian, VISR to what it reads. A pod
+  that has no business with a PLC cannot reach it. The one exception is the test attacker of Scenario 4A,
+  which is labeled as such, runs only during that scenario, and does not exist in a real plant.
+  `deploy/netpol.sh` applies the policies, checks every path, and removes them again if one fails.
+- **Nothing leaves the box.** The eBPF map caught the historian database sending usage telemetry to the
+  internet. We switched it off, and the plant and PLC zones can no longer reach the internet at all.
+- **Least privilege in every pod.** No VISR service runs as root except three that need it (the web
+  server, the OpenPLC runtime, and the database, which drops to its own user). The others run as an
+  unprivileged user, with no Linux capabilities, a read-only file system, and no Kubernetes token. Secrets
+  arrive as files, not as environment variables. The API, Prometheus, and Grafana no longer have side
+  doors on the node: everything goes through the console's TLS login.
 - **Refusals are part of the demo.** `deploy/refusals.sh` shows three refusals on camera: a command
   with no token (401), an action on a stale verdict (409), and an attempt to delete the base PLC (403).
   Each one writes a ledger row.
@@ -692,7 +783,7 @@ PS1 to PS6 (plant scenarios).
 |---|---|---|---|---|
 | 0 | Nothing: the steady plant | none | silence: no root, no finding | QUIET every minute after a 15-minute settle |
 | 1 | Rail-sag cascade | Milford Haven, 1994 | root press-1 along rail A | 80.3 s, write + rail + temporal |
-| 2 | A power sag trips the chiller | Azure Australia East, 2023 | root compressor-1, then chiller-1 trips, then the coolant loop | 304.2 s, both hops together |
+| 2 | A failed pressure sensor overheats the loop | Azure Australia East, 2023 | root compressor-1, then its heat reaches the coolant loop | not measured yet (the old Scenario 2: 304.2 s) |
 | 3 | Control network storm | Browns Ferry Unit 3, 2006 | root hmi-gw along the segment | 90.2 s |
 | 4A | Setpoint write with no record | Stuxnet 2010, FrostyGoop 2024, Ukraine grid 2015 | an unsigned-write finding, client named | 39.1 s, client rogue-ews |
 | 4B | A current report contradicts the feeder | Stuxnet's replay, Buncefield 2005 | a current-balance finding, channel named | 15.0 s, an 18.1 A gap |
@@ -704,14 +795,17 @@ A few words on each.
 **Scenario 1, the rail-sag cascade.** Chapter 3 told this one in full. It is the alarm flood of Milford
 Haven in miniature: one fault, many alarms, one real cause.
 
-**Scenario 2, a power sag trips the chiller.** In 2023, a power disturbance tripped the chillers of a
-Microsoft Azure data centre in Australia, and the cooling failure cascaded into an outage. In our plant,
-compressor-1 sticks on and holds rail B low. chiller-1's overload relay heats up under the long sag and
-trips. The coolant flow falls, and the cooled machines warm. VISR must name compressor-1, with both hops
-visible at once: the rail hop to chiller-1, and the loop hop to the cooled machines. This was our
-hardest scenario. It failed on the box twice, because hot machines tripped and unloaded the rail before
-the loop hop formed. After we measured the effect of the chiller's residual flow, it passed on
-22 September.
+**Scenario 2, a failed pressure sensor overheats the loop.** In 2023, a power disturbance tripped the
+chillers of a Microsoft Azure data centre in Australia. The chilled water then ran too warm for them to
+restart, and the cooling that was left could not carry the heat load. In our plant, the pressure sensor
+of compressor-1 fails and reads low, so its controller never unloads it. The air receiver vents at its
+safety valve, and the water-cooled compressor puts more heat into the loop than chiller-1 can remove.
+The loop water warms by about a degree a minute, every cooled machine warms with it, and furnace-1
+trips first, about 16 minutes later. VISR must name compressor-1 and follow its heat into the loop.
+The first version of this scenario tripped the chiller's relay under a rail sag. It passed on the box on
+22 September, but a review found that the relay tripped at 1.04 times its rating. The standard says a
+relay must not trip at 1.05 times its setting. We replaced it with a fault that a plant engineer would
+recognize.
 
 **Scenario 3, a control network storm.** At Browns Ferry in 2006, excess traffic on a plant network
 froze the controllers of two recirculation pumps, and the reactor was shut down by hand. In our plant,
@@ -801,6 +895,16 @@ system better, and because they are the honest story of how it was built.
   one formed. We measured seven settings of the chiller's residual flow in the lab, picked the start of
   the plateau, and the box then passed. *Lesson: when two effects must coexist, measure the window where
   they do.*
+- **A relay that no standard allows.** The chiller relay of the first Scenario 2 tripped at 1.04 times
+  its rating, and IEC 60947-4-1 says a relay must not trip at 1.05 times. The rails also sagged 10 % in normal
+  running. The scenario passed, but an engineer would not believe it. We checked every plant value
+  against a published source and rebuilt Scenario 2. *Lesson: a demo that passes on a wrong model
+  proves nothing. Cite the source of each number.*
+- **A missing line in a manifest.** The first deploy of the realism pass left out one `---` line
+  between two objects in the fleet manifest. Kubernetes merged them into one, with no error, and two
+  PLC services never existed. The go-live checks caught it, and the script now counts the objects in
+  each manifest before it applies anything. *Lesson: check what the cluster received, not what the
+  command printed.*
 - **A memory signal counted twice.** Two collectors scraped the same memory counters, so the forecast
   signal doubled (63 MiB against a real 31 MiB). The fix pins the query to one collector. *Lesson: check
   a number against a second source before you forecast with it.*
@@ -834,8 +938,8 @@ VISR stands on many shoulders. This chapter names them.
 - **LG Polymers, Visakhapatnam, 2020**: cooling that stopped, and a sensor that was not there.
 - **Toyota, 2023**: a full disk that stopped 12 plants. **Northeast blackout, 2003**: an alarm system
   that failed silently. Both taught us to watch the watcher.
-- **Azure Australia East, 2023** (Microsoft incident report): a power disturbance, a chiller trip, and a
-  cooling cascade.
+- **Azure Australia East, 2023** (Microsoft incident report): a power disturbance, a chiller trip, chilled
+  water too warm for a restart, and cooling capacity too small for the heat load.
 - **Jaguar Land Rover, 2025** (Cyber Monitoring Centre): the cost of a cyberattack on manufacturing.
 
 ### Standards
@@ -947,8 +1051,9 @@ and we say so. What is new is the combination:
 - **Causes above the plant.** Scenario 7 must pass: when the supply dips, VISR must name the supply, not
   the machine that reacted to it. The fix is an "explained load" test: a machine whose extra current is
   fully explained by the dip it suffers must not be called the aggressor.
-- **Faster chains.** Scenario 2 takes about five minutes to show both hops. We want it closer to the
-  two-minute confirmation time of the other scenarios.
+- **Slow chains.** Since the realism pass, Scenario 2 builds over about 16 minutes, as a real heat
+  problem does. The root comes at once, but the link to the loop takes about four minutes in the lab. We
+  want the loop link sooner, from the rise of the supply water itself.
 - **Real hardware in the same graph.** A physical PLC and a power analyzer, the equipment that a real
   plant uses, join the same engine through a thin adapter. Each new kind of device should cost an adapter,
   not a redesign.
@@ -1100,7 +1205,7 @@ passed.
 | Execute relief, rail A voltage | 344.4 → 359.6 V |
 | Scenario 1 clear after the reset | 305.7 s |
 | Scenario 5 first trip | furnace-1 at 116.5 s, its card 76.3 s earlier (press-1's card 102.5 s earlier) |
-| Scenario 2 root compressor-1 with the loop hop | 304.2 s |
+| Scenario 2 root compressor-1 with the loop hop (the old Scenario 2, before the realism pass) | 304.2 s |
 | Scenario 3 root hmi-gw | 90.2 s |
 | Scenario 4A unsigned write | 39.1 s, client rogue-ews named |
 | Scenario 4B current balance | 15.0 s, a gap of 18.1 A |

@@ -28,9 +28,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
+import advice
+import agent
+import drift
 import fleet
+import incident
 import integrity
 import metrics
+import narrator
 import security
 
 ENGINE = os.environ.get("ENGINE_URL", "http://correlation-engine.aiops.svc:9100").rstrip("/")
@@ -43,10 +48,6 @@ EWS = os.environ.get("EWS_URL", "http://rogue-ews.plant.svc.cluster.local:8090")
 TOPOLOGY_NS = {s.strip() for s in os.environ.get("TOPOLOGY_NAMESPACES", "plant,aiops").split(",") if s.strip()}
 SIGNAL = os.environ.get("ENGINE_SIGNAL", "psi_io")             # primary/default resource class
 SIGNALS = [s.strip() for s in os.environ.get("ENGINE_SIGNALS", "psi_io,psi_cpu,psi_mem").split(",") if s.strip()]
-SIGNAL_RESOURCE = {"psi_io": "disk I/O", "psi_cpu": "CPU", "psi_mem": "memory",
-                   "bus_voltage": "rail voltage", "coolant_temp": "coolant temperature",
-                   "field_latency": "field network latency"}  # ground the narrator's resource word
-PLANT_SIGNALS = ("bus_voltage", "coolant_temp", "field_latency")   # narrated as the plant floor, not pods
 # The one LLM. Unset OLLAMA_HOST -> /api/narrative serves the deterministic template only, so the
 # verdict never depends on the model being reachable (the demo must survive a model outage).
 OLLAMA = os.environ.get("OLLAMA_HOST", "").rstrip("/")
@@ -59,13 +60,26 @@ HEADROOM = 1.3                                                # reclaim target =
 # pre-2E open behavior, reported honestly by /api/health). nginx injects X-Auth-Token for the
 # basic-auth `operator` user and X-Remote-User for attribution; a direct caller supplies the
 # token itself. Every action AND denied attempt lands in the hash-chained audit ledger.
-OPERATOR_TOKEN = os.environ.get("VISR_OPERATOR_TOKEN", "")
+def _secret(name: str, default: str = "") -> str:
+    """A secret from the file named by NAME_FILE (a mounted Secret, LOG-095), else from NAME. A file
+    that cannot be read gives the default, so a missing optional Secret fails closed."""
+    path = os.environ.get(name + "_FILE")
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return default
+    return os.environ.get(name, default)
+
+
+OPERATOR_TOKEN = _secret("VISR_OPERATOR_TOKEN")
 AUDIT = security.AuditLedger(os.environ.get("AUDIT_PATH", "/data/audit.jsonl"))
 # 2H fleet + 3D act loop (FLEET.md section 10). The keys come from Secret visr-fleet. Without them the
 # fleet mutations and the setpoint writes fail closed, and /api/fleet says so.
 FLEET_NS = os.environ.get("FLEET_NS", "fleet")
-FLEET_ENROLL_KEY = os.environ.get("FLEET_ENROLL_KEY", "")
-SCADA_WRITE_TOKEN = os.environ.get("SCADA_WRITE_TOKEN", "")
+FLEET_ENROLL_KEY = _secret("FLEET_ENROLL_KEY")
+SCADA_WRITE_TOKEN = _secret("SCADA_WRITE_TOKEN")
 VPLC_IMAGE = os.environ.get("VPLC_IMAGE", "localhost:5000/skn/vplc:v0.1")
 TASKS_DIR = os.environ.get("TASKS_DIR", "/tasks")
 DERATE_TARGET_PCT = int(os.environ.get("DERATE_TARGET_PCT", "55"))
@@ -276,59 +290,6 @@ def _fairness(stall_by_key):
     return [{"namespace": ns, "gini": _gini(vs), "workloads": len(vs)} for ns, vs in sorted(by_ns.items())]
 
 
-def _ollama(prompt, timeout=30):
-    """One non-streamed completion from Ollama; None on any failure so the caller falls back.
-    `think: false` disables gemma's reasoning phase (we want one fast, deterministic sentence)."""
-    if not OLLAMA:
-        return None
-    body = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
-                       "think": False, "keep_alive": "10m",  # stay warm through an incident
-                       "options": {"temperature": 0.2}}).encode()
-    req = urllib.request.Request(OLLAMA + "/api/generate", data=body,
-                                 headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return (json.load(r).get("response") or "").strip() or None
-    except Exception:
-        return None
-
-
-def _template_narrative(g) -> str:
-    """Deterministic verdict sentence built from the graph — the always-available fallback."""
-    root = g.get("root") or []
-    edges = g.get("edges") or []
-    meta = g.get("meta") or {}
-    signal = meta.get("signal", SIGNAL)
-    if not root or not edges:
-        return f"Steady state: no causal contention detected across {meta.get('pods', 0)} workloads."
-    cause = root[0]["pod"]
-    out = [e for e in edges if e["src"] == cause] or edges          # strongest edge leaving the root
-    e = max(out, key=lambda x: abs(x.get("r") or 0.0))
-    victim = e["dst"]
-    ev = ", ".join(e.get("evidence") or []) or "correlation"
-    eta = {b["pod"]: b.get("eta_s") for b in (g.get("blast_radius") or [])}.get(victim)
-    eta_txt = f", with impact on {victim} expected in ~{int(eta)}s" if eta else ""
-    reg = meta.get("case_register")
-    reg_txt = f" (recognised as a {reg} of a known case)" if reg in ("recurrence", "variant") else ""
-    return (f"{cause} is the likely root cause of {SIGNAL_RESOURCE.get(signal, signal)} contention: "
-            f"its activity correlates with {victim} over {ev}{eta_txt}{reg_txt}.")
-
-
-def _incipient_text(incip) -> str:
-    """Deterministic early-warning line, phrased per forecast family (2C'): the plant coolant thermal
-    TRIP (coolant_temp -> temp_limit, °C) or the memory OOM leak (mem -> mem_limit, bytes). The
-    finding's class/signal pick the wording — a coolant trip must NOT read as a memory OOM in bytes.
-    Pods already workload-normalized by graph()."""
-    f = min(incip, key=lambda x: x.get("eta_s") if x.get("eta_s") is not None else 1e9)
-    pod, eta = f["pod"], int(f.get("eta_s") or 0)
-    val, lim = f.get("value") or 0, f.get("limit") or 0
-    if f.get("class") == "trip" or f.get("signal") == "coolant_temp":
-        return (f"Early warning: {pod} coolant temperature is climbing toward the {lim:.0f} °C trip "
-                f"({val:.0f} °C now) — projected trip in ~{eta}s.")
-    return (f"Early warning: {pod} is trending toward its memory limit "
-            f"({_fmt_mem(val)} of {_fmt_mem(lim)}) — projected OOM in ~{eta}s.")
-
-
 _PLANT_ENTITIES: set = set()
 _PLANT_ENTITIES_TS: float = 0.0
 
@@ -377,11 +338,13 @@ SCENARIOS = [
      "anchor": "Milford Haven refinery, 1994: 275 alarms in the last 11 minutes",
      "plane": "plant", "owner": "plant", "triggerable": True,
      "expect": "root press-1 along rail psu-a", "expect_s": 90},
-    {"id": "PS2", "name": "Power sag trips the chiller",
-     "mechanism": "compressor-1 stuck on -> rail B sags -> chiller-1 overload relay trips -> loop cool-1 flow falls",
-     "anchor": "Azure Australia East, 2023: a power sag tripped the chillers",
+    {"id": "PS2", "name": "A failed pressure sensor overheats the loop",   # LOG-100
+     "mechanism": "compressor-1 pressure transducer fails low -> the compressor stays loaded -> its heat "
+                  "exceeds chiller-1 capacity -> loop cool-1 supply water warms -> the cooled machines heat",
+     "anchor": "Azure Australia East, 2023: the cooling capacity left could not carry the heat load, "
+               "the chilled water warmed, and equipment shut down",
      "plane": "plant", "owner": "plant", "triggerable": True,
-     "expect": "root compressor-1 via rail psu-b, chiller-1 and loop cool-1, with trip forecasts",
+     "expect": "root compressor-1, then the loop cool-1 supply warms, with trip cards from the supply drift",
      "expect_s": 150},
     {"id": "PS3", "name": "Control network storm",
      "mechanism": "hmi-gw floods segment field-1 (20 -> 1500 frames/s) -> the stamping cell link lags and drops",
@@ -400,10 +363,10 @@ SCENARIOS = [
      "expect": "integrity finding current_balance on rail psu-a, channel FLEET.PLC_STAMPING.PRESS_1.AMPS",
      "expect_s": 40},
     {"id": "PS5", "name": "Coolant pump degradation",
-     "mechanism": "flow drops -> temps ramp toward the 78C trip (forecast beat)",
+     "mechanism": "flow drops -> temps ramp toward each machine's own trip (forecast beat)",
      "anchor": "LG Polymers, Visakhapatnam, 2020: the tank heated with no sensor at the top",
      "plane": "plant", "owner": "plant", "triggerable": True,
-     "expect": "trip forecast cards before the 78 C trip", "expect_s": 60},
+     "expect": "trip forecast cards before each machine's trip", "expect_s": 60},
     {"id": "PS6", "name": "The monitor runs out of memory",
      "mechanism": "the tag server leaks 0.5 MiB/s toward its 128 MiB limit until the kernel kills it",
      "anchor": "Toyota, 2023: a full disk stopped 12 plants. Northeast blackout, 2003: "
@@ -457,109 +420,135 @@ def graph():
                       "severity": f.get("severity")} for f in g.get("findings", [])],
         "incipient": [{"pod": w(f["pod"]), "class": f.get("class"), "signal": f.get("signal"),
                        "eta_s": f.get("eta_s"), "value": f.get("value"), "limit": f.get("limit"),
-                       "headroom_frac": f.get("headroom_frac")} for f in g.get("incipient", [])],
+                       "headroom_frac": f.get("headroom_frac"), "t_inf": f.get("t_inf"),
+                       "tau_s": f.get("tau_s")} for f in g.get("incipient", [])]   # LOG-099: the fit reaches the narrator
+                     + _drift_cards(g.get("incipient", [])),
         "integrity": _integrity_findings(),
         "meta": g.get("meta", {}),
     }
 
 
-def _controller_note(root_pod) -> str:
-    """3E narrator line (FLEET.md 10): name the PLC that controls the root machine, and any operator
-    derate in force on it. Deterministic and model-free, so the model cannot invent an action."""
-    if not root_pod:
-        return ""
+# LOG-093: the narrator writes the incident (api/incident.py) in a fixed order of sections, from a
+# case file (api/narrator.py), and the text is locked to the incident tag: a new text only when a new
+# phase begins. The model runs in the background. Until it answers, the template sections show.
+_NARR = {"key": None, "cf": {}, "sections": {}, "source": "template", "ts": None, "prev": {}}
+_NARR_LOCK = threading.Lock()
+
+
+def _ollama_json(prompt, timeout=90):
+    """One JSON completion for the narrator. Temperature 0 and a fixed seed: the same case file gives
+    the same words. None on any failure, so the template sections stay."""
+    if not OLLAMA:
+        return None
+    body = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "think": False,
+                       "format": "json", "keep_alive": "10m",
+                       "options": {"temperature": 0, "seed": 7}}).encode()
+    req = urllib.request.Request(OLLAMA + "/api/generate", data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
     try:
-        scada = _scada_fleet()
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return (json.load(r).get("response") or "").strip() or None
     except Exception:
-        return ""
-    entry = fleet.controller_of(root_pod, scada)
-    if entry is None:
-        return ""
-    label = (fleet.PROFILE_BY_ID.get(entry.get("profile")) or {}).get("label", entry.get("profile"))
-    note = f" {root_pod} is controlled by {entry['name']} ({label})."
-    active = next((a for a in fleet.active_derates(scada) if a["asset"] == root_pod), None)
-    if active:
-        note += f" An operator derate holds {root_pod} at {active['value']:.0f} % through {active['plc']}."
-    return note
+        return None
 
 
-# Cache the LLM verdict keyed by the graph's shape, so the dashboard's 5s poll doesn't re-run the
-# model every tick — we only regenerate when the verdict actually changes.
-_NARR_CACHE: dict = {}
+def _suggestions(inc):
+    """advice.suggest over the checked proposals, the unsigned holds, and the blocked channels."""
+    try:
+        props = _current_proposals()[0]
+        scada = _scada_fleet(max_age=1.0)
+        findings = _integrity_findings()
+        active = fleet.active_derates(scada)
+        rows = AUDIT.entries(LEDGER_SCAN) if active else []
+        for a in active:
+            a["signed"] = integrity.signed(a, rows, findings)
+        return advice.suggest(inc, props, active, integrity.blocked(findings, scada))
+    except Exception:
+        return []
 
 
-def _verdict_signature(g) -> str:
-    root = g.get("root") or []
-    edges = g.get("edges") or []
-    return json.dumps(
-        {"root": root[0]["pod"] if root else None,
-         "edges": sorted((e["src"], e["dst"], e.get("state")) for e in edges),
-         "case": (g.get("meta") or {}).get("case_register")},
-        sort_keys=True,
-    )
+def _narr_write(key, cf, previous):
+    sections, source = narrator.write(cf, previous, _ollama_json)
+    with _NARR_LOCK:
+        if _NARR["key"] == key:
+            _NARR.update(sections=sections, source=source)
+            _NARR["prev"][key[0]] = sections
+
+
+def _steady_text(g) -> str:
+    pods = (g.get("meta") or {}).get("pods", 0)
+    return f"Steady: every monitored signal sits inside its learned normal band ({pods} workloads)."
 
 
 @app.get("/api/narrative", tags=["causal"])
 def narrative():
-    """One-sentence operator verdict. A local LLM (Ollama) renders the causal graph into prose
-    that cites the evidence the engine already found; it falls back to a deterministic template
-    when the model is unset/unreachable/slow — so the verdict never depends on the model."""
-    g = graph()  # normalized verdict; raises 503 if the engine is unreachable
-    if not g.get("root"):
-        # No causal root. A memory leak is self-caused (no edge), so surface the OOM forecast here:
-        # deterministic and model-free (the "before the kernel did" beat must never depend on Ollama).
-        incip = g.get("incipient") or []
-        if incip:
-            return {"text": _incipient_text(incip), "source": "forecast", "model": None,
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-        # Otherwise steady. Do NOT feed the steady-state backbone edges to the LLM: with no root it
-        # narrates the normal coupling as "contention" (the steady graph still carries faint backbone
-        # edges). The deterministic steady line is the right answer and costs no model call.
-        return {"text": _template_narrative(g), "source": "steady", "model": None,
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    sig = _verdict_signature(g)
-    # Weave the OOM forecast into the incident verdict too (it otherwise shows only on the no-root
-    # path). Deterministic, model-free; computed fresh each call so the ETA stays current under cache.
-    fc = (" " + _incipient_text(g["incipient"])) if g.get("incipient") else ""
-    fc = _controller_note(root_pod=(g.get("root") or [{}])[0].get("pod")) + fc
-    if sig in _NARR_CACHE:
-        c = _NARR_CACHE[sig]
-        return {**c, "text": c["text"] + fc}
-    template = _template_narrative(g)
-    # Ground the resource word in the signal of the ROOT's own edge (multi-signal: the graph may
-    # carry edges on more than one resource class), falling back to the active-signal meta label.
-    root_pod = (g.get("root") or [{}])[0].get("pod")
-    active_sig = next((e.get("signal") for e in (g.get("edges") or [])
-                       if e.get("src") == root_pod and e.get("signal")), None) \
-        or (g.get("meta") or {}).get("signal", SIGNAL)
-    resource = SIGNAL_RESOURCE.get(active_sig, "resource")
-    # Plane-aware framing: the plant floor (rail voltage / coolant temp / field latency) speaks in machines/assets;
-    # the edge node (psi_*) in pods. Keeps the narrator on the NEW physics-plant vocabulary instead
-    # of defaulting to "Kubernetes pods / memory / OOM".
-    plant = active_sig in PLANT_SIGNALS
-    domain = "an industrial plant floor" if plant else "a Kubernetes edge node"
-    entity = "machine" if plant else "pod"
-    prompt = (
-        f"You are a controls and SRE assistant for {domain}. Given this causal verdict JSON from an "
-        f"edge causal-AIOps engine, write ONE or TWO plain sentences for an on-call operator. The "
-        f"contended resource is {resource}; call it {resource} contention and do NOT name any other "
-        f"resource type (not memory, not CPU, not I/O). The root-cause {entity} is the SOURCE; the "
-        f"blast-radius {entity}s are the affected VICTIMS. Cite only the evidence types and ETAs "
-        f"present in the JSON; do not invent metrics, numbers, or causes. If there is no root cause, "
-        f"say the system is steady.\n\n"
-        "VERDICT:\n" + json.dumps({k: g.get(k) for k in ("root", "edges", "blast_radius", "meta")})
-    )
-    text = _ollama(prompt)
-    out = {
-        "text": text or template,
-        "source": "llm" if text else "fallback",
-        "model": OLLAMA_MODEL if text else None,
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    if text:  # cache only successful LLM renders (the base text); while it falls back, keep retrying
-        _NARR_CACHE.clear()
-        _NARR_CACHE[sig] = out
-    return {**out, "text": out["text"] + fc}
+    """The incident in plain words (LOG-093). `sections` holds headline, origin, driver, chain,
+    evidence, forecast, and suggestion (empty ones left out), and `text` joins them. The text is
+    locked to (incident, tag): it changes only when the incident enters a new phase. The live
+    countdowns stay in their own places on the console. With no open incident the text is the
+    steady line. The verdict never depends on the model: the template sections are the fallback."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    inc = _incident_view()["active"]
+    if not inc:
+        g = graph()
+        return {"text": _steady_text(g), "sections": {}, "source": "steady", "model": None,
+                "incident": None, "tag": None, "status": "steady", "ts": now}
+    key = (inc["id"], inc["tag"])
+    start = None
+    with _NARR_LOCK:
+        if _NARR["key"] != key:
+            cf = narrator.case_file(inc, _suggestions(inc))
+            previous = _NARR["prev"].get(inc["id"])
+            _NARR.update(key=key, cf=cf, sections=dict(cf), source="template", ts=now)
+            _NARR["prev"] = {inc["id"]: previous} if previous else {}
+            start = (key, cf, previous)
+        out = {"sections": dict(_NARR["sections"]), "source": _NARR["source"], "ts": _NARR["ts"]}
+    if start:
+        threading.Thread(target=_narr_write, args=start, name="narrator", daemon=True).start()
+    return {"text": narrator.render(out["sections"]), "sections": out["sections"], "source": out["source"],
+            "model": OLLAMA_MODEL if out["source"] in ("llm", "mixed") else None,
+            "incident": inc["id"], "tag": inc["tag"], "status": inc["status"], "ts": out["ts"]}
+
+
+def _ollama_chat(messages, tools, timeout=60):
+    """One Ollama /api/chat turn with tools, temperature 0 and a fixed seed. None on any failure."""
+    if not OLLAMA:
+        return None
+    body = json.dumps({"model": OLLAMA_MODEL, "messages": messages, "tools": tools, "stream": False,
+                       "think": False, "keep_alive": "10m", "options": {"temperature": 0, "seed": 7}}).encode()
+    req = urllib.request.Request(OLLAMA + "/api/chat", data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r).get("message")
+    except Exception:
+        return None
+
+
+def _agent_readings(asset=""):
+    plant = _get(PLANT + "/state", timeout=3)
+    d = (plant.get("devices") or {}).get(str(asset))
+    if d is None:
+        return {"error": f"no plant asset named {asset!r}", "assets": sorted(plant.get("devices") or {})}
+    rail = d.get("rail")
+    return {"asset": asset, "amps": d.get("amps"), "temp_c": d.get("temp"), "tripped": d.get("tripped"),
+            "rail": rail, "rail_volts": ((plant.get("rails") or {}).get(rail) or {}).get("volts"),
+            "normal_amps": _normal_amps().get(asset)}
+
+
+@app.get("/api/ask", tags=["causal"])
+def ask(q: str = ""):
+    """Ask VISR about the current incident (LOG-093). The local model answers with read-only tools:
+    the incident, one asset's readings, the checked suggestions. It cannot write or change the verdict.
+    An answer with a number that no tool returned is replaced by a pointer to the incident panel."""
+    q = _clip(q or "", 300)
+    if not q:
+        raise HTTPException(400, "ask a question with ?q=")
+    inc = _incident_view()["active"]
+    tools = {"get_incident": lambda: inc or {"status": "steady"},
+             "get_readings": _agent_readings,
+             "get_suggestions": lambda: _suggestions(inc) if inc else []}
+    return agent.ask(q, _ollama_chat, tools)
 
 
 @app.get("/api/pods", tags=["telemetry"])
@@ -687,17 +676,40 @@ def pod_resources(namespace: str = "aiops|observability|plant"):
     return {"pods": pods, "source": "prometheus"}
 
 
+# LOG-103: the throughput range of each machine, learned over the PS0 soak at the baseline lock
+# (deploy/engine-baselines.sh writes ConfigMap aiops/display-bands). The console grades throughput
+# against it. No file, or a bad one: no bands, and the console keeps its fixed rule.
+BANDS_FILE = os.environ.get("DISPLAY_BANDS_FILE", "/etc/visr/bands/bands.json")
+
+
+def _display_bands() -> dict:
+    try:
+        with open(BANDS_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) and isinstance(d.get("bands"), dict) else {}
+
+
 @app.get("/api/plant", tags=["telemetry"])
 def plant_state():
     """Live plant-floor snapshot (plane 2): rails, coolant loop, machines with A/°C/throughput,
     active PS-series faults — proxied from the physics sim's /state. Honestly labeled: the
     substrate is SIMULATED plant physics; the inference downstream is real. `source:
-    unavailable` if the sim is down."""
+    unavailable` if the sim is down. LOG-103: a machine with a learned band gets `thru_band`
+    [p01, p99], and `display_bands` names the window it came from."""
     try:
         s = _get(PLANT + "/state")
     except Exception:
         return {"source": "unavailable"}
     s["source"] = "sim"
+    learned = _display_bands()
+    for name, dev in (s.get("devices") or {}).items():
+        band = learned.get("bands", {}).get(name)
+        if isinstance(dev, dict) and isinstance(band, list) and len(band) == 2:
+            dev["thru_band"] = band
+    if learned:
+        s["display_bands"] = {k: learned.get(k) for k in ("signal", "quantiles", "hours", "end")}
     return s
 
 
@@ -723,7 +735,12 @@ def _owner_active() -> dict:
         return {str(f).upper() for f in _get(PLANT + "/state", timeout=2).get("active_faults") or []}
 
     def ews():
-        return owned("ews") if _get(EWS + "/state", timeout=2).get("active") else set()
+        try:
+            return owned("ews") if _get(EWS + "/state", timeout=2).get("active") else set()
+        except urllib.error.URLError as e:
+            if _stopped(e):
+                return set()            # LOG-099: rogue-ews runs only during 4A, so a stopped attacker is no fault
+            raise
 
     def scada():
         return owned("scada") if _get(SCADA + "/chaos", timeout=2).get("active") else set()
@@ -837,12 +854,25 @@ def _restore_setpoint(actor):
                                                               "to": sp["default"], "reason": "scenario reset"})
 
 
+def _stopped(e) -> bool:
+    """True when a call failed because nothing listens: a Service with no endpoints refuses the
+    connection. rogue-ews has 0 replicas outside Scenario 4A (LOG-095)."""
+    return isinstance(getattr(e, "reason", None), ConnectionRefusedError)
+
+
 def _ews_reset(actor):
+    """Restore the setpoint, then reset rogue-ews. A stopped rogue-ews has no fault to clear, so the
+    reset passes and the owner reads "stopped" (LOG-099)."""
     if not SCADA_WRITE_TOKEN:
         raise _OwnerRefused(503, "SCADA_WRITE_TOKEN is not set (Secret visr-fleet): rogue-ews faults are off",
                             answer=503, off=True)
     _restore_setpoint(actor)
-    _token_post(EWS + "/reset", "rogue-ews")
+    try:
+        _token_post(EWS + "/reset", "rogue-ews")
+    except urllib.error.URLError as e:
+        if not _stopped(e):
+            raise
+        return "stopped"
 
 
 # owner -> trigger(sid, actor) and reset(sid, actor). A new fault needs a SCENARIOS row, not new code.
@@ -889,8 +919,8 @@ def reset_all(request: Request):
     owners, errors = {}, []
     for owner in ("plant", "scada", "ews"):
         try:
-            _OWNERS[owner]["reset"](None, actor)
-            owners[owner] = "reset"
+            got = _OWNERS[owner]["reset"](None, actor)
+            owners[owner] = got if isinstance(got, str) else "reset"
         except _OwnerRefused as e:
             owners[owner] = "off" if e.off else f"error {e.code}"
             if not e.off:
@@ -1187,6 +1217,20 @@ def fleet_delete(name: str, request: Request):
 
 
 # ================================================================ 3D act loop ===
+_NORMAL_AMPS = {"ts": 0.0, "map": {}}
+
+
+def _normal_amps() -> dict:
+    """Each plant asset's median current over the last hour (LOG-091), cached for 60 s. A root derate
+    needs the asset to draw above it, so the verdict tail after a reset proposes nothing. Empty when
+    Prometheus does not answer, and then the old rule holds (no current check)."""
+    now = time.time()
+    if now - _NORMAL_AMPS["ts"] > 60:
+        m = _prom_map('quantile_over_time(0.5, plant_current_draw_amps{namespace="plant"}[1h])')
+        _NORMAL_AMPS.update(ts=now, map={pod: v for (ns, pod), v in m.items()})
+    return _NORMAL_AMPS["map"]
+
+
 def _current_proposals():
     try:
         g = graph()
@@ -1198,7 +1242,7 @@ def _current_proposals():
         plant = {}
     scada = _scada_fleet(max_age=1.0)
     held = {b["asset"] for b in integrity.blocked(_integrity_findings(), scada)}
-    return fleet.proposals(g, scada, plant, DERATE_TARGET_PCT, held), g, plant
+    return fleet.proposals(g, scada, plant, DERATE_TARGET_PCT, held, _normal_amps()), g, plant
 
 
 @app.get("/api/actions", tags=["actions"])
@@ -1213,7 +1257,11 @@ def actions():
     rows = AUDIT.entries(LEDGER_SCAN) if active else []
     for a in active:
         a["signed"] = integrity.signed(a, rows, findings)
-    return {"proposals": props, "active": active, "blocked": integrity.blocked(findings, scada),
+    blocked = integrity.blocked(findings, scada)
+    inc = _incident_view()["active"]
+    # LOG-093: the advisory suggestions (a person does them). The executable ones are the proposals.
+    adv = [a for a in advice.suggest(inc, props, active, blocked) if not a["executable"]] if inc else []
+    return {"proposals": props, "active": active, "blocked": blocked, "advice": adv,
             "write": "enabled" if SCADA_WRITE_TOKEN else "disabled", "target_pct": DERATE_TARGET_PCT}
 
 
@@ -1361,6 +1409,85 @@ def _ensure_integrity():
     if not _INTEG_BG["started"] and os.environ.get("INTEGRITY_BACKGROUND", "1") != "0":
         _INTEG_BG["started"] = True
         threading.Thread(target=_integrity_loop, name="integrity-bg", daemon=True).start()
+        threading.Thread(target=_incident_loop, name="incident-bg", daemon=True).start()
+
+
+# ========================================================= incident record ===
+# LOG-092: one story per event, from the first sign to the calm after it (api/incident.py). A
+# background pass every INCIDENT_S seconds feeds the tracker, so the phase times are real even when
+# no console is open. GET /api/incident serves it, and the narrator writes from it.
+INCIDENT_S = float(os.environ.get("INCIDENT_S", "5"))
+_TRACKER = incident.Tracker(hold_s=float(os.environ.get("INCIDENT_HOLD_S", "15")),
+                            calm_s=float(os.environ.get("INCIDENT_CALM_S", "30")))
+_TRACKER_LOCK = threading.Lock()
+
+
+def _scada_state() -> tuple:
+    """(blind, started_at, tag rows) of the tag server, from its JSON /tags (not /healthz, which
+    answers plain text: LOG-098). Blind when /tags does not answer. started_at changes when the tag
+    server restarts, which a 5 s pass can miss as a blind spell (LOG-099, Scenario 6 in the B6 watch).
+    The rows feed the loop drift forecast (LOG-100)."""
+    try:
+        t = _get(SCADA + "/tags", timeout=2)
+        return False, t.get("started_at"), t.get("tags") or []
+    except Exception:
+        return True, None, []
+
+
+# LOG-100: the loop drift forecast (api/drift.py) from SCADA tags, one step per incident pass.
+_DRIFT = drift.Drift()
+_DRIFT_CARDS: list = []
+_DRIFT_LOCK = threading.Lock()
+
+
+def _drift_cards(engine_cards) -> list:
+    """The drift cards for machines that have no engine trip card now."""
+    have = {c.get("pod") for c in engine_cards or [] if c.get("class") == "trip"}
+    with _DRIFT_LOCK:
+        return [dict(c) for c in _DRIFT_CARDS if c["pod"] not in have]
+
+
+def _incident_pass(now=None):
+    now = time.time() if now is None else now
+    blind, started, tags = _scada_state()
+    supply, machines = drift.machines_from_tags(tags)
+    cards = _DRIFT.step(now, supply, machines)
+    with _DRIFT_LOCK:
+        _DRIFT_CARDS[:] = cards
+    try:
+        g = graph()
+    except HTTPException:
+        return None                        # the engine does not answer: keep the story as it is
+    try:
+        plant = _get(PLANT + "/state", timeout=3)
+    except Exception:
+        plant = {}
+    with _TRACKER_LOCK:
+        return _TRACKER.step(now, g, plant, _integrity_findings(), blind, AUDIT.entries(50), _normal_amps(),
+                             scada_started=started)
+
+
+def _incident_loop():
+    while True:
+        try:
+            _incident_pass()
+        except Exception as e:
+            print(f"api: incident pass failed ({e})", flush=True)
+        time.sleep(INCIDENT_S)
+
+
+def _incident_view() -> dict:
+    with _TRACKER_LOCK:
+        return json.loads(json.dumps(_TRACKER.view(), default=list))
+
+
+@app.get("/api/incident", tags=["causal"])
+def incident_view():
+    """The incident record (LOG-092): the active incident with its origin, current driver, chain,
+    tripped machines, open cards, integrity findings, the SCADA blind state, and the numbered phases,
+    plus the last closed incidents. `tag` is the number of the last phase: the narrator writes a new
+    text only when it changes."""
+    return _incident_view()
 
 
 @app.get("/api/integrity", tags=["integrity"])

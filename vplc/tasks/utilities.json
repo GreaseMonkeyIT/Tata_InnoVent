@@ -1,0 +1,23 @@
+{
+  "task": "utilities",
+  "title": "Plant utilities",
+  "description": "compressor-1 follows a load/unload band on its pressure transducer (6.9 and 7.5 bar), with a minimum stop time. chiller-1 runs while enabled and READY, and its DERATE_PCT is the demand limit. DERATE_PCT of compressor-1 is the run command: 0 stops it.",
+  "st": "utilities.st",
+  "profile_hint": "siemens-s7-1200",
+  "cell": {
+    "name": "utilities",
+    "rail_default": "psu-b",
+    "machines_fixed": ["compressor-1", "chiller-1"]
+  },
+  "io_extra": [
+    {"asset": "compressor-1", "signal": "AIR_PRESSURE", "address": "%IW32", "unit": "bar", "scale": 100},
+    {"asset": "cool-1", "signal": "SUPPLY_TEMP", "address": "%IW33", "unit": "degC", "scale": 10},
+    {"asset": "cool-1", "signal": "FLOW", "address": "%IW34", "unit": "L/min", "scale": 10},
+    {"asset": "chiller-1", "signal": "LOAD_PCT", "address": "%IW35", "unit": "pct", "scale": 10},
+    {"asset": "compressor-1", "signal": "LOAD_P", "address": "%MW21", "unit": "bar", "scale": 100,
+     "writable": true, "min": 6.0, "max": 8.0},
+    {"asset": "compressor-1", "signal": "UNLOAD_P", "address": "%MW22", "unit": "bar", "scale": 100,
+     "writable": true, "min": 6.6, "max": 8.3},
+    {"asset": "compressor-1", "signal": "LOADED", "address": "%MW23", "unit": "bool"}
+  ]
+}

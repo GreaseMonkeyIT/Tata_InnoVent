@@ -13,10 +13,20 @@ spec:
       labels: { app: api, tier: aiops }
     spec:
       serviceAccountName: api   # deploy/fleet.yaml binds Role fleet-manager to it (namespace fleet only)
+      securityContext:              # LOG-095: non-root, the default seccomp profile
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: api
           image: localhost:5000/skn/api:v0.1
           imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: no privilege escalation, no capabilities, read-only root
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           ports: [{ containerPort: 8088 }]
           env:
             - { name: ENGINE_URL,     value: "http://correlation-engine.aiops.svc:9100" }
@@ -29,15 +39,13 @@ spec:
             - { name: TZ,             value: "Asia/Kolkata" }
             # 2E action gate: optional:true = safe rollout — Secret absent -> auth stays disabled
             # and /api/health says "auth: disabled" honestly. Create visr-auth to enforce.
-            - name: VISR_OPERATOR_TOKEN
-              valueFrom: { secretKeyRef: { name: visr-auth, key: operator-token, optional: true } }
+            # LOG-095: Secrets arrive as files (a mounted volume), not as environment variables.
+            - { name: VISR_OPERATOR_TOKEN_FILE, value: "/run/secrets/visr-auth/operator-token" }
             - { name: AUDIT_PATH,     value: "/data/audit.jsonl" }
             # 2H fleet + 3D act loop (FLEET.md section 10). Both keys come from Secret visr-fleet.
             # Without it, fleet changes and setpoint writes fail closed and /api/fleet says so.
-            - name: FLEET_ENROLL_KEY
-              valueFrom: { secretKeyRef: { name: visr-fleet, key: enroll-key, optional: true } }
-            - name: SCADA_WRITE_TOKEN
-              valueFrom: { secretKeyRef: { name: visr-fleet, key: scada-write-token, optional: true } }
+            - { name: FLEET_ENROLL_KEY_FILE,  value: "/run/secrets/visr-fleet/enroll-key" }
+            - { name: SCADA_WRITE_TOKEN_FILE, value: "/run/secrets/visr-fleet/scada-write-token" }
             - { name: SCADA_URL,         value: "http://tag-server.plant.svc.cluster.local:9300" }
             - { name: VPLC_IMAGE,        value: "localhost:5000/skn/vplc:v0.1" }
             - { name: TASKS_DIR,         value: "/tasks" }
@@ -51,12 +59,19 @@ spec:
           volumeMounts:
             - { name: audit, mountPath: /data }
             - { name: tasks, mountPath: /tasks, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: visr-auth, mountPath: /run/secrets/visr-auth, readOnly: true }
+            - { name: visr-fleet, mountPath: /run/secrets/visr-fleet, readOnly: true }
+            - { name: display-bands, mountPath: /etc/visr/bands, readOnly: true }   # LOG-103
           readinessProbe:
             httpGet: { path: /healthz, port: 8088 }
             initialDelaySeconds: 3
+          # LOG-099: 192Mi predates the incident tracker, the narrator, and the agent. The busy working
+          # set is 100-133Mi. Past half the limit, the leak forecast fires on any climb. The limit is
+          # about 3x the busy working set.
           resources:
-            requests: { cpu: 50m,  memory: 96Mi }
-            limits:   { cpu: 250m, memory: 192Mi }
+            requests: { cpu: 50m,  memory: 128Mi }
+            limits:   { cpu: 250m, memory: 384Mi, ephemeral-storage: 256Mi }
       volumes:
         # survives container restarts (not pod rescheduling) — single-node box, acceptable;
         # promoting the ledger to a PVC is a noted roadmap step, not a silent claim.
@@ -64,6 +79,16 @@ spec:
           emptyDir: {}
         - name: tasks        # the vPLC task library, created by `skctl up --components engine`
           configMap: { name: vplc-tasks, optional: true }
+        - name: tmp
+          emptyDir: {}
+        - name: visr-auth    # optional: without it, auth stays disabled and /api/health says so
+          secret: { secretName: visr-auth, optional: true }
+        - name: visr-fleet   # optional: without it, fleet changes and setpoint writes fail closed
+          secret: { secretName: visr-fleet, optional: true }
+        # LOG-103: the throughput range of each machine, learned over the PS0 soak at the baseline lock
+        # (deploy/engine-baselines.sh). Optional: without it, the console uses its fixed bands.
+        - name: display-bands
+          configMap: { name: display-bands, optional: true }
 ---
 apiVersion: v1
 kind: Service
@@ -72,9 +97,11 @@ metadata:
   namespace: aiops
   labels: { app: api }
 spec:
-  type: NodePort
+  # LOG-095: ClusterIP. The console reaches the api through the dashboard (TLS and the login). The box
+  # scripts find the ClusterIP with kubectl. Port 30088 on the node is closed.
+  type: ClusterIP
   selector: { app: api }
-  ports: [{ name: http, port: 8088, targetPort: 8088, nodePort: 30088 }]
+  ports: [{ name: http, port: 8088, targetPort: 8088 }]
 ---
 # The api ServiceAccount. deploy/fleet.yaml binds the Role fleet-manager to it, in namespace fleet
 # only (2H). PS-series faults are HTTP calls to plant-sim:9200, rogue-ews:8090, and tag-server:9300.

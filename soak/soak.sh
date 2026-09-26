@@ -19,8 +19,12 @@
 #   DURATION_H=1 bash soak/soak.sh    # shorter
 #   SCENARIOS=PS6 DURATION_H=1 bash soak/soak.sh        # the edge scenario, alone
 #   OBSERVE_PS3=240 COOLDOWN_PS3=200 bash soak/soak.sh  # per-id windows beat OBSERVE_S and COOLDOWN_S
-#   API_BASE=http://localhost:8088 bash soak/soak.sh    # use curl instead of the kubectl proxy
-#   API_BASE=http://localhost:8088 VISR_OPERATOR_TOKEN=<token> bash soak/soak.sh   # 2E auth enforced
+#   API_BASE=http://localhost:8088 bash soak/soak.sh    # another api address
+#   screen -dmS visr-soak24 bash -c 'DURATION_H=24 bash ~/Tata_InnoVent/soak/soak.sh'   # the one-day run
+#
+# LOG-102: with no API_BASE, the script uses the api ClusterIP (the api has no NodePort since LOG-095),
+# and with no VISR_OPERATOR_TOKEN it reads the operator token from Secret aiops/visr-auth, the same as
+# deploy/proof-run.sh. Scenario 4A starts rogue-ews before the fire and stops it after the reset.
 #
 # Stop early with Ctrl-C. The report is still built from whatever was captured.
 set -uo pipefail
@@ -33,20 +37,33 @@ BASELINE_S=${BASELINE_S:-60}                 # quiet watch BEFORE each fire (con
 OBSERVE_S=${OBSERVE_S:-180}                  # watch window WHILE a scenario is firing
 COOLDOWN_S=${COOLDOWN_S:-150}                # quiet watch AFTER reset (catch the self-clear)
 # Per-id windows: OBSERVE_<ID> and COOLDOWN_<ID> override the two above for that id.
-# PS2 needs time for the chiller relay to trip and the loop to heat (SCENARIOS.md 2.2).
+# PS2 (LOG-100) is a slow heat cascade: the loop hop comes at about +240 s, furnace-1 trips at about
+# +16 min, and the loop needs about 23 min to cool after the reset (SCENARIOS.md 2.2). The cooldown
+# keeps the next scenario off a warm loop.
 # PS6 needs time for the leak to reach the limit, the kill, and the restart (SCENARIOS.md 2.7).
-OBSERVE_PS2=${OBSERVE_PS2:-300}
+OBSERVE_PS2=${OBSERVE_PS2:-600}
+COOLDOWN_PS2=${COOLDOWN_PS2:-1500}
 OBSERVE_PS6=${OBSERVE_PS6:-420}
 COOLDOWN_PS6=${COOLDOWN_PS6:-240}
 NARR_EVERY=${NARR_EVERY:-5}                  # capture /api/narrative every Nth sample (LLM-backed → sparse)
 AIOPS_NS=${AIOPS_NS:-aiops}
 API_SVC=${API_SVC:-api}
 API_PORT=${API_PORT:-8088}
-API_BASE=${API_BASE:-}                       # set (e.g. http://localhost:8088) → use curl; else kubectl proxy
-OPERATOR_TOKEN=${VISR_OPERATOR_TOKEN:-}      # 2E operator token; only the curl path can send it
+API_BASE=${API_BASE:-}                       # empty → the api ClusterIP; no ClusterIP → the kubectl proxy
+OPERATOR_TOKEN=${VISR_OPERATOR_TOKEN:-}      # 2E operator token; empty → Secret aiops/visr-auth
+EWS=${EWS:-1}                                # 1: start rogue-ews for PS4A and stop it after (LOG-095)
+export KUBECONFIG=${KUBECONFIG:-$HOME/.kube/config}
+if [ -z "$API_BASE" ]; then
+  ip=$(kubectl -n "$AIOPS_NS" get svc "$API_SVC" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+  [ -n "$ip" ] && API_BASE="http://$ip:$API_PORT"
+fi
+if [ -z "$OPERATOR_TOKEN" ]; then
+  OPERATOR_TOKEN=$(kubectl -n "$AIOPS_NS" get secret visr-auth -o jsonpath='{.data.operator-token}' 2>/dev/null \
+    | base64 -d 2>/dev/null)
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-OUT_ROOT=${OUT_ROOT:-"$SCRIPT_DIR/runs"}     # on the SSD (the repo working copy). Override to relocate.
+OUT_ROOT=${OUT_ROOT:-/var/tmp/visr-soak}      # box-local (LOG-102): a run never lands in the synced repo
 RUN_ID="soak-$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="$OUT_ROOT/$RUN_ID"
 SAMPLES="$RUN_DIR/samples.jsonl"
@@ -85,6 +102,13 @@ FIRE_EPOCH=""; FIRE_OK=""
 fire(){   # $1 = scenario id → the same console route the dashboard Fire button uses
   FIRE_EPOCH=$(date +%s); FIRE_OK=1
   api_post "/api/scenarios/$1/trigger" >>"$LOG" || { FIRE_OK=0; log "WARN: $1 trigger failed (see log)"; }
+}
+
+ews(){   # $1 = replicas. LOG-095: rogue-ews rests at 0 replicas and runs only during PS4A.
+  [ "$EWS" = 1 ] || return 0
+  kubectl -n plant scale deploy/rogue-ews --replicas="$1" >>"$LOG" 2>&1 || log "WARN: rogue-ews scale to $1 failed"
+  [ "$1" = 0 ] || kubectl -n plant rollout status deploy/rogue-ews --timeout=120s >>"$LOG" 2>&1 \
+    || log "WARN: rogue-ews did not become ready"
 }
 
 clear_fault(){   # the API resets the owner of this id; a short call, so the cadence holds
@@ -138,14 +162,13 @@ SCENARIOS="$SCENARIOS" DURATION_H="$DURATION_H" SAMPLE_S="$SAMPLE_S" OBSERVE_S="
 log "soak $RUN_ID — duration ${DURATION_H}h, scenarios: $SCENARIOS, sample ${SAMPLE_S}s → $RUN_DIR"
 log "windows (id:observe_s:cooldown_s):$WINDOWS"
 if [ -z "$(api_get /api/health)" ]; then
-  log "ERROR: API not reachable. Either run 'kubectl port-forward svc/api -n $AIOPS_NS 8088:8088'"
-  log "       and re-run with API_BASE=http://localhost:8088, or check the kubectl proxy path."
+  log "ERROR: API not reachable at ${API_BASE:-the kubectl proxy}. Check svc/api in $AIOPS_NS, or set API_BASE."
   exit 1
 fi
 AUTH=$(api_get /api/audit | python3 -c 'import json,sys; print(json.load(sys.stdin).get("auth",""))' 2>/dev/null || true)
 if [ "$AUTH" = "enforced" ] && { [ -z "$API_BASE" ] || [ -z "$OPERATOR_TOKEN" ]; }; then
   log "ERROR: API auth is enforced (2E). Fire/reset needs the operator token, and only curl can send it."
-  log "       Re-run with API_BASE=http://localhost:8088 (port-forward) and VISR_OPERATOR_TOKEN set."
+  log "       Secret $AIOPS_NS/visr-auth gave no token. Set VISR_OPERATOR_TOKEN, or check the Secret."
   exit 1
 fi
 # The catalogue check only warns. An id the API cannot fire is still sampled, and the report shows the gap.
@@ -176,11 +199,13 @@ while [ "$(date +%s)" -lt "$END" ]; do
     log "cycle $cycle · baseline → $s"
     FIRE_EPOCH=""; FIRE_OK=""
     sample_window "$BASELINE_S" "baseline" "$cycle" "$s"
+    [ "$s" = PS4A ] && ews 1
     log "cycle $cycle · FIRE $s"
     fire "$s"
     sample_window "$(window OBSERVE "$s")" "$s" "$cycle" "$s"
     log "cycle $cycle · reset $s"
     clear_fault "$s"
+    [ "$s" = PS4A ] && ews 0
     sample_window "$(window COOLDOWN "$s")" "cooldown" "$cycle" "$s"
   done
 done

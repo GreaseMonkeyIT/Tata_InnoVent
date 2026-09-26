@@ -44,6 +44,18 @@ bash deploy/historian-auth.sh || { echo "deploy/historian-auth.sh failed. The ma
 # LOG-077: the OpenPLC web password moved from the vendor default into Secret plant/openplc-auth.
 # The script makes the Secret once. plc/entrypoint.sh sets the password at each OpenPLC pod start.
 bash deploy/openplc-auth.sh || { echo "deploy/openplc-auth.sh failed. The manifests were not applied."; exit 1; }
+# LOG-100: the device token Secret of each static PLC (plc-utilities, plc-machining, plc-furnace).
+bash deploy/plc-tokens.sh || { echo "deploy/plc-tokens.sh failed. The manifests were not applied."; exit 1; }
+# LOG-101: a manifest with a missing "---" merges two objects into one, and the later keys win. On
+# 2026-09-26 that removed the plc-utilities and plc-machining Services with no error from kubectl.
+# Each file must parse to one object per top-level "kind:" line.
+for f in plant/deploy.yaml deploy/openplc.yaml scada/deploy.yaml scada/cutover-servicemonitor.yaml \
+         deploy/fleet.yaml deploy/rogue-ews.yaml deploy/engine.yaml deploy/api.yaml deploy/dashboard.yaml \
+         deploy/aggregator.yaml deploy/grafana-psi-dashboard.yaml deploy/grafana-plant-dashboard.yaml; do
+  want=$(grep -c '^kind:' "$f")
+  got=$(kubectl apply --dry-run=client -o name -f "$f" 2>/dev/null | grep -c .)
+  [ "$want" = "$got" ] || { echo "$f parses to $got objects, not $want (a missing ---?). The manifests were not applied."; exit 1; }
+done
 curl -sf -m 5 http://127.0.0.1:5000/v2/_catalog >/dev/null || { echo "the registry on 127.0.0.1:5000 does not answer"; exit 1; }
 chmod +x deploy/skctl deploy/*.sh soak/*.sh plc/*.sh 2>/dev/null || true
 pass "node Ready, Secrets present, registry up"
@@ -65,16 +77,17 @@ kubectl -n observability set env deploy/prom-grafana -c grafana \
 kubectl apply -f plant/deploy.yaml
 kubectl apply -f deploy/openplc.yaml
 kubectl apply -f scada/deploy.yaml
+kubectl apply -f scada/cutover-servicemonitor.yaml   # LOG-100: the engine reads the plant through SCADA
 kubectl apply -f deploy/fleet.yaml
 kubectl apply -f deploy/rogue-ews.yaml     # SCENARIOS.md 2.4: the PS4A fault injector (not a PLC)
 
 step "3 restart every Deployment onto the registry images"
 kubectl -n aiops rollout restart deploy/aggregator deploy/correlation-engine deploy/api deploy/dashboard
 kubectl -n plant rollout restart deploy/plant-sim deploy/openplc deploy/tag-server deploy/rogue-ews
-kubectl -n fleet rollout restart deploy/plc-stamping
+kubectl -n fleet rollout restart deploy/plc-stamping deploy/plc-utilities deploy/plc-machining deploy/plc-furnace
 for d in "aiops aggregator" "aiops correlation-engine" "aiops api" "aiops dashboard" \
          "plant plant-sim" "plant openplc" "plant tag-server" "plant rogue-ews" "fleet plc-stamping" \
-         "observability prom-grafana"; do
+         "fleet plc-utilities" "fleet plc-machining" "fleet plc-furnace" "observability prom-grafana"; do
   set -- $d
   if kubectl -n "$1" rollout status "deploy/$2" --timeout=300s >/dev/null; then pass "rollout $1/$2"
   else fail "rollout $1/$2"; fi
@@ -85,16 +98,20 @@ step "4 verify the front door (2E)"
 wait_for "dashboard login wall answers 401" 60 sh -c '[ "$(curl -sk -o /dev/null -m 8 -w "%{http_code}" https://127.0.0.1:30443/)" = 401 ]'
 wait_for "dashboard /healthz answers 200" 60 sh -c '[ "$(curl -sk -o /dev/null -m 8 -w "%{http_code}" https://127.0.0.1:30443/healthz)" = 200 ]'
 wait_for "http redirects to https" 60 sh -c '[ "$(curl -sk -o /dev/null -m 8 -w "%{http_code}" http://127.0.0.1:30080/)" = 301 ]'
-curl -s -m 8 http://127.0.0.1:30088/api/health | grep -q '"auth":"enforced"' && pass "api auth enforced" || fail "api auth enforced"
-[ "$(code -X POST http://127.0.0.1:30088/api/scenarios/PS1/trigger)" = 401 ] && pass "anonymous fire gets 401" || fail "anonymous fire gets 401"
-[ "$(code -X POST http://127.0.0.1:30088/api/scenarios/PS4A/trigger)" = 401 ] && pass "anonymous PS4A fire gets 401" || fail "anonymous PS4A fire gets 401"
-wait_for "grafana serves the /grafana/ sub-path" 90 sh -c '[ "$(curl -s -o /dev/null -m 8 -w "%{http_code}" http://127.0.0.1:30030/grafana/api/health)" = 200 ]'
+API=http://$(kubectl -n aiops get svc api -o jsonpath='{.spec.clusterIP}'):8088   # LOG-095: the ClusterIP
+curl -s -m 8 $API/api/health | grep -q '"auth":"enforced"' && pass "api auth enforced" || fail "api auth enforced"
+[ "$(code -X POST $API/api/scenarios/PS1/trigger)" = 401 ] && pass "anonymous fire gets 401" || fail "anonymous fire gets 401"
+[ "$(code -X POST $API/api/scenarios/PS4A/trigger)" = 401 ] && pass "anonymous PS4A fire gets 401" || fail "anonymous PS4A fire gets 401"
+wait_for "grafana serves the /grafana/ sub-path" 90 sh -c '[ "$(curl -s -o /dev/null -m 8 -w "%{http_code}" http://$(kubectl -n observability get svc prom-grafana -o jsonpath='{.spec.clusterIP}')/grafana/api/health)" = 200 ]'
 [ "$(code https://127.0.0.1:30443/grafana/api/health)" = 401 ] && pass "console /grafana/ route sits behind the login wall" || fail "console /grafana/ route"
 
 step "5 verify the plant, the PLCs, and SCADA"
 wait_for "plant-sim answers /state" 60 pyget plant plant-sim http://127.0.0.1:9200/state "len(d['devices']) >= 8"
 wait_for "rail psu-c exists" 30 pyget plant plant-sim http://127.0.0.1:9200/state "'psu-c' in d['rails']"
 wait_for "stamping cell closed-loop with plc-stamping" 120 pyget plant plant-sim http://127.0.0.1:9200/cells "d['cells']['stamping']['mode'] == 'closed-loop'"
+for c in utilities machining thermal; do                     # LOG-100: the new controllers
+  wait_for "$c cell closed-loop with its PLC" 120 pyget plant plant-sim http://127.0.0.1:9200/cells "d['cells']['$c']['mode'] == 'closed-loop'"
+done
 wait_for "OpenPLC trip loop closed-loop" 240 pyget plant plant-sim http://127.0.0.1:9200/state "d['plc']['mode'] == 'closed-loop'"
 # LOG-077: the OpenPLC web UI stays on NodePort 30081, it takes only the Secret password, and nothing
 # answers on the REST API port 8443. No PS verdict reads the web UI, so these checks report and do not
@@ -122,10 +139,24 @@ if [ "$hist" = 1 ]; then pass "tag server writes the historian"
 else echo "INFO the tag server has no historian connection after 180 s (check Secret plant/historian-auth, LOG-076)"; fi
 wait_for "plc-stamping enrolled and connected over S7comm" 120 pyget plant tag-server http://127.0.0.1:9300/fleet "any(p['name'] == 'plc-stamping' and p['connected'] for p in d)"
 wait_for "fleet tags GOOD" 60 pyget plant tag-server http://127.0.0.1:9300/fleet "all(t['quality'] == 'GOOD' for p in d if p['name'] == 'plc-stamping' for t in p['tags'])"
+for plc in plc-utilities plc-machining plc-furnace; do         # LOG-100: the new controllers
+  wait_for "$plc enrolled and connected" 120 pyget plant tag-server http://127.0.0.1:9300/fleet "any(p['name'] == '$plc' and p['connected'] for p in d)"
+done
+# LOG-100, the SCADA read switch: Prometheus has the plant temperatures from the tag server, and the
+# plant-sim scrape keeps only the instrument feeds (plant/deploy.yaml metricRelabelings).
+PROM=http://$(kubectl -n observability get svc prom-kube-prometheus-stack-prometheus -o jsonpath='{.spec.clusterIP}'):9090
+promq() { curl -s -m 8 "$PROM/api/v1/query" --data-urlencode "query=$1" | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(int(float(r[0]["value"][1])) if r else 0)'; }
+scada_temps() { [ "$(promq 'count(plant_temp_celsius{service="tag-server"})')" -ge 4 ]; }
+wait_for "Prometheus reads plant temperatures through SCADA" 120 scada_temps
+n_sim=$(promq 'count(plant_temp_celsius{service="plant-sim"})')
+[ "${n_sim:-0}" = 0 ] && pass "plant-sim serves no PLC-read signal (instrument feeds only)" \
+  || fail "plant-sim still serves $n_sim plant_temp_celsius series"
 # SCENARIOS.md 3 and 9: the new plant model parts and the fault owners answer
 wait_for "plant-sim rails carry feeder amps" 30 pyget plant plant-sim http://127.0.0.1:9200/state "all('amps' in r for r in d['rails'].values())"
 wait_for "plant-sim segment field-1 exists" 30 pyget plant plant-sim http://127.0.0.1:9200/state "'field-1' in (d.get('segments') or {})"
-wait_for "rogue-ews answers /state" 60 pyget plant rogue-ews http://127.0.0.1:8090/state "'active' in d"
+# LOG-095: rogue-ews runs only during Scenario 4A (deploy/faults.sh scales it), so it rests at 0 replicas
+[ "$(kubectl -n plant get deploy rogue-ews -o jsonpath='{.spec.replicas}')" = 0 ] \
+  && pass "rogue-ews rests at 0 replicas (Scenario 4A starts it)" || fail "rogue-ews should rest at 0 replicas"
 wait_for "tag server answers /chaos" 30 pyget plant tag-server http://127.0.0.1:9300/chaos "'active' in d"
 
 step "6 verify the engine and the api views"

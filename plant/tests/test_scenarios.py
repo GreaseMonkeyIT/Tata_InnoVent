@@ -66,11 +66,13 @@ def world():
     random.seed(2468)
     with sim._lock:
         sim.reset_plant()
-    sim.LOOP.flow = sim.LOOP.flow_nominal
+    sim.LOOP.flow, sim.LOOP.t_supply = sim.LOOP.flow_nominal, sim.LOOP_T_SETPOINT
+    sim.AIR.pressure, sim.AIR.loaded = 7.2, False
     for r in sim.RAILS:
         r.voltage = r.v_src
     for d in sim.BASE_DEVICES:
-        d.friction, d.temp, d.current, d.throughput = 1.0, 35.0, 0.0, 100.0
+        d.friction, d.current, d.throughput = 1.0, 0.0, 100.0
+        d.temp = sim.LOOP_T_SETPOINT + d.heat_k * d.i_base if d.loop is not None else sim.LOOP_T_SETPOINT
         d.recent.clear()
     for seg in sim.SEGMENTS.values():
         seg._frames.clear()
@@ -317,7 +319,8 @@ def test_ps4b_changes_only_the_vplc_amps_word():
     text, state = sim.metrics_text(), sim.state_json()          # both take _lock themselves
     assert regs[8] == int(press.current * 10)                    # OpenPLC MW8 keeps the truth
     assert metric(text, "plant_current_draw_amps", "press-1") == pytest.approx(press.current, abs=1e-4)
-    assert metric(text, "plant_heat_load_watts", "press-1") == pytest.approx(0.55 * press.current, abs=1e-3)
+    # LOG-100: heat into the loop water in W = heat_frac * sqrt(3) * V * I * PF, from the truth
+    assert metric(text, "plant_heat_load_watts", "press-1") == pytest.approx(1000.0 * press.heat_kw(), rel=1e-3)
     assert state["devices"]["press-1"]["amps"] == round(press.current, 2)
     assert "PS4B" in state["active_faults"]
 

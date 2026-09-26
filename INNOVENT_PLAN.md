@@ -16,7 +16,7 @@
 |---|---|
 | Entry | The team's own causal engine, reframed for industrial systems and reskinned as VISR (LOG-003). |
 | Demo substrate | A **physics-simulated plant**: DC rails with source impedance, a shared coolant loop, and 8 assets. Faults perturb the model, and the symptoms emerge (LOG-027 to LOG-029). |
-| Scenarios | **PS-series** (`SCENARIOS.md`, LOG-068): PS0 steady plant · PS1 rail-sag cascade · PS2 power sag trips the chiller · PS3 control network storm · PS4A setpoint write with no record · PS4B current report contradicts the feeder · PS5 coolant pump degradation · PS6 the monitor runs out of memory. Each one is anchored on a real incident. |
+| Scenarios | **PS-series** (`SCENARIOS.md`, LOG-068): PS0 steady plant · PS1 rail-sag cascade · PS2 a failed pressure sensor overheats the loop (LOG-100) · PS3 control network storm · PS4A setpoint write with no record · PS4B current report contradicts the feeder · PS5 coolant pump degradation · PS6 the monitor runs out of memory. Each one is anchored on a real incident. |
 | Industrial data path | Physics → OpenPLC registers → Modbus → SCADA tag server → tag DB + TimescaleDB historian (LOG-055). |
 | Secure | TLS + basic auth front door, operator token gate, hash-chained audit ledger (LOG-053). |
 | Honesty rail | The engine is deterministic statistical inference behind a witness gate. The LLM narrator is a spokesperson only. Simulated values carry a simulation label. |

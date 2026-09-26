@@ -80,3 +80,69 @@ def test_onset_anchored_eta_is_sharper_than_the_diluted_tail():
     out = incipient_findings({"vision-qc": v}, {"vision-qc": LIMIT}, horizon_s=3600.0, min_frac=0.0)
     assert len(out) == 1 and out[0]["eta_s"] > 0
     assert diluted is not None and out[0]["eta_s"] < diluted    # onset-anchoring is sharper
+
+
+# ------------------------------------------------ thermal trip cards (LOG-091) --
+from engine.forecast import first_order_eta, stopped_pods   # noqa: E402
+
+TRIP = 78.0
+
+
+def _thermal(t0, t_inf, tau, rise_at=120, n=N, noise=0.04, seed=3):
+    """A coolant temperature: steady at t0, then a first-order approach to t_inf from sample rise_at."""
+    r = np.random.default_rng(seed)
+    t = np.arange(n) * detectors.DT_S
+    x = np.full(n, float(t0))
+    on = t >= rise_at * detectors.DT_S
+    x[on] = t_inf - (t_inf - t0) * np.exp(-(t[on] - t[on][0]) / tau)
+    return x + r.normal(0, noise, n)
+
+
+def test_first_order_card_is_silent_when_the_curve_levels_off_below_the_trip():
+    """forge 2026-09-25, Scenario 2: press-1 climbed after the chiller trip and levelled off at 74 C.
+    The straight line gave it a trip card for minutes. The curve sees the bend."""
+    x = _thermal(58.0, 74.0, 120.0, rise_at=130)          # 50 samples (~4 min) into the climb
+    assert first_order_eta(x[-48:], TRIP) is None
+    assert incipient_findings({"press-1": x}, {"press-1": TRIP}, min_frac=0.5, cls="trip",
+                              model="first_order") == []
+
+
+def test_first_order_card_counts_down_to_a_real_trip():
+    x = _thermal(58.0, 86.0, 120.0, rise_at=150)          # 30 samples in, heading for 86 C
+    got = incipient_findings({"press-1": x}, {"press-1": TRIP}, min_frac=0.5, cls="trip", model="first_order")
+    assert len(got) == 1 and got[0]["model"] == "first_order"
+    assert 82.0 < got[0]["t_inf"] < 90.0
+    # the true remaining time from the last sample
+    t_now = 86.0 - 28.0 * np.exp(-(29 * detectors.DT_S) / 120.0)
+    true_eta = 120.0 * np.log((86.0 - t_now) / (86.0 - TRIP))
+    assert abs(got[0]["eta_s"] - true_eta) < 0.25 * true_eta
+
+
+def test_first_order_card_waits_for_the_bend():
+    """forge 2026-09-26 watch, Scenario 2: cnc-1 and press-1 climbed slowly after the chiller trip and
+    levelled off at 59 C and 74 C. Early in such a climb the best tau sits at the grid edge and T_inf
+    comes out at 100 to 179 C, so the fit flashed trip cards (LOG-099). No card until the bend shows."""
+    x = _thermal(58.0, 74.0, 200.0, rise_at=N - 15)       # 15 samples into a climb that levels off at 74 C
+    assert incipient_findings({"press-1": x}, {"press-1": TRIP}, min_frac=0.5, cls="trip",
+                              model="first_order") == []
+    fit = first_order_eta(x[-15:], TRIP)
+    assert fit is None
+    import engine.forecast as fc
+    cap, fc.THERMAL_TAU_MAX_S = fc.THERMAL_TAU_MAX_S, 1e9  # without the cap: the flash the watch saw
+    try:
+        flash = incipient_findings({"press-1": x}, {"press-1": TRIP}, min_frac=0.5, cls="trip", model="first_order")
+    finally:
+        fc.THERMAL_TAU_MAX_S = cap
+    assert len(flash) == 1 and flash[0]["tau_s"] == 1200 and flash[0]["t_inf"] > 100
+
+
+def test_first_order_card_ignores_a_cooling_machine():
+    """forge 2026-09-25, Scenarios 1 and 5: a tripped press cooled from 77 C and still got a card."""
+    x = _thermal(77.0, 45.0, 120.0, rise_at=150)
+    assert first_order_eta(x[-48:], TRIP) is None
+
+
+def test_stopped_machine_gets_no_trip_card():
+    amps = np.full(N, 42.9)
+    amps[-10:] = 0.2                                      # the trip opened the contactor
+    assert stopped_pods({"press-1": amps, "press-2": np.full(N, 38.8)}) == {"press-1"}

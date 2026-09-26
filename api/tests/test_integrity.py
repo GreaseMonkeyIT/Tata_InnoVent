@@ -167,6 +167,12 @@ def test_caretta_clients_skip_the_tag_server():
               {"metric": {"client_name": "tag-server", "server_name": "plc-stamping", "server_port": "102"}},
               {"metric": {"client_name": "api", "server_name": "plc-stamping", "server_port": "8080"}}]
     assert integrity.caretta_clients(result, "plc-stamping") == ["rogue-ews"]
+    # LOG-099: forge keeps a 0-byte plant-sim series on port 102 (plant-sim uses the field port 5020)
+    result += [{"metric": {"client_name": "plant-sim", "server_name": "plc-stamping", "server_port": "102"},
+                "value": [1.0, "0"]},
+               {"metric": {"client_name": "rogue-ews", "server_name": "plc-stamping", "server_port": "102"},
+                "value": [1.0, "192"]}]
+    assert integrity.caretta_clients(result, "plc-stamping") == ["rogue-ews"]
 
 
 # --------------------------------------------------------- current balance --

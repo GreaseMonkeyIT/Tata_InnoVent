@@ -17,10 +17,16 @@ spec:
     metadata:
       labels: { app: dashboard, tier: aiops }
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: dashboard
           image: localhost:5000/skn/dashboard:v0.1
           imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: the image runs as root (listed exception); still no escalation
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [NET_RAW] }
           ports: [{ containerPort: 80 }, { containerPort: 443 }]
           env:
             - { name: TZ, value: "Asia/Kolkata" }
@@ -37,7 +43,7 @@ spec:
             initialDelaySeconds: 3
           resources:
             requests: { cpu: 25m,  memory: 32Mi }
-            limits:   { cpu: 200m, memory: 128Mi }
+            limits:   { cpu: 200m, memory: 128Mi, ephemeral-storage: 128Mi }
       volumes:
         - name: auth
           secret: { secretName: visr-auth, items: [{ key: htpasswd, path: htpasswd }] }

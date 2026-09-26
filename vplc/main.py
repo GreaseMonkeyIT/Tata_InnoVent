@@ -40,6 +40,18 @@ class ConfigError(ValueError):
     pass
 
 
+
+def _file_or(env, name: str) -> str:
+    """NAME_FILE (a mounted Secret, LOG-095) wins over NAME. An unreadable file gives ""."""
+    path = env.get(name + "_FILE")
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+    return env.get(name) or ""
+
 def _port(env, key, default):
     raw = env.get(key)
     if raw in (None, ""):
@@ -67,7 +79,7 @@ def config_from_env(env=None):
         "profile": profile,
         "task_dir": env.get("TASK_DIR") or "",
         "task_name": env.get("TASK_NAME") or "",
-        "token": env.get("DEVICE_TOKEN") or "",
+        "token": _file_or(env, "DEVICE_TOKEN"),
         "enroll_url": env.get("ENROLL_URL", DEFAULT_ENROLL_URL),
         "host": env.get("PLC_HOST") or f"{name}.fleet.svc.cluster.local",
         "bind": env.get("BIND_HOST") or "0.0.0.0",

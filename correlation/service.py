@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import numpy as np
 
-from engine.forecast import incipient_findings
+from engine.forecast import incipient_findings, stopped_pods
 from engine.gate import Witness
 from engine.merge import merge_graphs
 from engine.pipeline import run_pass
@@ -170,9 +170,16 @@ MIN_COVERAGE    = float(os.environ.get("BASELINE_MIN_COVERAGE", "0.9"))
 # Forecast a ramp only for a pod whose recent level sits above its learned band. Steady coolant
 # temperatures run at 75-85 % of the trip limit, so a fraction-of-limit rule alone gave trip cards
 # in a calm plant. Pairs whose signal has no engine memory (mem) are not affected.
+# The trip card fits the first-order curve of a coolant temperature (LOG-091). "linear" restores
+# the old straight line.
+THERMAL_MODEL = os.environ.get("FORECAST_THERMAL_MODEL", "first_order")
 FORECAST_BASELINE_FLOOR = os.environ.get("FORECAST_BASELINE_FLOOR", "1") != "0"
 GRID_STEP_S = float(os.environ.get("POLL_S", "5"))               # aggregator scrape cadence = the time-alignment grid step (resample all pods onto a shared wall-clock axis)
 MEMORY_DB  = os.environ.get("MEMORY_DB", "/var/lib/skn/memory/l3-memory.db")
+# Learn, then lock (LOG-089): while this file exists, no mature baseline changes. The soak learns
+# with the file absent. deploy/engine-baselines.sh writes and removes it. A wipe removes it too.
+BASELINE_LOCK_FILE = os.environ.get("BASELINE_LOCK_FILE",
+                                    os.path.join(os.path.dirname(MEMORY_DB), "baselines.lock"))
 STORAGE    = [s.strip() for s in os.environ.get(
     "STORAGE_WORKLOADS", "cooling-monitor,dcim-bridge,log-archiver,timescaledb").split(",")]
 
@@ -312,6 +319,31 @@ def forecast_floors(signal, pods):
     return {p: mem.baseline_threshold(workload(p)) for p in pods}
 
 
+def forecast_cards(vec_by_sig):
+    """Ramp-to-limit early warnings (A1 forecaster), one per configured pair: the OOM card (working_set
+    -> memory limit, "leak") and the thermal card (coolant_temp -> trip threshold, "trip"). Self-caused,
+    so no causal edge: they ride as `incipient`, fired before the kill or the trip. Soonest first."""
+    incip = []
+    for fsig, flim, fcls in FORECAST_PAIRS:
+        sig_vec = vec_by_sig.get(fsig) or {}
+        lim_vec = vec_by_sig.get(flim) or {}
+        limits = {p: float(v[-1]) for p, v in lim_vec.items() if len(v) and v[-1] > 0}
+        # a single-entity limit (the loop-wide trip threshold, keyed cool-1) broadcasts to every
+        # entity carrying the ramp signal
+        if len(limits) == 1 and sig_vec:
+            only = next(iter(limits.values()))
+            limits = {p: limits.get(p, only) for p in sig_vec}
+        if fcls == "trip":           # a stopped machine makes no heat: no trip card (LOG-091)
+            stopped = stopped_pods(vec_by_sig.get("current_draw") or {})
+            sig_vec = {p: v for p, v in sig_vec.items() if p not in stopped}
+        incip.extend(incipient_findings(sig_vec, limits, horizon_s=FORECAST_HORIZON_S,
+                                        min_frac=FORECAST_MIN_FRAC, signal=fsig, cls=fcls,
+                                        floors=forecast_floors(fsig, sig_vec),
+                                        model=THERMAL_MODEL if fcls == "trip" else "linear"))
+    incip.sort(key=lambda f: f["eta_s"])
+    return incip
+
+
 def _witness_for(signal, vectors):
     """Per-signal physical witness.
     - psi_io: disk (pvc) coupling among the storage quartet -> admits I/O cascade edges.
@@ -360,6 +392,9 @@ def loop():
             window = _fetch(WINDOW_URL)
             events = _fetch(EVENTS_URL)
             vec_by_sig, breach, coverage = build_inputs(window, events)
+            locked = os.path.exists(BASELINE_LOCK_FILE)
+            for m in _memory.values():
+                m.locked = locked
             rendered = {}                                  # {signal: rendered graph} for the merge
             for sig in SIGNALS:
                 vectors = vec_by_sig.get(sig) or {}
@@ -390,22 +425,9 @@ def loop():
             # (working_set -> memory limit, "leak") and the PS5 thermal card (coolant_temp -> trip
             # threshold, "trip"). Self-caused, so no causal edge -- they ride as `incipient`,
             # fired before the kill/trip ("we told you before the kernel/PLC did").
-            incip = []
-            for fsig, flim, fcls in FORECAST_PAIRS:
-                sig_vec = vec_by_sig.get(fsig) or {}
-                lim_vec = vec_by_sig.get(flim) or {}
-                limits = {p: float(v[-1]) for p, v in lim_vec.items() if len(v) and v[-1] > 0}
-                # a single-entity limit (the loop-wide trip threshold, keyed cool-1) broadcasts
-                # to every entity carrying the ramp signal
-                if len(limits) == 1 and sig_vec:
-                    only = next(iter(limits.values()))
-                    limits = {p: limits.get(p, only) for p in sig_vec}
-                incip.extend(incipient_findings(sig_vec, limits, horizon_s=FORECAST_HORIZON_S,
-                                                min_frac=FORECAST_MIN_FRAC, signal=fsig, cls=fcls,
-                                                floors=forecast_floors(fsig, sig_vec)))
-            incip.sort(key=lambda f: f["eta_s"])
-            merged["incipient"] = incip
+            merged["incipient"] = forecast_cards(vec_by_sig)
             merged.setdefault("meta", {})["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            merged["meta"]["baselines"] = "locked" if locked else "learning"
             with _lock:
                 _graph = merged
         except Exception as e:  # never die; report the error on /graph

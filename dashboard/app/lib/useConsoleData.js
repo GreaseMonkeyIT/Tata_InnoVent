@@ -17,6 +17,7 @@ export default function useConsoleData() {
   const [scada, setScada] = useState(null);       // 2F.2 tag browser (/api/tags)
   const [fleet, setFleet] = useState(null);       // 2H virtual PLC fleet (/api/fleet)
   const [actions, setActions] = useState(null);   // 3D act loop (/api/actions)
+  const [incident, setIncident] = useState(null); // LOG-092 incident record (/api/incident): {active, recent}
   const [tasks, setTasks] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [updated, setUpdated] = useState(null);
@@ -29,7 +30,7 @@ export default function useConsoleData() {
     // fleet panels, and a dead tag server must show as blind, not as the last good picture.
     const miss = [];
     const core = (path) => getJSON(path).catch(() => { miss.push(path); return null; });
-    const [g, n, h, t, p, pr, pl, tg, fl, ac] = await Promise.all([
+    const [g, n, h, t, p, pr, pl, tg, fl, ac, inc] = await Promise.all([
       core("/api/graph"),
       core("/api/narrative"),
       core("/api/health"),
@@ -40,12 +41,13 @@ export default function useConsoleData() {
       getJSON("/api/tags").catch(() => null),
       getJSON("/api/fleet").catch(() => null),
       getJSON("/api/actions").catch(() => null),
+      getJSON("/api/incident").catch(() => null),
     ]);
     if (g) setGraph(g); if (n) setNarr(n); if (h) setHealth(h);
     if (t) setTopo(t); if (p) setPods(p); if (pr) setPodres(pr); if (pl) setPlant(pl);
     if (tg) setScada(tg);
     if (tg && tg.source === "scada") setTagsOkAt(new Date());
-    if (fl) setFleet(fl); if (ac) setActions(ac);
+    if (fl) setFleet(fl); if (ac) setActions(ac); if (inc) setIncident(inc);
     if (miss.length) setFeedErr({ what: miss.join(", "), at: new Date() });
     else { setFeedErr(null); setUpdated(new Date()); }
   }
@@ -177,10 +179,11 @@ export default function useConsoleData() {
   // Advisory cards. An executable act-loop proposal replaces the advisory throttle for its asset.
   const advisory = [];
   const executable = new Set((actions?.proposals || []).map((p) => p.asset));
-  if (root && rootEdge && !executable.has(root.pod)) {
+  // LOG-093: the api's incident advice (in the Actions card) replaces this card when it exists.
+  if (root && rootEdge && !executable.has(root.pod) && !(actions?.advice || []).length) {
     advisory.push({
       kind: "act", verb: "throttle", name: rootEdge.src || root.pod,
-      detail: `Sources the ${resWord} contention. Throttle it to relieve ${rootEdge.dst || "downstream"}.`,
+      detail: `Its load drives the ${resWord} trouble. Throttle it to relieve ${rootEdge.dst || "the machines after it"}.`,
       cites: `edge ${rootEdge.src}→${rootEdge.dst} · ${(rootEdge.evidence || []).join("+")}`,
     });
   }
@@ -196,7 +199,7 @@ export default function useConsoleData() {
   const fairness = nsGinis.length ? 1 - nsGinis.reduce((a, b) => a + b, 0) / nsGinis.length : null;
 
   return {
-    graph, narr, health, topo, pods, podres, plant, recs, audit, scada, fleet, actions, tasks, profiles,
+    graph, narr, health, topo, pods, podres, plant, recs, audit, scada, fleet, actions, tasks, profiles, incident,
     updated,
     fleetChanged, reloadAll,
     feedErr, now, tagsOkAt,

@@ -369,3 +369,49 @@ def test_full_historian_queue_drops_the_oldest_batch(monkeypatch):
         tagserver._fleet_history({"n": i})
     assert [q.get_nowait(), q.get_nowait()] == [{"n": 2}, {"n": 3}]
     assert tagserver._HIST_DROPPED["batches"] == 2
+
+
+def test_base_poll_queues_the_historian_and_never_writes_inline(monkeypatch):
+    """LOG-099: the base plant poll wrote the historian inline. A slow write held the poll, and all 41
+    plant tags aged to STALE for 10 s in the Scenario 4B watch. The poll now only queues the batch."""
+    class Bits:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+        def isError(self):
+            return False
+
+    class FakeModbus:
+        def __init__(self, *a, **kw):
+            pass
+
+        def connect(self):
+            return True
+
+        def read_holding_registers(self, *a, **kw):
+            return Bits(registers=[0] * tagserver.tags.N_REGS)
+
+        def read_coils(self, *a, **kw):
+            return Bits(bits=[False] * len(tagserver.tags.COOLED))
+
+        def close(self):
+            pass
+
+    class Stop(Exception):
+        pass
+
+    def no_inline(batch):
+        raise AssertionError("the poll thread wrote the historian inline")
+
+    def stop(_s):
+        raise Stop
+
+    q = queue.Queue(maxsize=10)
+    monkeypatch.setattr(tagserver, "_HIST_Q", q)
+    monkeypatch.setattr(tagserver, "ModbusTcpClient", FakeModbus)
+    monkeypatch.setattr(tagserver, "_historian_write", no_inline)
+    monkeypatch.setattr(tagserver.time, "sleep", stop)
+    with pytest.raises(Stop):
+        tagserver.poll_loop()
+    batch = q.get_nowait()
+    assert len(batch) == len(tagserver.TABLE) and tagserver.STATE["plc_connected"] is True

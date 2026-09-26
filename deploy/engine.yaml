@@ -27,12 +27,19 @@ spec:
     metadata:
       labels: { app: correlation-engine, tier: aiops }
     spec:
+      automountServiceAccountToken: false
       securityContext:
+        runAsNonRoot: true           # LOG-095: the image runs as nobody (65534)
         fsGroup: 65534
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: engine
           image: localhost:5000/skn/correlation-engine:v0.1
           imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: no privilege escalation, no capabilities, read-only root
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           ports: [{ containerPort: 9100 }]
           env:
             - { name: WINDOW_URL, value: "http://aggregator.aiops.svc.cluster.local.:9000/window" }   # FQDN (trailing dot) skips the DNS search list -> immune to a Tailscale MagicDNS leak
@@ -54,8 +61,10 @@ spec:
             - { name: COMMON_MODE, value: "1" }
             - { name: COMMON_MODE_MIN_MEMBERS, value: "3" }
             - { name: COMMON_MODE_WINDOW_S, value: "15" }   # three grid steps at POLL_S=5
+            # LOG-100: the water-cooled compressor gives heat to the loop, and the three new cell PLCs
+            # link through the field segment, as plant-sim's live /domains says.
             - name: PLANT_DOMAINS     # the LOG-021/022 registry, now primary: declared shared media
-              value: "rail:incomer-1=incomer-1,psu-a,psu-b,psu-c;rail:psu-a=press-1,press-2,cnc-1,qa-scanner-1,psu-a;rail:psu-b=conveyor-1,compressor-1,furnace-1,chiller-1,psu-b;loop:cool-1=press-1,press-2,cnc-1,furnace-1,chiller-1,cool-1;net:field-1=hmi-gw,plc-stamping,field-1"
+              value: "rail:incomer-1=incomer-1,psu-a,psu-b,psu-c;rail:psu-a=press-1,press-2,cnc-1,qa-scanner-1,psu-a;rail:psu-b=conveyor-1,compressor-1,furnace-1,chiller-1,psu-b;loop:cool-1=press-1,press-2,cnc-1,furnace-1,compressor-1,chiller-1,cool-1;net:field-1=hmi-gw,plc-stamping,plc-utilities,plc-machining,plc-furnace,field-1"
             # 2H (FLEET.md section 9): run-time domains from the attesters. plant-sim publishes the live
             # rail and loop members (cell machines included). The tag server publishes plc: domains.
             # A failed fetch keeps the last good answer. The static PLANT_DOMAINS above always stay.
@@ -78,16 +87,19 @@ spec:
             - { name: TZ,        value: "Asia/Kolkata" }
           volumeMounts:
             - { name: memory, mountPath: /var/lib/skn/memory }
+            - { name: tmp, mountPath: /tmp }     # SQLite temp files
           readinessProbe:
             httpGet: { path: /healthz, port: 9100 }
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
             requests: { cpu: 250m, memory: 384Mi }
-            limits:   { cpu: "1",  memory: 512Mi }
+            limits:   { cpu: "1",  memory: 512Mi, ephemeral-storage: 256Mi }
       volumes:
         - name: memory
           persistentVolumeClaim: { claimName: engine-memory-pvc }
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

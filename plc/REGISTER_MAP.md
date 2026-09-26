@@ -19,16 +19,18 @@ Poll cadence = sim tick (1 s); PLC scan = 100 ms.
 
 | %MW | Meaning | Scaling | ST variable |
 |---|---|---|---|
-| 0 | press-1 coolant-side temp | °C ×10 | `t_press1` |
-| 1 | press-2 temp | °C ×10 | `t_press2` |
-| 2 | cnc-1 temp | °C ×10 | `t_cnc1` |
-| 3 | furnace-1 temp | °C ×10 | `t_furnace1` |
+| 0 | press-1 hydraulic oil temp (trip 80.0 °C) | °C ×10 | `t_press1` |
+| 1 | press-2 hydraulic oil temp (trip 80.0 °C) | °C ×10 | `t_press2` |
+| 2 | cnc-1 spindle motor temp (trip 80.0 °C) | °C ×10 | `t_cnc1` |
+| 3 | furnace-1 coil cooling water temp (trip 55.0 °C) | °C ×10 | `t_furnace1` |
 | 4 | coolant flow | L/min ×10 | (tag server only) |
 | 5 | pump health | ratio ×100 | (tag server only) |
 | 6 | rail psu-a voltage | V ×10 | (tag server only) |
 | 7 | rail psu-b voltage | V ×10 | (tag server only) |
 | 8–15 | per-machine current draw, DEVICES order: press-1, press-2, cnc-1, qa-scanner-1, conveyor-1, compressor-1, furnace-1, chiller-1 | A ×10 | (tag server only) |
-| 16–19 | reserved (never written) | — | — |
+| 16 | loop supply water temp (LOG-100), a separate FC16 block with 17 | °C ×10 | (tag server only) |
+| 17 | compressor-1 pressure transducer reading (LOG-100) | bar ×100 | (tag server only) |
+| 18–19 | reserved (never written) | — | — |
 | 20 | operator reset request (write 1; program consumes) | bool-ish | `reset_cmd` |
 | 21–23 | reserved (never written) | — | — |
 | 24–31 | per-machine throughput, DEVICES order (as 8–15); written as a SEPARATE FC16 block so the sweep can't clobber MW20's pulse | % ×10 | (tag server only) |

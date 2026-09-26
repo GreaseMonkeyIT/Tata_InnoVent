@@ -137,15 +137,20 @@ def test_configuration_interval_is_read():
 
 
 def test_openplc_trip_program_parity():
-    """plc/program.st latches at 780 (78.0 C x10) and unlatches only below trip on a reset."""
+    """plc/program.st latches each machine at its own trip (LOG-100: 800 = 80.0 C press and cnc,
+    550 = 55.0 C furnace coil water, x10) and unlatches only below trip on a reset."""
     with open(os.path.join(REPO_ROOT, "plc", "program.st"), encoding="utf-8") as f:
         task = compile_task(f.read(), reserve_system_words=False)
     img = Image()
     task.apply_initial_values(img)
     inst = task.instantiate(img)
-    img.mw[0] = 790                                     # press-1 at 79.0 C
+    img.mw[0], img.mw[3] = 790, 540                     # press-1 at 79.0 C, furnace-1 at 54.0 C
     inst.scan(0)
-    assert img.qx[0] is True
+    assert img.qx[0] is False and img.qx[3] is False    # both below their own trips
+    img.mw[0], img.mw[3] = 800, 550
+    inst.scan(50)
+    assert img.qx[0] is True and img.qx[3] is True
+    img.mw[3] = 400
     img.mw[0] = 700
     inst.scan(100)
     assert img.qx[0] is True                            # latched, no reset yet

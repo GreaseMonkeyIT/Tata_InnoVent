@@ -46,7 +46,7 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 - **Fire a fault**: from the fault shell on the box, not the console:
   `ssh -t forge 'bash ~/Tata_InnoVent/deploy/faults.sh'`, then `f 1` (fire), `r all` (reset).
   Each scenario is anchored on a real incident:
-  PS1 rail-sag cascade · PS2 power sag trips the chiller · PS3 control network storm · PS4A setpoint
+  PS1 rail-sag cascade · PS2 a failed pressure sensor overheats the loop · PS3 control network storm · PS4A setpoint
   write with no record · PS4B current report contradicts the feeder · PS5 coolant ramp-to-trip ·
   PS6 the monitor runs out of memory. `SCENARIOS.md` is the contract for the set.
 - **Show the refusals**: `bash deploy/refusals.sh` on the box. The api refuses a fire without a token

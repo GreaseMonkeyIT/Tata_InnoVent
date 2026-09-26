@@ -3,6 +3,8 @@
 #   - a Role that lets ONLY the api ServiceAccount manage PLC objects in fleet (least privilege)
 #   - the base PLC plc-stamping: the process controller of press-1 and press-2 (Siemens S7-1200
 #     profile, task stamping-line). OpenPLC stays the separate trip interlock, as in a real plant.
+#   - LOG-100: plc-utilities (compressor-1, chiller-1), plc-machining (cnc-1), and plc-furnace
+#     (furnace-1). Each has its device token Secret <name>-token (deploy/plc-tokens.sh).
 #   - a ServiceMonitor for the tag server path /metrics/fleet (vplc_* and scada_* only, never plant_*)
 ---
 apiVersion: v1
@@ -54,33 +56,50 @@ spec:
       labels: { app: vplc, visr/plc: plc-stamping, visr/profile: siemens-s7-1200, visr/managed: static }
     spec:
       automountServiceAccountToken: false
+      securityContext:              # LOG-095: non-root, the default seccomp profile
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+        # LOG-095: a non-root process may bind S7comm port 102. A safe, namespaced sysctl.
+        sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
       containers:
         - name: vplc
           image: localhost:5000/skn/vplc:v0.1
           imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: no privilege escalation, no capabilities, read-only root
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           env:
             - { name: PLC_NAME, value: "plc-stamping" }
             - { name: PROFILE, value: "siemens-s7-1200" }
             - { name: TASK_NAME, value: "stamping-line" }     # the baked library task
             - { name: TASK_DIR, value: "/task" }              # a loaded task (ConfigMap) takes priority
             - { name: TZ, value: "Asia/Kolkata" }
-            - name: DEVICE_TOKEN
-              valueFrom: { secretKeyRef: { name: plc-stamping-token, key: token } }
+            - { name: DEVICE_TOKEN_FILE, value: "/run/secrets/device/token" }   # LOG-095: a file
           ports:
             - { name: s7comm, containerPort: 102 }
             - { name: field, containerPort: 5020 }
             - { name: control, containerPort: 8080 }
           volumeMounts:
             - { name: task, mountPath: /task, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: device, mountPath: /run/secrets/device, readOnly: true }
           readinessProbe:
             httpGet: { path: /healthz, port: 8080 }
             initialDelaySeconds: 2
           resources:
             requests: { cpu: 25m, memory: 48Mi }
-            limits: { cpu: 250m, memory: 128Mi }
+            limits: { cpu: 250m, memory: 128Mi, ephemeral-storage: 128Mi }
       volumes:
         - name: task
           configMap: { name: plc-stamping-task, optional: true }
+        - name: tmp
+          emptyDir: {}
+        - name: device
+          secret: { secretName: plc-stamping-token }
 ---
 apiVersion: v1
 kind: Service
@@ -92,6 +111,225 @@ spec:
   selector: { visr/plc: plc-stamping }
   ports:
     - { name: s7comm, port: 102, targetPort: 102 }
+    - { name: field, port: 5020, targetPort: 5020 }
+    - { name: control, port: 8080, targetPort: 8080 }
+---
+# plc-utilities: the utilities controller of compressor-1 and chiller-1 (LOG-100).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plc-utilities
+  namespace: fleet
+  labels: { app: vplc, visr/plc: plc-utilities, visr/profile: siemens-s7-1200, visr/managed: static }
+spec:
+  replicas: 1
+  selector: { matchLabels: { visr/plc: plc-utilities } }
+  template:
+    metadata:
+      labels: { app: vplc, visr/plc: plc-utilities, visr/profile: siemens-s7-1200, visr/managed: static }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:              # LOG-095: non-root, the default seccomp profile
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+        # LOG-095: a non-root process may bind S7comm port 102. A safe, namespaced sysctl.
+        sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
+      containers:
+        - name: vplc
+          image: localhost:5000/skn/vplc:v0.1
+          imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: no privilege escalation, no capabilities, read-only root
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          env:
+            - { name: PLC_NAME, value: "plc-utilities" }
+            - { name: PROFILE, value: "siemens-s7-1200" }
+            - { name: TASK_NAME, value: "utilities" }     # the baked library task
+            - { name: TASK_DIR, value: "/task" }              # a loaded task (ConfigMap) takes priority
+            - { name: TZ, value: "Asia/Kolkata" }
+            - { name: DEVICE_TOKEN_FILE, value: "/run/secrets/device/token" }   # LOG-095: a file
+          ports:
+            - { name: s7comm, containerPort: 102 }
+            - { name: field, containerPort: 5020 }
+            - { name: control, containerPort: 8080 }
+          volumeMounts:
+            - { name: task, mountPath: /task, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: device, mountPath: /run/secrets/device, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 25m, memory: 48Mi }
+            limits: { cpu: 250m, memory: 128Mi, ephemeral-storage: 128Mi }
+      volumes:
+        - name: task
+          configMap: { name: plc-utilities-task, optional: true }
+        - name: tmp
+          emptyDir: {}
+        - name: device
+          secret: { secretName: plc-utilities-token }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plc-utilities
+  namespace: fleet
+  labels: { app: vplc, visr/plc: plc-utilities }
+spec:
+  selector: { visr/plc: plc-utilities }
+  ports:
+    - { name: s7comm, port: 102, targetPort: 102 }
+    - { name: field, port: 5020, targetPort: 5020 }
+    - { name: control, port: 8080, targetPort: 8080 }
+---
+# plc-machining: the line PLC interface to cnc-1: feed enable and feed override (LOG-100).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plc-machining
+  namespace: fleet
+  labels: { app: vplc, visr/plc: plc-machining, visr/profile: generic-iec, visr/managed: static }
+spec:
+  replicas: 1
+  selector: { matchLabels: { visr/plc: plc-machining } }
+  template:
+    metadata:
+      labels: { app: vplc, visr/plc: plc-machining, visr/profile: generic-iec, visr/managed: static }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:              # LOG-095: non-root, the default seccomp profile
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+        # LOG-095: a non-root process may bind Modbus port 502. A safe, namespaced sysctl.
+        sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
+      containers:
+        - name: vplc
+          image: localhost:5000/skn/vplc:v0.1
+          imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: no privilege escalation, no capabilities, read-only root
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          env:
+            - { name: PLC_NAME, value: "plc-machining" }
+            - { name: PROFILE, value: "generic-iec" }
+            - { name: TASK_NAME, value: "machining" }     # the baked library task
+            - { name: TASK_DIR, value: "/task" }              # a loaded task (ConfigMap) takes priority
+            - { name: TZ, value: "Asia/Kolkata" }
+            - { name: DEVICE_TOKEN_FILE, value: "/run/secrets/device/token" }   # LOG-095: a file
+          ports:
+            - { name: modbus, containerPort: 502 }
+            - { name: field, containerPort: 5020 }
+            - { name: control, containerPort: 8080 }
+          volumeMounts:
+            - { name: task, mountPath: /task, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: device, mountPath: /run/secrets/device, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 25m, memory: 48Mi }
+            limits: { cpu: 250m, memory: 128Mi, ephemeral-storage: 128Mi }
+      volumes:
+        - name: task
+          configMap: { name: plc-machining-task, optional: true }
+        - name: tmp
+          emptyDir: {}
+        - name: device
+          secret: { secretName: plc-machining-token }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plc-machining
+  namespace: fleet
+  labels: { app: vplc, visr/plc: plc-machining }
+spec:
+  selector: { visr/plc: plc-machining }
+  ports:
+    - { name: modbus, port: 502, targetPort: 502 }
+    - { name: field, port: 5020, targetPort: 5020 }
+    - { name: control, port: 8080, targetPort: 8080 }
+---
+# plc-furnace: furnace-1 power control: heat enable and power limit (LOG-100).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plc-furnace
+  namespace: fleet
+  labels: { app: vplc, visr/plc: plc-furnace, visr/profile: generic-iec, visr/managed: static }
+spec:
+  replicas: 1
+  selector: { matchLabels: { visr/plc: plc-furnace } }
+  template:
+    metadata:
+      labels: { app: vplc, visr/plc: plc-furnace, visr/profile: generic-iec, visr/managed: static }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:              # LOG-095: non-root, the default seccomp profile
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+        # LOG-095: a non-root process may bind Modbus port 502. A safe, namespaced sysctl.
+        sysctls: [{ name: net.ipv4.ip_unprivileged_port_start, value: "0" }]
+      containers:
+        - name: vplc
+          image: localhost:5000/skn/vplc:v0.1
+          imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: no privilege escalation, no capabilities, read-only root
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          env:
+            - { name: PLC_NAME, value: "plc-furnace" }
+            - { name: PROFILE, value: "generic-iec" }
+            - { name: TASK_NAME, value: "furnace" }     # the baked library task
+            - { name: TASK_DIR, value: "/task" }              # a loaded task (ConfigMap) takes priority
+            - { name: TZ, value: "Asia/Kolkata" }
+            - { name: DEVICE_TOKEN_FILE, value: "/run/secrets/device/token" }   # LOG-095: a file
+          ports:
+            - { name: modbus, containerPort: 502 }
+            - { name: field, containerPort: 5020 }
+            - { name: control, containerPort: 8080 }
+          volumeMounts:
+            - { name: task, mountPath: /task, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+            - { name: device, mountPath: /run/secrets/device, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 25m, memory: 48Mi }
+            limits: { cpu: 250m, memory: 128Mi, ephemeral-storage: 128Mi }
+      volumes:
+        - name: task
+          configMap: { name: plc-furnace-task, optional: true }
+        - name: tmp
+          emptyDir: {}
+        - name: device
+          secret: { secretName: plc-furnace-token }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plc-furnace
+  namespace: fleet
+  labels: { app: vplc, visr/plc: plc-furnace }
+spec:
+  selector: { visr/plc: plc-furnace }
+  ports:
+    - { name: modbus, port: 502, targetPort: 502 }
     - { name: field, port: 5020, targetPort: 5020 }
     - { name: control, port: 8080, targetPort: 8080 }
 ---

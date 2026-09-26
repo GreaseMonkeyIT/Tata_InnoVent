@@ -12,17 +12,27 @@ metadata:
   namespace: plant
   labels: { app: rogue-ews, visr/role: fault-injector }
 spec:
-  replicas: 1
+  replicas: 0     # LOG-095: the test attacker runs only during Scenario 4A (deploy/faults.sh scales it)
   selector: { matchLabels: { app: rogue-ews } }
   template:
     metadata:
       labels: { app: rogue-ews, visr/role: fault-injector }
     spec:
       automountServiceAccountToken: false
+      securityContext:              # LOG-095: non-root, the default seccomp profile
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: rogue-ews
           image: localhost:5000/skn/vplc:v0.1
           imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: no privilege escalation, no capabilities, read-only root
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           command: ["python", "-u", "ews.py"]
           env:
             - { name: EWS_HTTP_PORT, value: "8090" }
@@ -33,16 +43,23 @@ spec:
             - { name: EWS_VALUE, value: "30" }
             - { name: TZ, value: "Asia/Kolkata" }
             # A missing token leaves the variable empty and the POST endpoints fail closed (403).
-            - name: SCADA_WRITE_TOKEN
-              valueFrom: { secretKeyRef: { name: visr-fleet, key: scada-write-token, optional: true } }
+            - { name: SCADA_WRITE_TOKEN_FILE, value: "/run/secrets/visr-fleet/scada-write-token" }   # LOG-095
           ports:
             - { name: control, containerPort: 8090 }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: visr-fleet, mountPath: /run/secrets/visr-fleet, readOnly: true }
           readinessProbe:
             httpGet: { path: /healthz, port: 8090 }
             initialDelaySeconds: 2
           resources:
             requests: { cpu: 25m, memory: 64Mi }
-            limits: { cpu: 100m, memory: 96Mi }
+            limits: { cpu: 100m, memory: 96Mi, ephemeral-storage: 64Mi }
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: visr-fleet   # optional: without it, the control endpoints fail closed (403)
+          secret: { secretName: visr-fleet, optional: true }
 ---
 apiVersion: v1
 kind: Service

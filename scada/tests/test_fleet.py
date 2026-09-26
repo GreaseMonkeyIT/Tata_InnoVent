@@ -275,3 +275,32 @@ def test_metrics_text_drops_bad_values_and_rtt_while_disconnected():
     lab = '{namespace="fleet",pod="plc-packaging"}'
     assert text.strip().splitlines() == [f"scada_plc_connected{lab} 0", f"scada_tags_good{lab} 0"]
     assert fleet.prom_text([]) == ""
+
+
+# ------------------------------------------------ frozen field inputs (LOG-094) --
+def test_frozen_field_inputs_read_stale():
+    """Scenario 3: the storm cut the stamping cell's field link, and the PLC kept its last inputs."""
+    table = [{"tag": "A", "area": "iw", "signal": "AMPS"}, {"tag": "T", "area": "iw", "signal": "TEMP"},
+             {"tag": "D", "area": "mw", "signal": "DERATE_PCT"}]
+    ch = {}
+    fleet.track_field(ch, {"A": {"signal": "AMPS", "raw": 429}, "T": {"signal": "TEMP", "raw": 590},
+                           "D": {"signal": "DERATE_PCT", "raw": 100}}, 100.0)
+    assert set(ch) == {"A", "T"}
+    fleet.track_field(ch, {"A": {"signal": "AMPS", "raw": 431}, "T": {"signal": "TEMP", "raw": 590}}, 105.0)
+    assert fleet.field_frozen_for(ch, 110.0) == 5.0                  # AMPS moved at 105
+    aged = {t: {"quality": "GOOD", "value": 1.0} for t in ("A", "T", "D")}
+    assert fleet.mark_field_stale(aged, table, 5.0, 10.0) == aged     # still live
+    out = fleet.mark_field_stale(aged, table, 12.0, 10.0)
+    assert out["A"]["quality"] == out["T"]["quality"] == "STALE" and "frozen for 12 s" in out["A"]["reason"]
+    assert out["D"]["quality"] == "GOOD"                              # a setpoint is not a field input
+    assert fleet.field_frozen_for({"A": (1, 0.0)}, 50.0) is None      # one input is not enough
+
+
+def test_unmapped_slot_has_no_record():
+    """PR #1 follow-up: a vendor map without AMPS must not feed 0 A as GOOD."""
+    table = [{"tag": "A", "area": "iw", "index": 0}, {"tag": "T", "area": "iw", "index": 1}]
+    fresh = {"A": {"value": 0.0, "quality": "GOOD", "ts": 1.0}, "T": {"value": 59.0, "quality": "GOOD", "ts": 1.0}}
+    kept = fleet.only_mapped(table, fresh, {("iw", 1)})
+    assert set(kept) == {"T"}
+    rows = fleet.tag_rows([dict(r, **{k: None for k in fleet._TAG_KEYS if k not in r}) for r in table], kept)
+    assert {r["tag"]: r["quality"] for r in rows} == {"A": "BAD", "T": "GOOD"}

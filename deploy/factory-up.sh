@@ -17,6 +17,8 @@
 #      WIPE=0 skips this step. The script never wipes without a checked backup.
 #   5. Start the PS0 watcher in the screen session visr-ps0. It writes one read-only verdict line per
 #      minute to /var/tmp/visr-ps0-soak.log for WATCH_H hours (default 24). It never fires a fault.
+#      LOG-100: also start deploy/console-load.sh (screen visr-console-load), the read load of one
+#      open console, so the baselines learn the api with the console attached. CONSOLE_LOAD=0 skips it.
 #      QUIET means no finding, no root, no forecast card, and no open integrity finding.
 #      An old soak log moves to <log>.<timestamp> first, so the log holds one soak only.
 #
@@ -33,7 +35,7 @@ WIPE=${WIPE:-1}
 WATCH_H=${WATCH_H:-24}
 WATCH_LOG=${WATCH_LOG:-/var/tmp/visr-ps0-soak.log}
 BACKUP_DIR=${BACKUP_DIR:-$HOME/visr-backups}
-API=http://127.0.0.1:30088
+API=${API:-http://$(kubectl -n aiops get svc api -o jsonpath='{.spec.clusterIP}'):8088}   # LOG-095: the ClusterIP (no NodePort)
 GRAPH=/api/v1/namespaces/aiops/services/api:8088/proxy/api/graph
 PLANT=/api/v1/namespaces/aiops/services/api:8088/proxy/api/plant
 MAINT=engine-memory-maint
@@ -202,10 +204,12 @@ YAML
     [ "$got_files" = "$files" ] && [ "$got_bytes" = "$bytes" ] \
       || die "the backup holds $got_files of $files files and $got_bytes of $bytes bytes. Nothing was wiped."
     echo "PASS backup $tarball ($files files, $bytes bytes)"
-    kubectl -n aiops exec "$MAINT" -- sh -c "rm -f $MEM/*.db* && ls -la $MEM" \
+    kubectl -n aiops exec "$MAINT" -- sh -c "rm -f $MEM/*.db* $MEM/baselines.lock && ls -la $MEM" \
       || die "the wipe failed. The backup is $tarball."
     echo "PASS the memory is wiped"
   fi
+  # LOG-103: the display bands belong to the old soak. engine-baselines.sh lock learns new ones.
+  kubectl -n aiops delete configmap display-bands --ignore-not-found >/dev/null
   start_engine
   echo "PASS the engine runs"
   sleep 45
@@ -223,6 +227,14 @@ screen -dmS visr-ps0 bash "$REPO/deploy/factory-up.sh" watch
 sleep 2
 screen -ls | grep -q visr-ps0 || die "the watcher did not start"
 echo "PASS the watcher runs"
+# LOG-100: one open console's read load during the soak, so the edge-plane baselines learn the api
+# as the demo runs it. CONSOLE_LOAD=0 skips it.
+if [ "${CONSOLE_LOAD:-1}" = 1 ]; then
+  screen -S visr-console-load -X quit >/dev/null 2>&1 || true
+  screen -dmS visr-console-load bash "$REPO/deploy/console-load.sh"
+  sleep 1
+  screen -ls | grep -q visr-console-load && echo "PASS the console load runs (screen visr-console-load)"     || echo "WARN the console load did not start"
+fi
 echo
 echo "== DONE $(date +%H:%M:%S). Let the plant run for 2 h or more. Fire no faults during the soak."
 echo "   The soak passes when $WATCH_LOG shows only QUIET lines for the last 30 minutes."

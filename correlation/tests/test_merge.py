@@ -148,3 +148,46 @@ def test_merge_cross_signal_keeps_both_edges():
     sigs = sorted(e["signal"] for e in out["edges"])
     assert sigs == ["psi_cpu", "psi_io"]
     assert {r["pod"] for r in out["root_cause_ranking"]} == {"cooling-monitor", "analytics-batch"}
+
+
+def _edge(src, dst, evidence, r=0.95, source="live"):
+    return {"src": src, "dst": dst, "r": r, "lag_s": 10, "evidence": evidence, "state": "active",
+            "source": source}
+
+
+def _plant_graph(edges, findings):
+    return {"findings": [{"pod": p, "class": "shift", "onset_s": 60.0, "severity": 0.6} for p in findings],
+            "edges": edges, "root_cause_ranking": [], "blast_radius": [], "meta": {}}
+
+
+def test_bare_loop_edges_do_not_vote_scenario_5_shape():
+    """LOG-090, forge 2026-09-26 00:04: chiller-1 kept one write hop into the loop while cnc-1, the
+    fastest thermal responder, grew bare edges to the other machines and took the root."""
+    g = _plant_graph(
+        [_edge("chiller-1", "furnace-1", ["write", "loop", "temporal"]),
+         _edge("cnc-1", "press-1", ["stat", "loop", "temporal"]),
+         _edge("cnc-1", "press-2", ["stat", "loop", "temporal"]),
+         _edge("press-1", "press-2", ["stat", "loop", "temporal"])],
+        ["cnc-1", "press-1", "press-2", "furnace-1"])
+    out = merge_graphs({"coolant_temp": g})
+    assert out["root_cause_ranking"][0]["pod"] == "chiller-1"
+    assert len(out["edges"]) == 4                        # the bare edges still render as context
+
+
+def test_bare_rail_edges_do_not_vote_but_common_mode_does():
+    g = _plant_graph(
+        [_edge("compressor-1", "psu-b", ["write", "rail", "temporal"]),
+         _edge("conveyor-1", "furnace-1", ["stat", "rail"]),
+         _edge("conveyor-1", "chiller-1", ["stat", "rail"])],
+        ["psu-b", "conveyor-1", "furnace-1", "chiller-1"])
+    assert merge_graphs({"bus_voltage": g})["root_cause_ranking"][0]["pod"] == "compressor-1"
+    cm = _plant_graph([_edge("incomer-1", "psu-a", ["common_mode", "rail"]),
+                       _edge("incomer-1", "psu-b", ["common_mode", "rail"])], ["psu-a", "psu-b"])
+    assert merge_graphs({"bus_voltage": cm})["root_cause_ranking"][0]["pod"] == "incomer-1"
+
+
+def test_bare_network_edges_still_vote_scenario_3():
+    """The segment latency differs per member, and hmi-gw roots on a bare edge in 35 of 41 polls."""
+    g = _plant_graph([_edge("hmi-gw", "plc-stamping", ["stat", "net", "temporal"])],
+                     ["hmi-gw", "plc-stamping"])
+    assert merge_graphs({"field_latency": g})["root_cause_ranking"][0]["pod"] == "hmi-gw"

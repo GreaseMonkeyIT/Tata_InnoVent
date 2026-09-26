@@ -316,6 +316,52 @@ def requality(recs: dict[str, dict], now: float, stale_s: float = 10.0,
     return tags.requality(recs, now, stale_s, bad_s)
 
 
+def only_mapped(table: list[dict], fresh: dict, mapped: set) -> dict:
+    """Keep the records whose image slot the register map lists (LOG-094). mapped holds
+    (area, index) pairs, as drivers/regmap.RegMap.mapped_slots gives them."""
+    keep = {r["tag"] for r in table if (r.get("area"), r.get("index")) in mapped}
+    return {t: rec for t, rec in fresh.items() if t in keep}
+
+
+# ------------------------------------------------------------ frozen field --
+# LOG-094: a PLC can answer SCADA while its own field inputs stop updating. In Scenario 3 the storm
+# cut the stamping cell's field link, the PLC kept its last input values, and SCADA read them as
+# GOOD. A live analog measurement always jitters, so when every AMPS and TEMP input of one PLC has
+# held the same raw value for FIELD_FROZEN_S, its field inputs are stale. This is the frozen-value
+# check of SCADA practice. THROUGHPUT and VOLTS are left out: they can hold still legitimately.
+FROZEN_SIGNALS = ("AMPS", "TEMP")
+
+
+def track_field(changes: dict, fresh: dict, now: float) -> dict:
+    """Update {tag: (raw, time of the last change)} for the jittering field inputs of one read."""
+    for tag, rec in fresh.items():
+        if rec.get("signal") in FROZEN_SIGNALS:
+            prev = changes.get(tag)
+            if prev is None or prev[0] != rec.get("raw"):
+                changes[tag] = (rec.get("raw"), now)
+    return changes
+
+
+def field_frozen_for(changes: dict, now: float) -> float | None:
+    """Seconds since ANY tracked field input of this PLC changed. None with fewer than two inputs."""
+    if len(changes) < 2:
+        return None
+    return now - max(ts for _, ts in changes.values())
+
+
+def mark_field_stale(aged: dict, table: list[dict], frozen_for: float | None, frozen_s: float) -> dict:
+    """Input tags (%IX, %IW) of a PLC whose field inputs froze read STALE, with the reason."""
+    if frozen_for is None or frozen_for <= frozen_s:
+        return aged
+    inputs = {r["tag"] for r in table if r.get("area") in ("ix", "iw")}
+    out = dict(aged)
+    for tag in inputs:
+        rec = out.get(tag)
+        if rec and rec.get("quality") == "GOOD":
+            out[tag] = {**rec, "quality": "STALE", "reason": f"field inputs frozen for {frozen_for:.0f} s"}
+    return out
+
+
 # ------------------------------------------------------------------- write --
 def write_plan(table: list[dict], tag, value) -> tuple[int, int]:
     """Check one write. Return (%MW index, raw INT).
@@ -358,6 +404,8 @@ def tag_rows(table: list[dict], aged: dict[str, dict]) -> list[dict]:
         row["value"] = rec["value"] if rec else None
         row["quality"] = rec["quality"] if rec else "BAD"
         row["ts"] = rec["ts"] if rec else None
+        if rec and rec.get("reason"):
+            row["reason"] = rec["reason"]
         rows.append(row)
     return rows
 
@@ -377,6 +425,7 @@ def plc_json(snap: dict) -> dict:
         "connected": snap["connected"], "tags": rows,
         "tags_good": sum(1 for r in rows if r["quality"] == "GOOD"),
         "last_enroll_at": snap["last_enroll_at"], "poll_error": snap["poll_error"],
+        "clamped": snap.get("clamped") or [],
         "runtime": reg["runtime"],
     }
 
@@ -425,4 +474,3 @@ def prom_text(snaps: list[dict]) -> str:
         good = sum(1 for r in s["table"] if (aged.get(r["tag"]) or {}).get("quality") == "GOOD")
         lines.append(f"scada_tags_good{lab} {good}")
     return "\n".join(lines) + "\n" if lines else ""
-    

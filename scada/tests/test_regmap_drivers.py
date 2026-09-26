@@ -203,7 +203,7 @@ def test_scaled_value_that_overflows_is_clamped_and_reported(vendor_s7):
 
 
 # ------------------------------------------------------- tag server e2e --
-from test_fleet_http import _all_good, _call, _dev, _enroll_body, _wait, server  # noqa: E402,F401
+from test_fleet_http import _all_good, _call, _dev, _enroll_body, _plc, _wait, server  # noqa: E402,F401
 
 
 def test_enroll_with_a_vendor_map_end_to_end(server, fake_modbus, tmp_path, monkeypatch):
@@ -218,9 +218,16 @@ def test_enroll_with_a_vendor_map_end_to_end(server, fake_modbus, tmp_path, monk
     body["protocol"]["map"] = "acme-press"
     code, out, _ = _call(server + "/enroll", "POST", body, _dev(name))
     assert code == 200 and out["enrolled"] is True
-    plc = _wait(lambda: _all_good(server, name))
-    tags = {t["tag"]: t["value"] for t in plc["tags"]}
-    assert tags["FLEET.PLC_ACME.PRESS_1.AMPS"] == 42.3                       # same tag name, vendor layout
+    amps = "FLEET.PLC_ACME.PRESS_1.AMPS"
+
+    def amps_good():
+        p = _plc(server, name)
+        return p if p and p["connected"] and any(t["tag"] == amps and t["quality"] == "GOOD" for t in p["tags"]) else None
+    plc = _wait(amps_good)
+    tags = {t["tag"]: t for t in plc["tags"]}
+    assert tags[amps]["value"] == 42.3                                        # same tag name, vendor layout
+    # LOG-094: a slot the map does not list reads BAD with no value, never a GOOD zero
+    assert tags["FLEET.PLC_ACME.PRESS_1.TEMP"]["quality"] == "BAD" and tags["FLEET.PLC_ACME.PRESS_1.TEMP"]["value"] is None
 
 
 def test_enroll_with_a_bad_map_is_refused(server, tmp_path, monkeypatch):

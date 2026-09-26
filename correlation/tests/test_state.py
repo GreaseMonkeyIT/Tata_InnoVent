@@ -306,6 +306,34 @@ def test_psi_baseline_matures_and_ignores_storms(tmp_path):
     assert abs(mem.baseline_threshold("timescaledb") - before) < 0.05
 
 
+def test_locked_baseline_keeps_what_it_learned(tmp_path):
+    """LOG-089: after the soak the baselines lock, so a long fault plateau cannot move them."""
+    mem = GraphMemory(str(tmp_path / "memory.db"), MemoryConfig(base_min_n=12, dev_k=3.5, mad_floor=0.01))
+    for t in range(20):
+        mem.update_baselines({"psu-b": np.full(180, 26.8)}, ts=float(t))
+    thr = mem.baseline_threshold("psu-b")
+    mem.locked = True
+    for t in range(50):                                   # the flat PS2 plateau below the normal
+        mem.update_baselines({"psu-b": np.full(180, 25.7)}, ts=100.0 + t)
+    assert mem.baseline_threshold("psu-b") == thr
+    mem.locked = False                                    # unlocked, the plateau is learned again
+    for t in range(50):
+        mem.update_baselines({"psu-b": np.full(180, 25.7)}, ts=200.0 + t)
+    assert mem.baseline_threshold("psu-b") < thr - 0.5
+
+
+def test_locked_memory_still_matures_a_new_asset(tmp_path):
+    """A PLC added after the lock gets a provisional baseline: it learns until it is mature."""
+    mem = GraphMemory(str(tmp_path / "memory.db"), MemoryConfig(base_min_n=12))
+    mem.locked = True
+    for t in range(12):
+        mem.update_baselines({"pack-1": np.full(180, 0.2)}, ts=float(t))
+    assert mem.baseline_threshold("pack-1") is not None
+    n = mem.db.execute("SELECT n FROM baselines WHERE workload='pack-1'").fetchone()["n"]
+    mem.update_baselines({"pack-1": np.full(180, 0.2)}, ts=50.0)
+    assert mem.db.execute("SELECT n FROM baselines WHERE workload='pack-1'").fetchone()["n"] == n
+
+
 def test_case_is_promoted_from_incident(tmp_path):
     mem = GraphMemory(str(tmp_path / "memory.db"))
     vectors = {

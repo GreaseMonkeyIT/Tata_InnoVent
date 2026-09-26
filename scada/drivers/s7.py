@@ -156,4 +156,3 @@ class S7Driver:
             except Exception:
                 self._drop()
                 raise
-            

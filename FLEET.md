@@ -121,6 +121,23 @@ A write outside `%MW` changes nothing and increments the `denied_writes` counter
 The runtime applies external writes to bytes 272..399 before the next scan. The next scan
 overwrites a write to any other byte.
 
+### 4.4 Register maps for real vendor PLCs (PR #1, LOG-094)
+
+Sections 4.2 and 4.3 are the built-in layouts of the virtual PLCs. A real PLC keeps its values where its
+own program puts them, so an enrollment can name a register map: `"protocol": {"kind": "modbus", "host":
+"...", "map": "<name>"}`. The tag server loads `scada/regmaps/<name>.yaml` (or `REGMAP_DIR/<name>.yaml`),
+which maps each image slot (`%IW0`, `%MW10`, ...) to a Modbus area and address or an S7 area, DB, and byte
+offset, with a type (BOOL, INT16, UINT16, INT32, UINT32, FLOAT32), a word order, and a scale. The format is
+in `scada/regmaps/README.md`. No map means the layout of 4.2 or 4.3, frame for frame.
+
+- A bad map is refused at enrollment with HTTP 400 and a list of every bad field.
+- A slot that the map does not list gets no reading, so its tag reads BAD with value null. It is never a
+  GOOD zero (LOG-094).
+- A scaled value that does not fit INT16 is clamped, and `/fleet` lists the clamped slots of the last read
+  in `clamped` (LOG-094).
+- The Siemens S7-1200 and Schneider M221 maps in `scada/regmaps/` are examples, tested against
+  protocol-level fakes, not against physical PLCs.
+
 ## 5. Tasks
 
 ### 5.1 The Structured Text subset
@@ -178,6 +195,9 @@ instead of `machines`, because its machines already exist in plant-sim.
 | `stamping-line` | `siemens-s7-1200` | base cell `stamping` (press-1, press-2), rail psu-a | continuous run, `SPEED_PCT := LIMIT(0, DERATE_PCT, 100)` when READY and CELL_ENABLE |
 | `packaging-cell` | `generic-iec` | new cell, 3 machines | sequencer with TON timers and a CTU pack counter |
 | `packaging-cell-rush` | `generic-iec` | same wiring as `packaging-cell` | rush cadence: wrapper 10 s on, 5 s off, so the electrical load changes |
+| `utilities` (LOG-100) | `siemens-s7-1200` | base cell `utilities` (compressor-1, chiller-1), rail psu-b | compressor-1 loads at 6.9 bar and unloads at 7.5 bar on its pressure transducer (`%IW32`), with a minimum stop time. Its DERATE_PCT is the run command: 0 stops it. chiller-1 runs while READY, and its DERATE_PCT is the demand limit. Extra inputs: supply water temperature, loop flow, chiller load |
+| `machining` (LOG-100) | `generic-iec` | base cell `machining` (cnc-1), rail psu-a | the line PLC handshake to the CNC: RUN is feed enable, SPEED_PCT is the feed override (0 to 100 %), FEED_HOLD = 1 holds the feed. The CNC keeps its own controller for the part program |
+| `furnace` (LOG-100) | `generic-iec` | base cell `thermal` (furnace-1), rail psu-b | RUN is heat enable, SPEED_PCT is the power limit, HEAT_ENABLE = 0 turns the heat off. The coil water trip stays in OpenPLC: NFPA 86 keeps the excess-temperature limit on its own device |
 
 `packaging-cell` and `packaging-cell-rush` share one cell layout, so one PLC can switch
 between them with **Load task**.
@@ -190,6 +210,11 @@ between them with **Load task**.
   priority) or `TASK_NAME` (from `/app/tasks`), `DEVICE_TOKEN`, `ENROLL_URL`
   (default `http://tag-server.plant.svc.cluster.local:9300/enroll`), `PLC_HOST`
   (default `<PLC_NAME>.fleet.svc.cluster.local`), `FIELD_PORT`, `SCADA_PORT`, `CONTROL_PORT`.
+  `DEVICE_TOKEN_FILE` (a mounted Secret) wins over `DEVICE_TOKEN` (LOG-095).
+- Pod (LOG-095, `deploy/fleet.yaml` and the UI objects of `api/fleet.py`): user 10001, no capabilities,
+  a read-only root with `/tmp` on an emptyDir, no service-account token, the default seccomp profile, and
+  the namespaced sysctl `net.ipv4.ip_unprivileged_port_start=0`, so the non-root runtime binds S7comm
+  port 102. The token is the file `/run/secrets/device/token`.
 - Scan cycle: copy external `%MW` writes in, run the program, write system words, publish the
   image to the protocol buffers. The runtime measures each scan with `time.perf_counter`. A
   scan longer than the interval increments the overrun count.
@@ -220,8 +245,14 @@ between them with **Load task**.
 - One `Supply` named `incomer-1` sits above every rail (SCENARIOS.md 2.8). A rail takes its source
   voltage from the supply and keeps `v_nom` for every threshold. A new cell on any rail inherits the
   supply with no extra wiring.
-- Env `BASE_CELLS`, format `cell|host:port|failopen|machine,machine;...`. Default
-  `stamping|plc-stamping.fleet.svc.cluster.local:5020|failopen|press-1,press-2`.
+- Env `BASE_CELLS`, format `cell|host:port|failopen|machine,machine;...`. The code default is
+  `stamping|plc-stamping.fleet.svc.cluster.local:5020|failopen|press-1,press-2`. `plant/deploy.yaml`
+  adds three cells (LOG-100): `utilities` (compressor-1, chiller-1) on `plc-utilities`, `machining`
+  (cnc-1) on `plc-machining`, and `thermal` (furnace-1) on `plc-furnace`. Every base cell is fail-open:
+  with no PLC link the machines run at full speed, and compressor-1 follows its own pressure switch.
+- The `utilities` cell sends four extra instrument words on the field port (`%IW32` to `%IW35`): the
+  compressor pressure transducer (bar x100), the loop supply temperature (C x10), the loop flow (L/min x10),
+  and the chiller load (% x10). `CELL_EXTRA_BASE` and `CELL_EXTRA_N` in plant-sim set the block.
 - `POST /cells` body `{cell, plc_host, field_port, rail, fail_open, machines: [{name, kind,
   i_base, cooled, tau, heat_k, v_sensitive}]}`. `DELETE /cells/<cell>` (not for base cells).
   `GET /cells`. `GET /domains` returns
@@ -320,18 +351,35 @@ Every POST, PUT, and DELETE below goes through the existing operator gate and th
 - `POST /api/fleet/plcs/<name>/run` and `/stop`.
 - `DELETE /api/fleet/plcs/<name>`: not for `managed: static`. Delete the objects, the cell, and
   the tag server registration.
-- `GET /api/actions` returns `{"proposals": [...], "active": [...]}`. A proposal exists only when
-  all of these are true: a root cause exists, the root has an edge with evidence, an enrolled PLC
-  controls the root machine, its DERATE_PCT tag is GOOD, and the value is 100. Shape:
-  `{id, verb: "derate", asset, plc, tag, from: 100, to: DERATE_TARGET_PCT, cites: {root, edge,
-  evidence, confidence, signal}, expected}`. The `id` is a hash of the verb, asset, root, and
-  edge, so it changes when the verdict changes.
+- `GET /api/actions` returns `{"proposals": [...], "active": [...]}`. Every proposal needs: an
+  enrolled PLC controls the machine, its DERATE_PCT tag is GOOD at 100, no integrity finding blocks
+  the channel, and the machine is not tripped (LOG-091). Two sources give proposals:
+  - `reason: "root"`: a root cause exists, the root has an edge with evidence, and the root draws
+    more than 15 % above its normal current (its median `plant_current_draw_amps` over the last
+    hour, cached 60 s). After a reset the verdict lags the plant, and this keeps a stale derate off
+    the console. With no normal known, the current check is skipped.
+    `cites: {root, edge, evidence, confidence, signal}`. The `id` is a hash of the verb, asset, root,
+    and edge, so it changes when the verdict changes.
+  - `reason: "forecast"`: a trip card is open on a machine that VISR can control, the earliest trip
+    first. `cites: {forecast, eta_s, value, limit, evidence: ["forecast"], signal}`. The `id` hashes
+    the verb, the asset, and "forecast", so it holds while the card counts down.
+
+  Shape: `{id, verb: "derate", asset, plc, tag, from: 100, to: DERATE_TARGET_PCT, reason, cites,
+  expected}`.
 - `POST /api/actions/execute` body `{id}`: re-derive the proposals from the current verdict.
   An unknown `id` answers 409 "the verdict changed, review again" (cite or die). Else write the
   tag through the tag server, audit verb `execute` with the citation, and after
   `RELIEF_CHECK_S` audit verb `relief` with `{asset, rail, volts_before, volts_after, amps_before,
   amps_after}` from `/api/plant`.
 - `POST /api/actions/restore` body `{asset}`: write DERATE_PCT back to 100, audit `restore`.
+- `GET /api/actions` also returns `advice` (LOG-093, `api/advice.py`): the advisory suggestions for the open
+  incident, `{verb, target, text, why, executable: false}`. The verbs: stop, isolate, restart, inspect, hold.
+- `GET /api/incident` (LOG-092, `api/incident.py`): `{active, recent}`. `active` has `id`, `status` (active,
+  recovering), `origin` and `driver` (`asset`, `reason`, `facts`, `evidence`), `chain`, `victims`, `tripped`,
+  `cards`, `integrity`, `blind`, `phases` (`n`, `ts`, `kind`, `text`), and `tag` (the last phase number). A
+  background pass every `INCIDENT_S` (5 s) feeds it. `INCIDENT_HOLD_S` (15) and `INCIDENT_CALM_S` (30).
+- `GET /api/narrative` (LOG-093): `{text, sections, source (steady, template, llm, mixed), model, incident, tag,
+  status}`, locked to (incident, tag). `GET /api/ask?q=` (LOG-093, `api/agent.py`): `{answer, tools, source}`.
 - Narrator: the prompt and the template add the controller name, and the last executed action
   when it is newer than the verdict.
 
@@ -353,6 +401,8 @@ Every POST, PUT, and DELETE below goes through the existing operator gate and th
 
 ## 11. Dashboard (`dashboard/app/`)
 
+- LOG-103: Assets and Selected grade throughput and the derate badge against the machine's learned band
+  (`thru_band`, SCENARIOS.md 7). Selected shows the learned range under the throughput value.
 - New **Fleet** section after Machines. One card per PLC: name, "virtual" badge, profile label,
   protocol and port, task title and short hash, state, scan time, SCADA RTT, tag quality
   count, cell machines, and the six onboarding phases with real times and elapsed seconds.
@@ -373,11 +423,19 @@ Every POST, PUT, and DELETE below goes through the existing operator gate and th
 
 - `deploy/fleet.yaml`: Namespace `fleet`. A Role in `fleet` for `apps/deployments`, `services`,
   `configmaps`, `secrets` (get, list, create, patch, delete) and `pods` (get, list). A
-  RoleBinding to ServiceAccount `api` in `aiops`. The base PLC `plc-stamping`
-  (`siemens-s7-1200`, task `stamping-line`, `visr/managed: static`) with its Service. A
-  ServiceMonitor for the tag server path `/metrics/fleet`.
-- Secret `visr-fleet` in `aiops` and `plant` (keys `enroll-key`, `scada-write-token`), and Secret
-  `plc-stamping-token` in `fleet`. `PIVOT_SETUP.md` carries the paste block.
+  RoleBinding to ServiceAccount `api` in `aiops`. Four static base PLCs (`visr/managed: static`), each
+  with its Service: `plc-stamping` (`siemens-s7-1200`, task `stamping-line`), and since LOG-100
+  `plc-utilities` (`siemens-s7-1200`, task `utilities`), `plc-machining` (`generic-iec`, task
+  `machining`), and `plc-furnace` (`generic-iec`, task `furnace`). A ServiceMonitor for the tag server
+  path `/metrics/fleet`.
+- Every object in `deploy/fleet.yaml` needs its own `---` line. Without it, kubectl merges two objects
+  into one with no error, and the later keys win. On 2026-09-26 that removed the `plc-utilities` and
+  `plc-machining` Services (LOG-101). `deploy/golive.sh` now stops before any apply when a manifest parses
+  to fewer objects than it has `kind:` lines.
+- Secret `visr-fleet` in `aiops` and `plant` (keys `enroll-key`, `scada-write-token`), and one Secret
+  `<plc>-token` in `fleet` per static PLC. `deploy/plc-tokens.sh` makes the missing ones (the HMAC of the
+  PLC name with the enroll key), and `deploy/golive.sh` runs it in its preflight. `PIVOT_SETUP.md`
+  carries the paste block for `plc-stamping`.
 - ConfigMap `vplc-tasks` in `aiops`, from `vplc/tasks/`, created by `skctl up --components engine`.
 - `Makefile` and `PIVOT_SETUP.md` step 4 build and import `skn/vplc:v0.1`.
 

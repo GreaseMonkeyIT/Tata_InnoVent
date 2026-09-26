@@ -12,7 +12,7 @@ from . import detectors
 from .common_mode import apply_common_mode
 from .gate import R_ADJ, SOURCE_COUPLING_KINDS, TEMPORAL_TOL_S, Witness, accept_edge
 from .lagcorr import adjacent_support, best_directed, lag_profile
-from .ranking import blast_radius, build_graph, rank_root_causes
+from .ranking import blast_radius, build_graph, rank_root_causes, votes
 
 DT_S = detectors.DT_S
 R_SRC = 0.5  # cross-signal write->stall correlation floor (psi-psi uses gate.R_PEAK = 0.6)
@@ -233,7 +233,7 @@ def run_pass(
             window_s=common_mode.get("window_s", 15.0),
             kind=common_mode.get("kind", "rail"))
 
-    g = build_graph(edges)
+    g = build_graph([e for e in edges if votes(e)])     # a bare rail/loop edge renders, never votes
     seeds = slo_breach or sorted(active)
     ranking = rank_root_causes(g, seeds, onset_s)
     blast = blast_radius(g, ranking[0]["pod"]) if ranking else []

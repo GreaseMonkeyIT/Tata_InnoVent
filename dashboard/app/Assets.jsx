@@ -1,7 +1,7 @@
 "use client";
 import Glyph from "./Glyph";
 import Spark from "./Spark";
-import { railSt, machSt, flowSt, tempSt, thruSt, ST_COLOR } from "./lib/palette";
+import { railSt, machSt, flowSt, tempSt, thruSt, lowEdge, ST_COLOR } from "./lib/palette";
 
 // Assets outliner: every machine, grouped by the shared medium that carries the causal story
 // (rail, coolant loop). One compact row per machine. The full trends and the SCADA tags of a
@@ -28,7 +28,9 @@ function Row({ name, d, trip, hist, sel, role, onSelect }) {
   const glyph = d.tripped ? "trip" : role || st;
   const amps = hist(`m/${name}/a`);
   const ampsHi = Math.max(...(amps.length ? amps : [d.amps]), d.amps) * 1.2;
-  const derated = d.controller && d.speed_pct != null && d.speed_pct < 99;
+  // LOG-103: a drive under the machine's learned low edge (a derate, a hold, a stop). compressor-1 idles
+  // unloaded at 25 % in normal duty, which its learned band covers.
+  const derated = d.controller && d.speed_pct != null && d.speed_pct < lowEdge(d) - 1;
   const temp = d.tripped ? "OPEN" : d.cooled && d.temp != null ? <>{d.temp.toFixed(1)}<small>°C</small></> : <span className="nil">·</span>;
   const roleText = role === "hot" ? " · root cause" : role === "strained" ? " · blast radius" : "";
   return (
@@ -42,7 +44,7 @@ function Row({ name, d, trip, hist, sel, role, onSelect }) {
       <span className="v">{d.amps.toFixed(1)}<small>A</small></span>
       <span className="sp"><Spark hist={amps} lo={0} hi={ampsHi} color={ST_COLOR[st === "trip" ? "hot" : st]} w={46} h={16} /></span>
       <span className="v" style={{ color: d.tripped ? "var(--red)" : d.cooled && d.temp != null ? ink(tempSt(d.temp, trip)) : undefined }}>{temp}</span>
-      <span className="v" style={{ color: ink(thruSt(d.throughput)) }}>{Math.round(d.throughput)}<small>%</small></span>
+      <span className="v" style={{ color: ink(thruSt(d.throughput, d)) }}>{Math.round(d.throughput)}<small>%</small></span>
     </button>
   );
 }
@@ -50,7 +52,7 @@ function Row({ name, d, trip, hist, sel, role, onSelect }) {
 export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
   if (!plant) return <div className="empty">waiting for plant telemetry…</div>;
   if (plant.source === "unavailable" || !plant.devices) return <div className="empty">plant sim unreachable</div>;
-  const trip = plant.trip_c ?? 78;
+  const trip = plant.trip_c ?? 80;   // LOG-100: each machine has its own trip (d.trip_c)
   const devs = Object.entries(plant.devices);
   const loop = plant.loop;
   const lst = flowSt(loop);
@@ -70,7 +72,7 @@ export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
             </button>
             {r.amps != null && <div className="as-loopnote">feeder {r.amps.toFixed(1)} A</div>}
             {devs.filter(([, d]) => d.rail === rn).map(([dn, d]) => (
-              <Row key={dn} name={dn} d={d} trip={trip} hist={hist} sel={sel === dn} role={statusOf(dn)} onSelect={onSelect} />
+              <Row key={dn} name={dn} d={d} trip={d.trip_c ?? trip} hist={hist} sel={sel === dn} role={statusOf(dn)} onSelect={onSelect} />
             ))}
           </div>
         );

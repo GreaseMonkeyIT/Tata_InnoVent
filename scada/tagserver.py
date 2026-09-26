@@ -6,7 +6,7 @@ physics (plant-sim) → OpenPLC (%MW words / trip coils, real Modbus TCP) → TH
   · /metrics (identical series names/labels to plant-sim's exposition → the aggregator repoint
     at cutover is ONE queries.yaml-URL-shaped swap: apply the scada ServiceMonitor, delete the
     plant-sim one; the sim's /metrics stays as an unscraped debug tap)
-  · /tags (the UI's tag browser: values + quality + addresses + historian rate)
+  · /tags (the UI's tag browser: values + quality + addresses + historian rate + started_at, LOG-099)
 
 Honesty rules: the base plant path READS ONLY (FC03 holding block + FC01 coils — it never writes
 the PLC; the sim is the field wiring, the trip program is the authority). A failed poll ages
@@ -53,11 +53,27 @@ PLC_PORT = int(os.environ.get("PLC_PORT", "502"))
 MW_BASE = int(os.environ.get("PLC_MW_BASE", "1024"))
 POLL_S = float(os.environ.get("POLL_S", "1.0"))
 STALE_S = float(os.environ.get("STALE_S", "10"))
+FIELD_FROZEN_S = float(os.environ.get("FIELD_FROZEN_S", "10"))   # LOG-094: frozen field inputs read STALE
 BAD_S = float(os.environ.get("BAD_S", "30"))
 PORT = int(os.environ.get("PORT", "9300"))
 DSN = os.environ.get("HISTORIAN_DSN", "host=historian-db.plant.svc dbname=postgres user=postgres")
-ENROLL_KEY = os.environ.get("FLEET_ENROLL_KEY", "")
-WRITE_TOKEN = os.environ.get("SCADA_WRITE_TOKEN", "")
+def _secret(name: str, default: str = "") -> str:
+    """A secret from the file named by NAME_FILE (a mounted Secret, LOG-095), else from NAME. A file
+    that cannot be read gives the default, so a missing optional Secret fails closed."""
+    path = os.environ.get(name + "_FILE")
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return default
+    return os.environ.get(name, default)
+
+
+ENROLL_KEY = _secret("FLEET_ENROLL_KEY")
+WRITE_TOKEN = _secret("SCADA_WRITE_TOKEN")
+if os.environ.get("PGPASSWORD_FILE") and not os.environ.get("PGPASSWORD"):
+    os.environ["PGPASSWORD"] = _secret("PGPASSWORD")   # libpq reads PGPASSWORD, not a file
 FLEET_POLL_S = float(os.environ.get("FLEET_POLL_S", "1.0"))
 MAX_BODY = 256 * 1024
 
@@ -77,6 +93,9 @@ STATE = {
     "last_good_ts": None,
     "historian": {"connected": False, "rows_total": 0, "rows_per_s": 0.0},
 }
+# LOG-099: /tags reports the process start, so a client tells a restart from a short gap. In the B6
+# watch the Scenario 6 kill and restart fell between two 5 s api passes and left no blind sign.
+STARTED_AT = time.time()
 TABLE = tags.tag_table()
 BY_TAG = {r["tag"]: r for r in TABLE}
 
@@ -104,7 +123,9 @@ def poll_loop():
                 STATE["tags"] = fresh
                 STATE["plc_connected"] = True
                 STATE["last_good_ts"] = now
-            _historian_write(fresh)
+            # LOG-099: through the historian queue, like the fleet polls. A direct write waited on the DB
+            # (and on the fleet writer's lock), and a slow historian aged all 41 tags to STALE for 10 s.
+            _fleet_history(fresh)
         except Exception as e:
             # keep the last map; requality() ages it honestly on every read-out
             with _lock:
@@ -121,7 +142,7 @@ def poll_loop():
 
 # ---------------------------------------------------------------- historian --
 _DB = {"conn": None, "win_rows": 0, "win_t0": time.time()}
-_db_lock = threading.Lock()     # the base poll and the fleet writer share one connection
+_db_lock = threading.Lock()     # one connection. Only the history writer thread uses it (LOG-099)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS plant_tags (
@@ -132,6 +153,10 @@ CREATE TABLE IF NOT EXISTS plant_tags (
 );
 SELECT create_hypertable('plant_tags', 'ts', if_not_exists => TRUE);
 """
+# LOG-095: the historian keeps HISTORIAN_RETENTION of history (default 30 days), the same window as
+# Prometheus (LOG-088). A TimescaleDB job drops older chunks. Without it plant_tags grew with no limit.
+HISTORIAN_RETENTION = os.environ.get("HISTORIAN_RETENTION", "30 days")
+RETENTION_SQL = "SELECT add_retention_policy('plant_tags', INTERVAL %s, if_not_exists => TRUE);"
 
 
 def _historian_write(fresh: dict):
@@ -147,6 +172,10 @@ def _historian_write(fresh: dict):
                 with _DB["conn"].cursor() as c:
                     try:
                         c.execute(_DDL)
+                        try:                                     # LOG-095: drop chunks past the window
+                            c.execute(RETENTION_SQL, (HISTORIAN_RETENTION,))
+                        except Exception as e:
+                            print(f"tagserver: historian retention not set ({e})", flush=True)
                     except Exception:
                         c.execute(_DDL.split(";")[0])            # no timescale ext -> plain table
             rows = [(rec["ts"], tag, rec["value"], rec["quality"]) for tag, rec in fresh.items()]
@@ -182,8 +211,8 @@ _HIST_DROPPED = {"batches": 0}
 
 
 def _fleet_history(fresh: dict):
-    """Queue one fleet poll for the historian. When the queue is full, drop the oldest batch
-    and count it. The poll thread never waits for the database."""
+    """Queue one poll (a fleet PLC or the base plant poll) for the historian. When the queue is
+    full, drop the oldest batch and count it. A poll thread never waits for the database."""
     try:
         _HIST_Q.put_nowait(fresh)
         return
@@ -195,7 +224,7 @@ def _fleet_history(fresh: dict):
         pass
     _HIST_DROPPED["batches"] += 1
     if _HIST_DROPPED["batches"] in (1, 10) or _HIST_DROPPED["batches"] % 100 == 0:
-        print(f"tagserver: fleet historian queue full, dropped {_HIST_DROPPED['batches']} "
+        print(f"tagserver: historian queue full, dropped {_HIST_DROPPED['batches']} "
               f"batches so far", flush=True)
     try:
         _HIST_Q.put_nowait(fresh)
@@ -204,10 +233,9 @@ def _fleet_history(fresh: dict):
 
 
 def fleet_history_step(backoff_s: float = 5.0, timeout: float | None = None) -> bool:
-    """Write one queued fleet batch to plant_tags. Return False when the queue stayed empty.
-
-    After a failed write, wait backoff_s before the next try, so the base poll does not wait
-    on the DB lock behind a dead connection. Queued rows keep their read timestamps."""
+    """Write one queued batch (fleet or base poll) to plant_tags. Return False when the queue stayed
+    empty. After a failed write, wait backoff_s before the next try, so a dead connection is not
+    hammered. Queued rows keep their read timestamps."""
     try:
         batch = _HIST_Q.get(timeout=timeout)
     except queue.Empty:
@@ -236,16 +264,23 @@ def _fleet_poll(entry: dict):
             image = drv.read_image()
             now = time.time()
             fresh = fleet.decode(table, image, now)
+            # PR #1 follow-ups (LOG-094): a slot the vendor map does not list has no reading, so its
+            # tag gets no record and reads BAD, never a GOOD zero. A value clamped to INT16 is named.
+            mapped = getattr(getattr(drv, "map", None), "mapped_slots", None)
+            if mapped is not None:
+                fresh = fleet.only_mapped(table, fresh, mapped)
             if stop.is_set():
                 break
             with _fleet_lock:
                 entry["tags"] = fresh
+                fleet.track_field(entry.setdefault("field_changes", {}), fresh, now)
                 entry["connected"] = True
                 entry["last_good_at"] = now
                 if entry["first_good_at"] is None:
                     entry["first_good_at"] = now
                 entry["poll_rtt_ms"] = round(drv.last_rtt_ms, 3) if drv.last_rtt_ms is not None else None
                 entry["poll_error"] = None
+                entry["clamped"] = list(getattr(drv, "last_clamped", []) or [])
             _fleet_history(fresh)
             if ok is not True:
                 print(f"tagserver: fleet {name} polling ({entry['reg']['protocol']['kind']} "
@@ -293,7 +328,7 @@ def fleet_enroll(body, token: str | None, now: float | None = None) -> tuple[int
             return 400, {"enrolled": False, "error": str(e)}
         entry = {
             "reg": reg, "table": table, "key": key, "driver": driver,
-            "stop": threading.Event(), "thread": None, "tags": {},
+            "stop": threading.Event(), "thread": None, "tags": {}, "field_changes": {},
             "enrolled_at": now, "last_enroll_at": now, "first_good_at": None,
             "last_good_at": None, "poll_rtt_ms": None, "connected": False, "poll_error": None,
         }
@@ -372,11 +407,13 @@ def _fleet_snapshots() -> list[dict]:
         entries = list(FLEET.values())
         return [{
             "reg": e["reg"], "table": e["table"],
-            "aged": fleet.requality(e["tags"], now, STALE_S, BAD_S),
+            "aged": fleet.mark_field_stale(fleet.requality(e["tags"], now, STALE_S, BAD_S), e["table"],
+                                           fleet.field_frozen_for(e.get("field_changes") or {}, now),
+                                           FIELD_FROZEN_S),
             "enrolled_at": e["enrolled_at"], "last_enroll_at": e["last_enroll_at"],
             "first_good_at": e["first_good_at"], "last_good_at": e["last_good_at"],
             "poll_rtt_ms": e["poll_rtt_ms"], "connected": e["connected"],
-            "poll_error": e["poll_error"],
+            "poll_error": e["poll_error"], "clamped": e.get("clamped") or [],
         } for e in entries]
 
 
@@ -535,6 +572,7 @@ class H(BaseHTTPRequestHandler):
                 })
             return self._send(200, json.dumps({
                 "source": "scada", "plc_connected": plc, "historian": hist, "tags": rows,
+                "started_at": STARTED_AT,
             }), "application/json")
         if self.path == "/healthz":
             return self._send(200, "ok\n")
@@ -595,4 +633,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

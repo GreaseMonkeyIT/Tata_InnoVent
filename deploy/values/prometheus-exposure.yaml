@@ -1,0 +1,10 @@
+# LOG-095: close the Grafana and Prometheus NodePorts (30030, 30090) on the live release.
+# Neither has a login of its own. The console proxies Grafana at /grafana/ behind TLS and the login,
+# and the box scripts reach both by ClusterIP. deploy/prometheus-storage.sh applies this overlay with
+# the storage overlay (helm upgrade --reuse-values), and deploy/skctl gets the same from values/prometheus.yaml.
+grafana:
+  service:
+    type: ClusterIP
+prometheus:
+  service:
+    type: ClusterIP

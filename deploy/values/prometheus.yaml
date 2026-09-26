@@ -5,8 +5,7 @@ grafana:
   image:
     tag: "11.3.0"
   service:
-    type: NodePort
-    nodePort: 30030              # direct at <node-ip>:30030 — each component is tested individually before any embed
+    type: ClusterIP              # LOG-095: the console proxies Grafana at /grafana/ (TLS and the login); no NodePort
   sidecar:
     datasources:
       label: grafana_datasource_skn   # load ONLY this stack's datasources; ignores loki-stack's default-Loki configmap (the two-defaults crashloop). Provision Loki here as non-default when we wire the logs panel.
@@ -24,8 +23,7 @@ grafana:
 alertmanager: { enabled: true }
 prometheus:
   service:
-    type: NodePort
-    nodePort: 30090             # direct PromQL + scrape targets at <node-ip>:30090
+    type: ClusterIP             # LOG-095: box scripts use the ClusterIP; no unauthenticated NodePort
   prometheusSpec:
     retention: 12h              # overridden by values/prometheus-storage.yaml (30d)
     scrapeInterval: 15s

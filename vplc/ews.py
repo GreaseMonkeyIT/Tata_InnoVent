@@ -39,7 +39,20 @@ DB = int(os.environ.get("EWS_DB", "1"))
 BYTE = int(os.environ.get("EWS_BYTE", "292"))
 VALUE = int(os.environ.get("EWS_VALUE", "30"))
 RACK, SLOT = 0, 1
-WRITE_TOKEN = os.environ.get("SCADA_WRITE_TOKEN", "")
+def _secret(name: str, default: str = "") -> str:
+    """A secret from the file named by NAME_FILE (a mounted Secret, LOG-095), else from NAME. A file
+    that cannot be read gives the default, so a missing optional Secret fails closed."""
+    path = os.environ.get(name + "_FILE")
+    if path:
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return default
+    return os.environ.get(name, default)
+
+
+WRITE_TOKEN = _secret("SCADA_WRITE_TOKEN")
 MAX_BODY = 64 * 1024
 
 _lock = threading.Lock()

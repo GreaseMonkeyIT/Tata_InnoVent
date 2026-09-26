@@ -41,8 +41,14 @@ def test_objects_follow_the_profile_ports_and_carry_the_token():
     dep = objs["deployments"]
     assert dep["metadata"]["labels"]["visr/managed"] == "ui"
     assert dep["metadata"]["annotations"]["visr/requested-at"] == "1758000000.000"
-    env = {e["name"]: e for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]}
-    assert env["TASK_DIR"]["value"] == "/task" and "secretKeyRef" in env["DEVICE_TOKEN"]["valueFrom"]
+    pod = dep["spec"]["template"]["spec"]
+    env = {e["name"]: e for e in pod["containers"][0]["env"]}
+    # LOG-095: the token arrives as a file from the Secret, and the pod runs non-root with no capabilities
+    assert env["TASK_DIR"]["value"] == "/task" and env["DEVICE_TOKEN_FILE"]["value"] == "/run/secrets/device/token"
+    assert {"name": "device", "secret": {"secretName": "plc-pack-token"}} in pod["volumes"]
+    assert pod["securityContext"]["runAsNonRoot"] is True and pod["automountServiceAccountToken"] is False
+    assert pod["securityContext"]["sysctls"] == [{"name": "net.ipv4.ip_unprivileged_port_start", "value": "0"}]
+    assert pod["containers"][0]["securityContext"]["capabilities"] == {"drop": ["ALL"]}
 
 
 def test_sim_cell_body_matches_the_contract():
@@ -128,3 +134,74 @@ def test_active_derates_and_snapshot():
     assert fleet.active_derates(_scada(value=55))[0]["value"] == 55
     assert fleet.active_derates(_scada()) == []
     assert fleet.plant_snapshot(PLANT, "press-1") == {"asset": "press-1", "rail": "psu-a", "volts": 345.0, "amps": 80.0}
+
+
+def test_no_proposal_for_a_tripped_machine():
+    """LOG-091, Scenario 1 on forge: the derate stayed on offer after press-1 had tripped."""
+    tripped = {**PLANT, "devices": {"press-1": {"rail": "psu-a", "amps": 0.2, "tripped": True}}}
+    assert fleet.proposals(GRAPH, _scada(), tripped, 55) == []
+
+
+def test_root_derate_needs_current_above_normal():
+    """LOG-091, Scenario 4B on forge: after the reset the verdict still named press-1 for ~40 s, and a
+    derate appeared for a press that was back at its normal 43 A."""
+    assert len(fleet.proposals(GRAPH, _scada(), PLANT, 55, normal_amps={"press-1": 43.0})) == 1   # 80 A
+    back = {**PLANT, "devices": {"press-1": {"rail": "psu-a", "amps": 43.1}}}
+    assert fleet.proposals(GRAPH, _scada(), back, 55, normal_amps={"press-1": 43.0}) == []
+    assert len(fleet.proposals(GRAPH, _scada(), back, 55)) == 1          # no normal known: the old rule
+
+
+def _two_press_scada():
+    s = _scada()
+    s[0]["tags"].append({"tag": "FLEET.PLC_STAMPING.PRESS_2.DERATE_PCT", "asset": "press-2",
+                         "signal": "DERATE_PCT", "value": 100, "quality": "GOOD"})
+    return s
+
+
+def test_trip_card_on_a_controllable_machine_proposes_a_derate():
+    """LOG-091, Scenario 5 on forge: three machines tripped and nothing was proposed, although
+    press-1 and press-2 sit on the stamping PLC."""
+    g = {"root": [{"pod": "chiller-1", "score": 0.6}],
+         "edges": [{"src": "chiller-1", "dst": "press-1", "r": 0.9, "evidence": ["write", "loop"]}],
+         "incipient": [{"pod": "press-2", "class": "trip", "eta_s": 90.0, "value": 71.0, "limit": 78.0,
+                        "signal": "coolant_temp"},
+                       {"pod": "press-1", "class": "trip", "eta_s": 40.0, "value": 74.0, "limit": 78.0,
+                        "signal": "coolant_temp"},
+                       {"pod": "furnace-1", "class": "trip", "eta_s": 20.0, "value": 76.0, "limit": 78.0},
+                       {"pod": "tag-server", "class": "leak", "eta_s": 30.0}]}
+    plant = {"devices": {"press-1": {"rail": "psu-a", "amps": 43.0}, "press-2": {"rail": "psu-a", "amps": 39.0},
+                         "furnace-1": {"rail": "psu-b", "amps": 30.0}}}
+    props = fleet.proposals(g, _two_press_scada(), plant, 55)
+    assert [(p["asset"], p["reason"]) for p in props] == [("press-1", "forecast"), ("press-2", "forecast")]
+    assert props[0]["cites"]["eta_s"] == 40.0 and "78" in props[0]["expected"]
+    first = props[0]["id"]                             # the id holds while the card counts down
+    g["incipient"][1]["eta_s"] = 25.0
+    assert fleet.proposals(g, _two_press_scada(), plant, 55)[0]["id"] == first
+    plant["devices"]["press-1"]["tripped"] = True      # tripped: no longer a candidate
+    assert [p["asset"] for p in fleet.proposals(g, _two_press_scada(), plant, 55)] == ["press-2"]
+    assert [p["asset"] for p in fleet.proposals(g, _two_press_scada(), plant, 55, {"press-2"})] == []
+
+
+def _utilities(value=100):
+    return [{"name": "plc-utilities", "profile": "siemens-s7-1200", "connected": True,
+             "cell": {"name": "utilities", "machines": ["compressor-1", "chiller-1"]},
+             "tags": [{"tag": "FLEET.PLC_UTILITIES.COMPRESSOR_1.DERATE_PCT", "asset": "compressor-1",
+                       "signal": "DERATE_PCT", "value": value, "quality": "GOOD"},
+                      {"tag": "FLEET.PLC_UTILITIES.CHILLER_1.DERATE_PCT", "asset": "chiller-1",
+                       "signal": "DERATE_PCT", "value": value, "quality": "GOOD"}]}]
+
+
+def test_the_compressor_root_proposal_is_a_stop_and_the_chiller_gets_none():
+    """LOG-100: the compressor's DERATE_PCT is its run command, so the root action is a stop (0).
+    A chiller is never an action target: less cooling only makes the loop hotter."""
+    plant = {"devices": {"compressor-1": {"rail": "psu-b", "amps": 55.0}, "chiller-1": {"rail": "psu-b", "amps": 30.0}}}
+    g = {"root": [{"pod": "compressor-1"}],
+         "edges": [{"src": "compressor-1", "dst": "furnace-1", "r": 0.8, "evidence": ["write", "loop", "temporal"]}]}
+    [p] = fleet.proposals(g, _utilities(), plant, 55, normal_amps={"compressor-1": 13.8})
+    assert (p["verb"], p["asset"], p["to"], p["plc"]) == ("stop", "compressor-1", 0, "plc-utilities")
+    assert p["expected"].startswith("compressor-1 stops: its heat leaves the loop")
+    g_ch = {"root": [{"pod": "chiller-1"}],
+            "edges": [{"src": "chiller-1", "dst": "furnace-1", "r": 0.8, "evidence": ["write", "loop"]}]}
+    assert fleet.proposals(g_ch, _utilities(), plant, 55) == []
+    cards = {"root": [], "edges": [], "incipient": [{"pod": "compressor-1", "class": "trip", "eta_s": 60.0}]}
+    assert fleet.proposals(cards, _utilities(), plant, 55) == []

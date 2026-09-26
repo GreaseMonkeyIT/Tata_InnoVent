@@ -29,7 +29,7 @@ DIR=/mnt/slowdisk/prometheus
 PV=prometheus-pv-slowdisk
 PVC=prometheus-prom-kube-prometheus-stack-prometheus-db-prometheus-prom-kube-prometheus-stack-prometheus-0
 STS=prometheus-prom-kube-prometheus-stack-prometheus
-PROM=http://127.0.0.1:30090
+PROM=http://$(kubectl -n observability get svc prom-kube-prometheus-stack-prometheus -o jsonpath='{.spec.clusterIP}'):9090   # LOG-095
 NEED_GB=160
 step() { echo; echo "== $(date +%H:%M:%S) $*"; }
 pass() { echo "PASS $1"; }
@@ -80,18 +80,18 @@ check() {
   else
     info "$DIR does not exist yet. apply makes it with sudo."
   fi
-  info "apply runs: helm upgrade $REL $CHART --version $VER --reuse-values -f deploy/values/prometheus-storage.yaml"
+  info "apply runs: helm upgrade $REL $CHART --version $VER --reuse-values -f deploy/values/prometheus-storage.yaml -f deploy/values/prometheus-exposure.yaml"
 }
 
 grafana_path() {   # Grafana must answer on /grafana/ (the console proxies it there)
   local code
-  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' http://127.0.0.1:30030/grafana/api/health)
+  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' http://$(kubectl -n observability get svc prom-grafana -o jsonpath='{.spec.clusterIP}')/grafana/api/health)
   if [ "$code" = 200 ]; then pass "Grafana answers on /grafana/"; return 0; fi
   info "Grafana answers $code on /grafana/. Setting the sub-path again (PIVOT_SETUP 5.2b)."
   kubectl -n "$NS" set env deploy/prom-grafana -c grafana \
     GF_SERVER_ROOT_URL='%(protocol)s://%(domain)s:%(http_port)s/grafana/' GF_SERVER_SERVE_FROM_SUB_PATH=true
   kubectl -n "$NS" rollout status deploy/prom-grafana --timeout=180s
-  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' http://127.0.0.1:30030/grafana/api/health)
+  code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' http://$(kubectl -n observability get svc prom-grafana -o jsonpath='{.spec.clusterIP}')/grafana/api/health)
   [ "$code" = 200 ] && pass "Grafana answers on /grafana/" || echo "FAIL Grafana answers $code on /grafana/"
 }
 
@@ -142,7 +142,7 @@ apply() {
   sed "s/<NODE_NAME>/$NODE/g" deploy/slowdisk.yaml | kubectl apply -f - || die "kubectl apply of deploy/slowdisk.yaml failed"
   step "helm upgrade $REL (chart $VER, revision $before, --reuse-values + the storage overlay)"
   if ! helm -n "$NS" upgrade "$REL" "$CHART" --version "$VER" --reuse-values \
-       -f deploy/values/prometheus-storage.yaml --wait --timeout 10m; then
+       -f deploy/values/prometheus-storage.yaml -f deploy/values/prometheus-exposure.yaml --wait --timeout 10m; then
     echo "FAIL helm upgrade"
     rollback "$before"
   fi

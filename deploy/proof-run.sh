@@ -25,7 +25,7 @@
 # kinds, loop hops, tripped machines). A check that fails saves its last graph as <id>_graph_timeout.json.
 set -uo pipefail
 export KUBECONFIG="$HOME/.kube/config"
-API=${API:-http://127.0.0.1:30088}
+API=${API:-http://$(kubectl -n aiops get svc api -o jsonpath='{.spec.clusterIP}'):8088}   # LOG-095: the ClusterIP (no NodePort)
 WATCH_LOG=${WATCH_LOG:-/var/tmp/visr-ps0-soak.log}
 OUT=${OUT:-/var/tmp/visr-proof-$(date +%Y%m%d-%H%M%S)}
 FORCE=${FORCE:-0}
@@ -51,7 +51,7 @@ VISR_TOKEN=$(kubectl -n aiops get secret visr-auth -o jsonpath='{.data.operator-
 export VISR_TOKEN API OUT
 
 python3 - <<'PY'
-import json, os, time, urllib.error, urllib.request
+import json, os, subprocess, time, urllib.error, urllib.request
 
 API, OUT, TOKEN = os.environ["API"], os.environ["OUT"], os.environ["VISR_TOKEN"]
 T0 = time.time()
@@ -145,8 +145,41 @@ def snap(t0, g=None):
             "incipient": [[i.get("pod"), i.get("eta_s")] for i in g.get("incipient") or []],
             "integrity": [x.get("kind") for x in g.get("integrity") or []],
             "loop_hops": sorted({e.get("dst") for e in g.get("edges") or []
-                                 if e.get("src") == "chiller-1" and "loop" in (e.get("evidence") or [])}),
-            "tripped": sorted(n for n, d in devs.items() if d.get("tripped"))}
+                                 if e.get("src") in ("compressor-1", "chiller-1") and "loop" in (e.get("evidence") or [])}),
+            "tripped": sorted(n for n, d in devs.items() if d.get("tripped")),
+            **incident_row()}
+
+
+def incident_row():
+    """LOG-096: what the incident record and the narrator show now (LOG-092, LOG-093)."""
+    inc = (call("GET", "/api/incident", auth=False)[1] or {}).get("active") or {}
+    n = call("GET", "/api/narrative", auth=False, timeout=20)[1] or {}
+    return {"inc_status": inc.get("status"), "inc_origin": (inc.get("origin") or {}).get("asset"),
+            "inc_driver": (inc.get("driver") or {}).get("asset"), "narr_tag": n.get("tag"),
+            "narr_source": n.get("source"), "narr_text": (n.get("text") or "")[:240]}
+
+
+HOLD_S = float(os.environ.get("PROOF_HOLD_S", "120"))
+
+
+def behavior(rows, expect=None):
+    """LOG-096: after the first hit, how the verdict behaved while the fault stayed on."""
+    roots = [r["root"] for r in rows]
+    changes = sum(1 for a, b in zip(roots, roots[1:]) if a != b)
+    tripped_ever = {m for r in rows for m in r["tripped"]}
+    carded = {i[0] for r in rows for i in r["incipient"]}
+    return {
+        "polls": len(rows),
+        "root_changes": changes,
+        "root_hold": round(sum(1 for x in roots if x == expect) / len(roots), 2) if expect and roots else None,
+        "roots_seen": sorted({x for x in roots if x}),
+        "cards_on_tripped_polls": sum(1 for r in rows for i in r["incipient"] if i[0] in r["tripped"]),
+        "cards_without_trip": sorted(carded - tripped_ever),
+        "narrator_texts": len({r["narr_text"] for r in rows if r.get("narr_text")}),
+        "narrator_tags": len({r["narr_tag"] for r in rows if r.get("narr_tag") is not None}),
+        "incident_origin": next((r["inc_origin"] for r in rows if r.get("inc_origin")), None),
+        "incident_drivers": sorted({r["inc_driver"] for r in rows if r.get("inc_driver")}),
+    }
 
 
 def wait_calm(label, timeout=480):
@@ -336,7 +369,7 @@ def settle(label, timeout=480):
     return s
 
 
-def fault_step(sid, detect, timeout, note):
+def fault_step(sid, detect, timeout, note, expect=None):
     """Fire sid, wait until detect(graph) returns evidence, save it, reset, and time the clear."""
     code, body = call("POST", "/api/scenarios/%s/trigger" % sid)
     t = time.time()
@@ -356,6 +389,15 @@ def fault_step(sid, detect, timeout, note):
         save("%s_graph_detected" % sid.lower(), graph())
         save("%s_plant_detected" % sid.lower(), plant())
         log("%s: %s after %s s" % (sid, note, secs))
+        after = []                              # LOG-096: keep the fault on and watch the verdict
+        end = time.time() + HOLD_S
+        while time.time() < end:
+            after.append(snap(t))
+            time.sleep(5)
+        timeline.extend(after)
+        save("%s_timeline" % sid.lower(), timeline)
+        step["behavior"] = behavior(after, expect)
+        log("%s behavior over %s s: %s" % (sid, HOLD_S, step["behavior"]))
     else:
         save("%s_graph_timeout" % sid.lower(), graph())
         log("%s: no %s within %s s" % (sid, note, timeout))
@@ -380,8 +422,11 @@ def root_is(pod):
 
 
 def ps2_chain(g):
+    # LOG-100: the compressor's heat reaches the cooled machines through the loop, directly or through
+    # chiller-1 at its capacity limit. Root compressor-1 AND a loop edge from either, in one poll.
     base = root_is("compressor-1")(g)
-    loop = [e for e in g.get("edges") or [] if e.get("src") == "chiller-1" and "loop" in (e.get("evidence") or [])]
+    loop = [e for e in g.get("edges") or [] if e.get("src") in ("compressor-1", "chiller-1")
+            and "loop" in (e.get("evidence") or [])]
     if base and loop:
         base["loop_hop"] = sorted({e["dst"] for e in loop})
         return base
@@ -406,9 +451,20 @@ def leak_card(g):
 
 
 settle("before the new faults")
-fault_step("PS2", ps2_chain, 420, "root compressor-1 with the loop hop through chiller-1")
-fault_step("PS3", root_is("hmi-gw"), 300, "root hmi-gw along segment field-1")
+fault_step("PS2", ps2_chain, 600, "root compressor-1 with the loop hop of its heat", "compressor-1")
+fault_step("PS3", root_is("hmi-gw"), 300, "root hmi-gw along segment field-1", "hmi-gw")
+# LOG-095: the test attacker runs only during Scenario 4A
+def ews(replicas):
+    subprocess.run(["kubectl", "-n", "plant", "scale", "deploy/rogue-ews", "--replicas=%d" % replicas],
+                   check=False, capture_output=True)
+    if replicas:
+        subprocess.run(["kubectl", "-n", "plant", "rollout", "status", "deploy/rogue-ews", "--timeout=120s"],
+                       check=False, capture_output=True)
+
+
+ews(1)
 fault_step("PS4A", integrity_kind("unsigned_write"), 150, "an unsigned_write finding")
+ews(0)
 fault_step("PS4B", integrity_kind("current_balance"), 150, "a current_balance finding")
 
 # PS6 ends with a real OOM kill of the tag server, so time each stage on its own
@@ -462,12 +518,22 @@ lines = ["# VISR proof run", "", "Started %s, %s s." % (summary["started"], summ
          "| PS5 card for that machine, lead time | %s s, %s s |" % (s["ps5"].get("first_trip", {}).get("card_s"),
                                                                   s["ps5"].get("lead_s")),
          "| PS5 cards on machines that did not trip | %s |" % s["ps5"].get("cards_without_trip"),
-         "| PS2 root compressor-1 with the loop hop | %s s |" % s.get("ps2", {}).get("detected_s"),
+         "| PS2 root compressor-1 with the loop hop of its heat | %s s |" % s.get("ps2", {}).get("detected_s"),
          "| PS3 root hmi-gw | %s s |" % s.get("ps3", {}).get("detected_s"),
          "| PS4A unsigned write found | %s s (%s) |" % (s.get("ps4a", {}).get("detected_s"), (s.get("ps4a", {}).get("evidence") or {}).get("clients")),
          "| PS4B current balance found | %s s (gap %s A) |" % (s.get("ps4b", {}).get("detected_s"), (s.get("ps4b", {}).get("evidence") or {}).get("gap_amps")),
          "| PS6 leak card, then blind | %s s, %s s |" % (s.get("ps6", {}).get("first_card_s"), s.get("ps6", {}).get("blind_after_s")),
          "| Audit chain intact | %s (%s rows) |" % (s["ledger"]["chain_ok"], s["ledger"]["count"])]
+lines += ["", "Behavior for %s s after the first hit (LOG-096):" % HOLD_S, "",
+          "| Step | root changes | root hold | cards on tripped polls | cards without a trip | narrator texts | incident origin, drivers |",
+          "|---|---|---|---|---|---|---|"]
+for k in ("ps2", "ps3", "ps4a", "ps4b"):
+    b = s.get(k, {}).get("behavior")
+    if b:
+        lines.append("| %s | %s | %s | %s | %s | %s | %s, %s |" % (
+            k.upper(), b["root_changes"], b["root_hold"], b["cards_on_tripped_polls"],
+            ", ".join(b["cards_without_trip"]) or "-", b["narrator_texts"], b["incident_origin"],
+            ", ".join(b["incident_drivers"]) or "-"))
 with open(os.path.join(OUT, "summary.md"), "w") as f:
     f.write("\n".join(lines) + "\n")
 print("\n".join(lines))

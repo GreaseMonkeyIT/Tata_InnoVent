@@ -36,7 +36,7 @@ closing the loop the demo narrates:
 plant-sim (physics)  --FC16 writes-->  %MW0..3  coolant-side temps ×10   (+ %MW20 reset word)
        ^                                        |
        |                              program.st, 100 ms scan:
-       |                              latch trip when temp ≥ 780 (78.0 °C)
+       |                              latch trip at its own limit: 800 (press, cnc) or 550 (furnace)
        |                              unlatch ONLY on reset AND cooled
        |                                        v
 plant-sim (contactors) <--FC01 reads--  coils %QX0.0..0.3 (trip press-1/press-2/cnc-1/furnace-1)
@@ -96,6 +96,6 @@ plant-sim (contactors) <--FC01 reads--  coils %QX0.0..0.3 (trip press-1/press-2/
   container. Its `deploy` mode rolls the image onto the pod and rolls back when the trip loop does
   not close. A PLC restart clears every latched trip, so the script refuses to run while a fault is
   active or a machine has a latched trip.
-- **Proof beat**: fire PS5 → temps ramp → forecast card → at 78 °C the coil latches, the floor
+- **Proof beat**: fire PS5 → temps ramp → forecast card → at the machine's own limit (80 °C press, 55 °C furnace coil water) the coil latches, the floor
   shows the machine dashed-red `OPEN`, amps drop to zero, the rail breathes again. Reset only
   works once it has cooled — by design.

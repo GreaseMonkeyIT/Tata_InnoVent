@@ -33,7 +33,19 @@ Two scripts do sections 4 to 7 for an existing install. They run on the box as t
    It removes the UI-created PLCs, pushes the images, runs `golive.sh`, backs up and wipes the engine
    memory while the engine is stopped (step 2 below), and starts the PS0 watcher. The watcher writes one
    verdict line per minute to `/var/tmp/visr-ps0-soak.log`. `WIPE=0` keeps the memory. `PUSH=0` skips
-   the push.
+   the push. `ONLY="api dashboard"` pushes only those images (after a failed run whose other images
+   are already live). `ALLOY=0` skips the log shipper upgrade.
+   A change to `plc/program.st` also needs the OpenPLC image. Run the rollout first, in the same screen:
+   `screen -dmS visr-factory bash -c 'FORCE=1 bash ~/Tata_InnoVent/deploy/openplc-rollout.sh deploy >
+   /var/tmp/visr-openplc.log 2>&1 && bash ~/Tata_InnoVent/deploy/factory-up.sh > /var/tmp/visr-factory.log 2>&1'`
+   (LOG-100). `FORCE=1` passes the rollout guard while an old PS0 watcher still runs.
+5. When the soak passes (the last 30 watcher lines are QUIET), lock the engine baselines (LOG-089):
+   `bash ~/Tata_InnoVent/deploy/engine-baselines.sh lock`. Locked, a long fault cannot teach the engine
+   that the fault is normal. `status` shows the state and every baseline. The factory-up wipe removes the
+   lock, so the next soak learns again. To learn without a wipe, run `unlock` before the soak.
+   `lock` also learns the display bands (LOG-103): the throughput range of each machine over the 2 h
+   before the lock, into ConfigMap `aiops/display-bands`. `bands "<end time>"` learns them for an earlier
+   soak. The api reads the mounted ConfigMap within about a minute, with no restart.
 
 Over SSH, export `KUBECONFIG=~/.kube/config` first. A non-interactive shell does not set it, and
 kubectl then reads the root-only k3s config. Run long jobs under `screen -dmS`, because user linger
@@ -236,11 +248,11 @@ kubectl apply -f deploy/grafana-plant-dashboard.yaml
 # 5.2b Grafana serves from /grafana/ (LOG-062). The console is HTTPS, and a browser blocks a
 #      plain-HTTP frame inside it as mixed content, so nginx proxies /grafana/ on the console's own
 #      origin, behind the same login. Use kubectl set env, NOT a helm upgrade. The same values again
-#      change nothing. Direct access moves to http://<node>:30030/grafana/.
+#      change nothing. Grafana has no NodePort (LOG-095): open it through the console at /grafana/.
 kubectl -n observability set env deploy/prom-grafana -c grafana \
   GF_SERVER_ROOT_URL='%(protocol)s://%(domain)s:%(http_port)s/grafana/' GF_SERVER_SERVE_FROM_SUB_PATH=true
 kubectl -n observability rollout status deploy/prom-grafana --timeout=180s
-curl -s http://127.0.0.1:30030/grafana/api/health        # expect "database": "ok"
+curl -s http://$(kubectl -n observability get svc prom-grafana -o jsonpath='{.spec.clusterIP}')/grafana/api/health   # expect "database": "ok"
 
 # 5.2c Prometheus on the slow disk, 30 days (LOG-088). On an existing install only: a fresh install
 #      gets the same storage from skctl (values/prometheus-storage.yaml). The script stops during a
@@ -250,6 +262,8 @@ curl -s http://127.0.0.1:30030/grafana/api/health        # expect "database": "o
 bash deploy/prometheus-storage.sh check      # read-only
 bash deploy/prometheus-storage.sh apply      # rolls back by itself when the claim or the pod fails
 
+# 5.2c also closes the Grafana and Prometheus NodePorts (values/prometheus-exposure.yaml, LOG-095). The box
+#      scripts find the api, Grafana, and Prometheus by ClusterIP, so they work before and after.
 # 5.2d the verdict series (LOG-088): GET /metrics on the api, scraped by ServiceMonitor api-verdict.
 #      Grafana panels 5 and 6 of skn-plant plot them. The api pod starts again once.
 make push ONLY=api
@@ -257,6 +271,12 @@ kubectl apply -f deploy/api.yaml
 kubectl -n aiops rollout restart deploy/api && kubectl -n aiops rollout status deploy/api --timeout=180s
 kubectl apply -f deploy/grafana-plant-dashboard.yaml
 bash deploy/prometheus-storage.sh verify     # expect VERIFY PASS and "the verdict series arrive"
+
+# 5.2e network zones (LOG-095): deny by default in aiops, plant, and fleet, with the Caretta-observed
+#      paths allowed. apply checks every path and removes the policies again if one fails. It stops
+#      during a soak, a proof run, or a verification run. Never apply during a recording.
+bash deploy/netpol.sh verify      # read-only: every allowed path, and the denied ones
+bash deploy/netpol.sh apply       # remove: bash deploy/netpol.sh remove
 
 # 5.3 the plant: namespace, PVCs (bind to the claimRef'd PVs), sim, historian, ServiceMonitor
 kubectl apply -f plant/deploy.yaml
@@ -272,14 +292,19 @@ kubectl apply -f plant/deploy.yaml
 kubectl apply -f deploy/openplc.yaml
 
 # 5.3c the SCADA tag server (2F.2): read-only Modbus client -> tag DB + historian + /tags.
-#      It ships WITHOUT a ServiceMonitor on purpose. Apply scada/cutover-servicemonitor.yaml and
-#      delete the plant-sim ServiceMonitor ONLY after the tag values match the sim through a
-#      PS1 + PS5 run (LOG-055). Rollback = the reverse pair.
+#      LOG-100 did the SCADA read switch: scada/cutover-servicemonitor.yaml scrapes the tag server,
+#      and the plant-sim ServiceMonitor (plant/deploy.yaml) keeps only the instrument feeds.
+#      golive.sh applies both. Rollback: delete ServiceMonitor plant/tag-server and remove the
+#      metricRelabelings block in plant/deploy.yaml (SCENARIOS.md 4.6).
 kubectl apply -f scada/deploy.yaml
+kubectl apply -f scada/cutover-servicemonitor.yaml
 
-# 5.3d the 2H virtual PLC fleet: namespace fleet, the api Role (fleet only), the base PLC
-#      plc-stamping (S7-1200 profile, controls press-1 and press-2), and the /metrics/fleet
-#      ServiceMonitor. plant-sim fails OPEN while plc-stamping is absent, so the order is free.
+# 5.3d the 2H virtual PLC fleet: namespace fleet, the api Role (fleet only), the four static base
+#      PLCs with their Services (plc-stamping for press-1 and press-2, and since LOG-100
+#      plc-utilities, plc-machining, plc-furnace), and the /metrics/fleet ServiceMonitor. Each PLC
+#      needs its device token Secret first: deploy/plc-tokens.sh makes the missing ones. plant-sim
+#      fails OPEN while a PLC is absent, so the order is free.
+bash deploy/plc-tokens.sh
 kubectl apply -f deploy/fleet.yaml
 kubectl -n fleet rollout status deploy/plc-stamping --timeout=120s
 kubectl -n plant exec deploy/tag-server -- python -c \

@@ -1,0 +1,258 @@
+# netpol.yaml: zones and conduits for the VISR namespaces (LOG-095, IEC 62443 thinking).
+# Apply and check with deploy/netpol.sh (apply | verify | remove). Every allowed path below was seen
+# by Caretta (eBPF) on forge on 2026-09-26. Anything else is denied.
+#
+# Zones: plant (the plant floor, SCADA, the historian), fleet (the virtual PLCs), aiops (VISR).
+# 10.42.0.1/32 is the node's bridge address on the k3s pod network (cluster CIDR 10.42.0.0/16):
+# the kubelet probes and every NodePort client arrive from it.
+# Scenario 4A: rogue-ews (label visr/role: fault-injector) may reach S7 port 102. It is a labeled test
+# exception so the attack still runs in the demo. In a plant this rule does not exist.
+# Egress: every pod in plant and fleet reaches CoreDNS, and each one reaches only the pods and ports of
+# its own observed flows. The historian reaches nothing, so its usage telemetry to the internet is
+# blocked here, and it is switched off in plant/deploy.yaml too.
+# Why egress is per source: on forge (k3s v1.35.5, the embedded kube-router) a broad egress allow on the
+# source ("any pod in the cluster") let a pod past the ingress policy of another pod in the SAME
+# namespace (plant-sim reached historian-db:5432 and tag-server:9300, 2026-09-26). With precise egress
+# the source's own rule already refuses such a packet.
+# Every peer names its namespace, even inside the same namespace. On forge (k3s v1.35.5, the embedded
+# kube-router) a bare podSelector peer let plant-sim reach historian-db:5432 on 2026-09-26, while the
+# namespaceSelector + podSelector peers held. The two forms mean the same thing in the API.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: plant }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:                                      # CoreDNS only; each pod's own flows follow below
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: fleet }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { k8s-app: kube-dns } }
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+---
+# ------------------------------------------------------- egress per source --
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: plant-sim-egress, namespace: plant }
+spec:
+  podSelector: { matchLabels: { app: plant-sim } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchLabels: { app: openplc } }
+      ports: [{ port: 502 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fleet } }
+          podSelector: { matchLabels: { app: vplc } }
+      ports: [{ port: 5020 }]                  # the field port of every cell PLC
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: tag-server-egress, namespace: plant }
+spec:
+  podSelector: { matchLabels: { app: tag-server } }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchLabels: { app: openplc } }
+      ports: [{ port: 502 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchLabels: { app: historian-db } }
+      ports: [{ port: 5432 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fleet } }
+          podSelector: { matchLabels: { app: vplc } }
+      ports: [{ port: 102 }, { port: 502 }]    # the SCADA port of every PLC (S7comm or Modbus)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: rogue-ews-egress, namespace: plant }
+spec:
+  podSelector: { matchLabels: { app: rogue-ews } }
+  policyTypes: [Egress]
+  egress:
+    - to:                                      # Scenario 4A test exception
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fleet } }
+          podSelector: { matchLabels: { app: vplc } }
+      ports: [{ port: 102 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: vplc-egress, namespace: fleet }
+spec:
+  podSelector: { matchLabels: { app: vplc } }
+  policyTypes: [Egress]
+  egress:
+    - to:                                      # enrollment with the tag server
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchLabels: { app: tag-server } }
+      ports: [{ port: 9300 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: aiops }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]                       # egress stays open: the api reaches Kubernetes and Ollama
+---
+# ------------------------------------------------------------------ plant --
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: plant-sim, namespace: plant }
+spec:
+  podSelector: { matchLabels: { app: plant-sim } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 9200 }]
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: aiops } }
+          podSelector: { matchExpressions: [{ key: app, operator: In, values: [api, correlation-engine] }] }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+        - ipBlock: { cidr: 10.42.0.1/32 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: tag-server, namespace: plant }
+spec:
+  podSelector: { matchLabels: { app: tag-server } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 9300 }]
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: aiops } }
+          podSelector: { matchExpressions: [{ key: app, operator: In, values: [api, correlation-engine] }] }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: fleet } }   # PLC enrollment
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+        - ipBlock: { cidr: 10.42.0.1/32 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: openplc, namespace: plant }
+spec:
+  podSelector: { matchLabels: { app: openplc } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 502 }]                   # Modbus: the plant model and SCADA only
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchExpressions: [{ key: app, operator: In, values: [plant-sim, tag-server] }] }
+    - ports: [{ port: 8080 }]                  # the web UI stays on NodePort 30081 (operator decision)
+      from: [{ ipBlock: { cidr: 0.0.0.0/0 } }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: historian-db, namespace: plant }
+spec:
+  podSelector: { matchLabels: { app: historian-db } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 5432 }]
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchLabels: { app: tag-server } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }   # Grafana
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: rogue-ews, namespace: plant }
+spec:
+  podSelector: { matchLabels: { app: rogue-ews } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 8090 }]
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: aiops } }
+          podSelector: { matchLabels: { app: api } }
+        - ipBlock: { cidr: 10.42.0.1/32 }
+---
+# ------------------------------------------------------------------ fleet --
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: vplc, namespace: fleet }
+spec:
+  podSelector: { matchLabels: { app: vplc } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 102 }, { port: 502 }]    # the SCADA port (S7comm or Modbus, by profile)
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchLabels: { app: tag-server } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchLabels: { visr/role: fault-injector } }   # Scenario 4A test exception
+    - ports: [{ port: 5020 }]                  # the field port: the plant model only
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: plant } }
+          podSelector: { matchLabels: { app: plant-sim } }
+    - ports: [{ port: 8080 }]                  # control: the fleet manager and the probes
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: aiops } }
+          podSelector: { matchLabels: { app: api } }
+        - ipBlock: { cidr: 10.42.0.1/32 }
+---
+# ------------------------------------------------------------------ aiops --
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: api, namespace: aiops }
+spec:
+  podSelector: { matchLabels: { app: api } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 8088 }]
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: aiops } }
+          podSelector: { matchLabels: { app: dashboard } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }   # api-verdict
+        - ipBlock: { cidr: 10.42.0.1/32 }      # probes and the box scripts
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: correlation-engine, namespace: aiops }
+spec:
+  podSelector: { matchLabels: { app: correlation-engine } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 9100 }]
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: aiops } }
+          podSelector: { matchLabels: { app: api } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+        - ipBlock: { cidr: 10.42.0.1/32 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: aggregator, namespace: aiops }
+spec:
+  podSelector: { matchLabels: { app: aggregator } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 9000 }]
+      from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: aiops } }
+          podSelector: { matchExpressions: [{ key: app, operator: In, values: [api, correlation-engine] }] }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: observability } }
+        - ipBlock: { cidr: 10.42.0.1/32 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: dashboard, namespace: aiops }
+spec:
+  podSelector: { matchLabels: { app: dashboard } }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 80 }, { port: 443 }]     # the front door: TLS and the login
+      from: [{ ipBlock: { cidr: 0.0.0.0/0 } }]

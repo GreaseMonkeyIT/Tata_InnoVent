@@ -12,7 +12,7 @@
 # Then it prints the ledger rows written since the start, and the hash chain check.
 set -euo pipefail
 export KUBECONFIG="$HOME/.kube/config"
-API=${API:-http://127.0.0.1:30088}
+API=${API:-http://$(kubectl -n aiops get svc api -o jsonpath='{.spec.clusterIP}'):8088}   # LOG-095: the ClusterIP (no NodePort)
 BASE_PLC=${BASE_PLC:-plc-stamping}
 FAILS=0
 t0=$(date +%s)

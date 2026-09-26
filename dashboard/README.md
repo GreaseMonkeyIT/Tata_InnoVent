@@ -18,7 +18,7 @@ The layout reads left to right in the order of the engine pipeline:
 | Top | **Command bar**: the VISR plate and lamps for engine, aggregator, PLC link, historian, fleet, auth, and the audit chain |
 | Left column | **Assets** (machines grouped by rail and coolant loop) and **Event log** (the audit ledger). The event log says "Scenario 1" where the API says PS1 (LOG-078) |
 | Center | **Map** (FLOOR or EDGE, ISO or PLAN camera) and the detail tabs: **Selected**, **Fleet**, **Tags**, **Trends**, **Edge** |
-| Right column | **Verdict** (STEADY, FORECAST, or ROOT CAUSE), which takes the free height, and **Actions** (Execute, holding, advisory) |
+| Right column | **Verdict** (STEADY, FORECAST, ROOT CAUSE, INCIDENT, or RECOVERING, from `/api/incident`: the current driver, "started by" the origin, the reason, the chain, the narrative, the last phases, and an **Ask** box), which takes the free height, and **Actions** (Execute, holding, and the advisory suggestions) |
 
 - The console has no fault controls and never says that a fault is injected (LOG-081). Faults run
   from the shell on the box: `ssh -t forge 'bash ~/Tata_InnoVent/deploy/faults.sh'` (see the script

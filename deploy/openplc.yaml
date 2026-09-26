@@ -19,10 +19,16 @@ spec:
     metadata:
       labels: { app: openplc }
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
       containers:
       - name: openplc
         image: localhost:5000/skn/openplc:v0.1
         imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+        securityContext:              # LOG-095: the OpenPLC runtime runs as root (listed exception)
+          allowPrivilegeEscalation: false
+          capabilities: { drop: [NET_RAW] }
         ports:
         - { containerPort: 502,  name: modbus }
         - { containerPort: 8080, name: web }
@@ -34,7 +40,7 @@ spec:
         - { name: openplc-auth, mountPath: /etc/openplc-auth, readOnly: true }
         resources:
           requests: { cpu: 100m, memory: 128Mi }
-          limits:   { cpu: 500m, memory: 384Mi }
+          limits:   { cpu: 500m, memory: 384Mi, ephemeral-storage: 512Mi }
       volumes:
       - name: openplc-auth
         secret: { secretName: openplc-auth, optional: true, defaultMode: 0400 }

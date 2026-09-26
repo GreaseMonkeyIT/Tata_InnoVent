@@ -1,0 +1,16 @@
+{
+  "task": "machining",
+  "title": "Machining line (cnc-1)",
+  "description": "The line PLC interface to the CNC: RUN is feed enable, SPEED_PCT the feed override from DERATE_PCT (0..100 %). FEED_HOLD = 1 holds the feed. The CNC keeps its own controller for the part program.",
+  "st": "machining.st",
+  "profile_hint": "generic-iec",
+  "cell": {
+    "name": "machining",
+    "rail_default": "psu-a",
+    "machines_fixed": ["cnc-1"]
+  },
+  "io_extra": [
+    {"asset": "cnc-1", "signal": "FEED_HOLD", "address": "%MW21", "unit": "bool",
+     "writable": true, "min": 0, "max": 1}
+  ]
+}

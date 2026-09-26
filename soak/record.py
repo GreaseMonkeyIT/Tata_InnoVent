@@ -27,13 +27,14 @@ import sys, os, json, time, csv
 #   forecast   an incipient card of class `expect`
 #   blind      an incipient card of class `expect` on `pod`, or /api/tags answers "unavailable"
 # `channel` is the controller channel the finding must name. The report shows how often it does.
-# `trip` and `segment` add the chiller-1 relay and the field-1 segment to the report row.
+# `trip` and `segment` add the chiller-1 relay and the field-1 segment to the report row. Since LOG-100
+# the chiller does not trip in PS2, so PS2 has no `trip`. Every sample still records a chiller trip.
 SPEC = {
     "PS1": {"kind": "root", "expect": "press-1",
             "note": "Rail-sag cascade: expect root press-1 along rail psu-a."},
-    "PS2": {"kind": "root", "expect": "compressor-1", "trip": "chiller-1",
-            "note": "Power sag trips the chiller: expect root compressor-1, then the chiller-1 overload trip "
-                    "and loop cool-1."},
+    "PS2": {"kind": "root", "expect": "compressor-1",
+            "note": "A failed pressure sensor overheats the loop (LOG-100): expect root compressor-1, then its "
+                    "heat into loop cool-1 and chiller-1 at its capacity limit. furnace-1 trips at about 16 min."},
     "PS3": {"kind": "root", "expect": "hmi-gw", "segment": "field-1",
             "note": "Control network storm: expect root hmi-gw along segment field-1."},
     "PS4A": {"kind": "integrity", "expect": "unsigned_write",
@@ -45,7 +46,8 @@ SPEC = {
              "note": "Current report contradicts the feeder: expect a current_balance finding on rail psu-a "
                      "that names press-1 AMPS."},
     "PS5": {"kind": "forecast", "expect": "trip",
-            "note": "Coolant pump degradation: success = the trip forecast card fires before the 78 °C trip."},
+            "note": "Coolant pump degradation: success = the trip forecast card fires before the machine's "
+                    "own trip (80 °C press and cnc, 55 °C furnace coil water)."},
     "PS6": {"kind": "blind", "expect": "leak", "pod": "tag-server",
             "note": "The monitor runs out of memory: expect a leak card on tag-server, then the SCADA view "
                     "blind after the kill."},

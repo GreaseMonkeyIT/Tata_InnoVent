@@ -108,3 +108,4 @@ def test_tags_historian_block_has_queue_fields(server):
     assert {"queue_depth", "queue_max", "dropped_batches"} <= set(hist)
     assert hist["queue_max"] == 600
     assert hist["queue_depth"] == 0 and hist["dropped_batches"] == 0
+    assert 0 < out["started_at"] <= time.time()                # LOG-099: a restart changes it

@@ -177,13 +177,7 @@ def world(monkeypatch):
     sim.LOOP.flow = sim.LOOP.flow_nominal
     for r in sim.RAILS:
         r.voltage = r.v_src
-    for d in sim.BASE_DEVICES:
-        d.friction, d.temp, d.current, d.throughput, d.tripped = 1.0, 35.0, 0.0, 100.0, False
-        d.replay = None
-        d.recent.clear()
-        if d.overload is not None:
-            d.overload.reset()            # a latched relay would trip the chiller again
-    sim.BY_NAME["compressor-1"].duty_fn = sim.compressor_duty
+    _healthy()
     for seg in sim.SEGMENTS.values():
         seg.calm()
     yield
@@ -208,111 +202,78 @@ def plc():
 
 
 # ----------------------------------------------------- base plant is unchanged --
-class _State:
-    pass
+def _healthy():
+    """The healthy base world (LOG-100 calibration). No random draws."""
+    sim.LOOP.pump_health, sim.LOOP.flow, sim.LOOP.t_supply = 1.0, sim.LOOP.flow_nominal, sim.LOOP_T_SETPOINT
+    sim.SUPPLY.target, sim.SUPPLY.voltage = 1.0, sim.SUPPLY.v_nom
+    sim.AIR.pressure, sim.AIR.loaded, sim.AIR.pt_fault, sim.AIR.venting = 7.2, False, None, False
+    for r in sim.RAILS:
+        r.voltage = r.v_src
+    for d in sim.BASE_DEVICES:
+        d.friction, d.current, d.throughput, d.tripped = 1.0, 0.0, 100.0, False
+        d.temp = sim.LOOP_T_SETPOINT + d.heat_k * d.i_base if d.loop is not None else sim.LOOP_T_SETPOINT
+        d.speed_frac, d.replay = 1.0, None
+        d.recent.clear()
+        if d.overload is not None:
+            d.overload.reset()
+        if d.unit is not None:
+            d.unit.running, d.unit.last_start, d.unit.q_removed = True, -1e9, 0.0
+            d.unit.uv.reset()
 
 
-class LegacyRelay:
-    """The chiller-1 overload relay, written out again from SCENARIOS.md 2.2 so the guard
-    checks main.py against the contract, not against itself. It uses no random numbers."""
-
-    def __init__(self):
-        self.heat, self.latched = 0.0, False
-
-    def step(self, amps, dt):
-        if amps > 1.02 * 22.0:
-            self.heat += 1.0 * dt
-        else:
-            self.heat = max(0.0, self.heat - 0.5 * dt)
-        if self.heat >= 90.0:
-            self.latched = True
-        return self.latched
-
-
-def legacy_step(d, st, t, dt, relay=None):
-    """Device.step as it was before cells (main.py at a1622ea), on a copy of the state. The
-    temperature noise follows Device.temp_noise (tau-scaled since 2026-09-19, LOG-070).
-    `relay` adds the PS2 overload relay (SCENARIOS.md 2.2). It trips st.tripped, not d.
-    Two changes on purpose since then (LOG-075): a current is never below 0 A, and a machine
-    that the voltage does not slow recovers its throughput at any rail voltage. The old
-    formula kept press-2 near 0 % after its trip below, while it drew full current."""
-    if st.tripped:
-        st.current = max(random.gauss(0.2, 0.02), 0.0)
-        st.throughput = max(0.0, st.throughput - 5.0)
-        if d.loop is not None:
-            st.temp += (35.0 - st.temp) * (dt / d.tau) + random.gauss(0, d.temp_noise())
-        return
-    duty = d.duty_fn(t)
-    st.current = max(0.0, d.i_base * duty * d.friction + random.gauss(0, 0.05))
-    v = d.rail.voltage
-    low = v < 0.92 * d.rail.v_src
-    if low:
-        st.current *= min(1.15, (0.92 * d.rail.v_src) / max(v, 1.0))
-    if low and d.v_sensitive:
-        st.throughput = max(20.0, 100.0 * v / d.rail.v_src - random.uniform(0, 3))
-    else:
-        st.throughput = min(100.0, st.throughput + 2.0)
-    if relay is not None and relay.step(st.current, dt):
-        st.tripped = True
-    if d.loop is not None:
-        heat = d.heat_k * st.current
-        share = max(d.loop.flow / d.loop.flow_nominal, 0.05)
-        t_target = 35.0 + heat / share
-        st.temp += (t_target - st.temp) * (dt / d.tau) + random.gauss(0, d.temp_noise())
+def _trajectory(seed, detach):
+    """700 ticks through PS1, PS5, PS2, and a press-2 trip. detach=True runs with no cell at all."""
+    for fid in list(sim.ACTIVE):
+        sim.FAULTS[fid]["clear"]()
+    sim.ACTIVE.clear()
+    for fid in sim.FAULTS:
+        sim.FAULTS[fid]["clear"]()
+    _healthy()
+    saved = {d.name: d.cell for d in sim.BASE_DEVICES}
+    if detach:
+        for d in sim.BASE_DEVICES:
+            d.cell = None
+    random.seed(seed)
+    out, t = [], 0.0
+    try:
+        for n in range(700):
+            if n == 100:
+                sim.FAULTS["PS1"]["apply"]()
+            if n == 250:
+                sim.FAULTS["PS5"]["apply"]()
+            if n == 350:
+                sim.FAULTS["PS2"]["apply"]()
+            if n == 450:
+                sim.BY_NAME["press-2"].tripped = True
+            if n == 500:
+                sim.BY_NAME["press-2"].tripped = False
+            with sim._lock:
+                sim.step_world(t, 1.0)
+            out.append(tuple((d.current, d.throughput, d.temp, d.tripped, d.speed_frac) for d in sim.BASE_DEVICES)
+                       + (sim.RAIL_A.voltage, sim.RAIL_B.voltage, sim.LOOP.t_supply, sim.AIR.pressure))
+            t += 1.0
+    finally:
+        for d in sim.BASE_DEVICES:
+            d.cell = saved[d.name]
+    return out
 
 
 def test_base_plant_unchanged_without_stamping_plc():
-    """The default stamping cell has no PLC. Every base device must step exactly like the old
-    formula, through faults, a trip, and both compressor windows. chiller-1 adds the contract
-    relay: PS2 at n=350 must trip it in this run, at the same tick as the contract model."""
+    """The default stamping cell has no PLC. A fail-open cell must leave the base plant exactly as
+    it runs with no cell at all, through faults and a trip, tick for tick and draw for draw."""
     cell = sim.CELLS["stamping"]
     assert cell.base and cell.fail_open and not cell.connected and cell.mode == "fail-open"
     assert [d.name for d in cell.devices] == ["press-1", "press-2"]
-    chiller, relay, tripped_at = sim.BY_NAME["chiller-1"], LegacyRelay(), None
-    t, dt = 0.0, 1.0
-    for n in range(700):
-        if n == 100:
-            sim.FAULTS["PS1"]["apply"]()
-        if n == 250:
-            sim.FAULTS["PS5"]["apply"]()
-        if n == 350:
-            sim.FAULTS["PS2"]["apply"]()
-        if n == 450:
-            sim.BY_NAME["press-2"].tripped = True
-        if n == 500:
-            sim.BY_NAME["press-2"].tripped = False
-        with sim._lock:
-            devices = sim.all_devices()
-            for rail in sim.RAILS:
-                rail.step(sum(d.current for d in devices if d.rail is rail))
-            sim.LOOP.step()
-            for d in devices:
-                st = _State()
-                st.current, st.throughput, st.temp = d.current, d.throughput, d.temp
-                st.tripped = d.tripped
-                rng = random.getstate()
-                legacy_step(d, st, t, dt, relay if d is chiller else None)
-                after_legacy = random.getstate()
-                random.setstate(rng)
-                d.step(t, dt)
-                assert d.speed_frac == 1.0
-                assert (d.current, d.throughput, d.temp, d.tripped) == \
-                    (st.current, st.throughput, st.temp, st.tripped), \
-                    f"{d.name} diverged from the old formula at t={t}"
-                assert random.getstate() == after_legacy
-            assert chiller.overload.heat == relay.heat
-            if chiller.tripped and tripped_at is None:
-                tripped_at = n
-        t += dt
-    # PS2 lands at phase 50 with about 49 heat, so the relay trips about 41 s later.
-    assert tripped_at is not None and 350 < tripped_at <= 450
-    assert sim.state_json()["devices"]["chiller-1"]["trip_reason"] == "overload"
+    with_cell = _trajectory(4321, detach=False)
+    without = _trajectory(4321, detach=True)
+    assert with_cell == without
+    assert all(row[0][4] == 1.0 and row[1][4] == 1.0 for row in with_cell)   # full speed throughout
 
 
 def test_idle_world_rails_with_psu_c():
     tick(IDLE_T0, 120)
     a, b, c = sim.RAIL_A, sim.RAIL_B, sim.RAIL_C
-    assert 358 <= a.voltage <= 364 and 370 <= b.voltage <= 376     # the calibrated idle band
+    assert 385 <= a.voltage <= 389 and 383 <= b.voltage <= 391     # LOG-100: about 3 to 4 % drop
     assert (c.name, c.v_src, c.r_src) == ("psu-c", 400.0, 0.5)
     assert abs(c.voltage - 400.0) < 1.0                              # no load on the spare feeder
     state = sim.state_json()
@@ -340,9 +301,10 @@ def test_register_blocks_unchanged_by_cells():
 
     set_base()
     before = frames()
-    assert [a for a, _ in before] == [sim.PLC_MW_BASE, sim.PLC_MW_BASE + 24]
-    regs, thru = before[0][1], before[1][1]
+    assert [a for a, _ in before] == [sim.PLC_MW_BASE, sim.PLC_MW_BASE + 16, sim.PLC_MW_BASE + 24]
+    regs, loop_words, thru = before[0][1], before[1][1], before[2][1]
     assert len(regs) == 16 and len(thru) == 8
+    assert loop_words == [int(sim.LOOP.t_supply * 10), int(sim.AIR.reading() * 100)]   # LOG-100: MW16..17
     assert regs[8:16] == [100 + 10 * i for i in range(8)]          # amps x10 in BASE order
     assert thru == [500 + 10 * i for i in range(8)]                # throughput x10 in BASE order
     assert regs[0:4] == [400, 410, 420, 460]                       # press-1, press-2, cnc-1, furnace-1
@@ -393,7 +355,7 @@ def test_post_cells_adds_idle_machines_and_domains(server):
     code, doms = http(server, "GET", "/domains")
     assert code == 200
     assert doms["domains"]["rail:psu-c"] == body["machines"] + ["psu-c"]
-    assert doms["domains"]["loop:cool-1"][-3:] == ["pack-wrapper-1", "chiller-1", "cool-1"]
+    assert doms["domains"]["loop:cool-1"][-4:] == ["pack-wrapper-1", "compressor-1", "chiller-1", "cool-1"]
     assert doms["domains"]["net:field-1"] == ["hmi-gw", "plc-stamping", "127.0.0.1", "field-1"]
 
     code, cells = http(server, "GET", "/cells")
@@ -511,9 +473,9 @@ def test_fail_open_base_cell_reverts_to_full_speed_when_plc_goes_away(plc):
     t = tick(t, 30)
     rail_a = sim.RAIL_A
     i_a = sum(d.current for d in sim.BASE_DEVICES if d.rail is rail_a)
-    # the old formula at full speed: i_base * friction, times the brownout factor
-    assert abs(press.current - 42.0 * min(1.15, 368.0 / rail_a.voltage)) < 0.3
-    assert 358 <= rail_a.voltage <= 364                              # rail A back in its idle band
+    # full speed: i_base * friction. Rail A sits above the 368 V brownout line (LOG-100).
+    assert abs(press.current - 42.0) < 0.3
+    assert 385 <= rail_a.voltage <= 389                              # rail A back in its idle band
     assert abs(rail_a.voltage - (rail_a.v_src - i_a * rail_a.r_src)) < 1.0
     text = sim.metrics_text()
     assert 'plant_cell_connected{namespace="plant",pod="stamping"} 0' in text
@@ -556,7 +518,8 @@ def test_domains_membership_including_psu_c():
         "rail:psu-c": ["psu-c"],
         # PS7: the board sits above every rail, so a cause can land above the plant.
         "rail:incomer-1": ["psu-a", "psu-b", "psu-c", "incomer-1"],
-        "loop:cool-1": ["press-1", "press-2", "cnc-1", "furnace-1", "chiller-1", "cool-1"],
+        # LOG-100: the water-cooled compressor gives heat to the loop, so it is a member too.
+        "loop:cool-1": ["press-1", "press-2", "cnc-1", "furnace-1", "compressor-1", "chiller-1", "cool-1"],
         "net:field-1": ["hmi-gw", "plc-stamping", "field-1"]}}
     sim.add_cell(packaging_body(1), start=False)
     sim.add_cell(packaging_body(1, cell="bottling", rail="psu-b", machines=[
@@ -567,7 +530,7 @@ def test_domains_membership_including_psu_c():
     assert doms["rail:psu-b"] == ["conveyor-1", "compressor-1", "furnace-1", "chiller-1",
                                   "filler-pump-1", "capper-1", "psu-b"]
     assert doms["loop:cool-1"] == ["press-1", "press-2", "cnc-1", "furnace-1",
-                                   "pack-wrapper-1", "filler-pump-1", "chiller-1", "cool-1"]
+                                   "pack-wrapper-1", "filler-pump-1", "compressor-1", "chiller-1", "cool-1"]
     assert doms["rail:psu-a"][-1] == "psu-a"
     # a new cell never joins the supply domain: it lists rails only
     assert doms["rail:incomer-1"] == ["psu-a", "psu-b", "psu-c", "incomer-1"]

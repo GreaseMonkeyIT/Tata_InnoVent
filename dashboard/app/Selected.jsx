@@ -1,7 +1,7 @@
 "use client";
 import Glyph from "./Glyph";
 import { DEV } from "./lib/api";
-import { machSt, railSt, flowSt, tempSt, thruSt, ST_COLOR, QST } from "./lib/palette";
+import { machSt, railSt, flowSt, tempSt, thruSt, lowEdge, ST_COLOR, QST } from "./lib/palette";
 import { fmtTag } from "./lib/format";
 
 // Selected: the detail of one asset (ISA-101 level 3). Three parts: the current values, one Grafana
@@ -69,7 +69,8 @@ function TagTable({ tags }) {
 export default function Selected({ plant, scada, sel, picked, auto, hasRoot, onClear }) {
   if (!plant?.devices) return <div className="empty">waiting for plant telemetry…</div>;
   if (!sel) return <div className="empty">no asset selected</div>;
-  const trip = plant.trip_c ?? 78;
+  const trip = plant.trip_c ?? 80;   // LOG-100: each machine has its own trip (x.trip_c)
+  const tripOf = (x) => x?.trip_c ?? trip;
   // measured tags only: the derived ones repeat a value shown elsewhere (the Tags tab has them all)
   const tags = (scada?.tags || []).filter((t) => t.asset === sel && t.kind !== "derived");
   const d = plant.devices[sel];
@@ -84,21 +85,22 @@ export default function Selected({ plant, scada, sel, picked, auto, hasRoot, onC
 
   let head, metrics;
   if (d) {
-    const st = d.tripped ? "hot" : machSt(d, trip);
+    const st = d.tripped ? "hot" : machSt(d, tripOf(d));
     head = <><Glyph st={d.tripped ? "trip" : st} size={11} /><span className="nm">{sel}</span>
       <Kinds items={["machine", `rail ${d.rail}`, d.cooled ? "cooled" : "uncooled", d.tripped && ["trip", "hot"]]} /></>;
     metrics = (
       <>
         <Metric k="draw" v={`${d.amps.toFixed(1)} A`} st={d.tripped ? "hot" : "ok"} />
         {d.cooled && d.temp != null && (
-          <Metric k="temp" v={`${d.temp.toFixed(1)} °C`} st={tempSt(d.temp, trip)} sub={`trip ${Math.round(trip)} °C`} />
+          <Metric k="temp" v={`${d.temp.toFixed(1)} °C`} st={tempSt(d.temp, tripOf(d))} sub={`trip ${Math.round(tripOf(d))} °C`} />
         )}
-        <Metric k="thru" v={`${Math.round(d.throughput)} %`} st={thruSt(d.throughput)} />
+        <Metric k="thru" v={`${Math.round(d.throughput)} %`} st={thruSt(d.throughput, d)}
+          sub={Array.isArray(d.thru_band) ? `learned ${Math.round(d.thru_band[0])}–${Math.round(d.thru_band[1])} %` : undefined} />
         {d.controller && (
           // 2H: a PLC controls this machine. speed_pct is the simulated drive after its ramp. The
           // commanded value is what the PLC wrote on the field port this tick.
           <Metric k="drive" v={d.speed_pct != null ? `${Math.round(d.speed_pct)} %` : "—"}
-            st={d.speed_pct != null && d.speed_pct < 90 ? "strained" : "ok"}
+            st={d.speed_pct != null && d.speed_pct < lowEdge(d) - 10 ? "strained" : "ok"}
             sub={`${d.controller}${d.commanded?.run == null ? " · NO LINK" : d.commanded.run ? ` · set ${d.commanded.speed_pct} %` : " · STOP"}`} />
         )}
       </>
@@ -112,7 +114,7 @@ export default function Selected({ plant, scada, sel, picked, auto, hasRoot, onC
         <Metric k="volts" v={`${r.volts.toFixed(1)} V`} st={st}
           sub={`low ${Math.round(0.882 * r.v_src)} V`} />
         <div className="mt-members">
-          {members.map(([n, x]) => <span key={n}><Glyph st={x.tripped ? "trip" : machSt(x, trip)} size={7} />{n} <b>{x.amps.toFixed(1)} A</b></span>)}
+          {members.map(([n, x]) => <span key={n}><Glyph st={x.tripped ? "trip" : machSt(x, tripOf(x))} size={7} />{n} <b>{x.amps.toFixed(1)} A</b></span>)}
         </div>
       </>
     );
@@ -125,7 +127,7 @@ export default function Selected({ plant, scada, sel, picked, auto, hasRoot, onC
       <>
         <Metric k="flow" v={`${loop.flow.toFixed(1)} L/min`} st={st} sub={`nominal ${Math.round(nom)} L/min`} />
         <div className="mt-members">
-          {cooled.map(([n, x]) => <span key={n}><Glyph st={x.temp != null ? tempSt(x.temp, trip) : "idle"} size={7} />{n} <b>{x.temp != null ? `${x.temp.toFixed(1)} °C` : "—"}</b></span>)}
+          {cooled.map(([n, x]) => <span key={n}><Glyph st={x.temp != null ? tempSt(x.temp, tripOf(x)) : "idle"} size={7} />{n} <b>{x.temp != null ? `${x.temp.toFixed(1)} °C` : "—"}</b></span>)}
         </div>
       </>
     );

@@ -36,7 +36,8 @@ export default function ActLoop({ actions, onChanged }) {
     finally { setBusy(false); }
   }
 
-  if (!proposals.length && !active.length && !blocked.length) return msg ? <div className="plc-msg">{msg}</div> : null;
+  const advice = actions?.advice || [];   // LOG-093: advisory suggestions, done by a person
+  if (!proposals.length && !active.length && !blocked.length && !advice.length) return msg ? <div className="plc-msg">{msg}</div> : null;
   return (
     <div className="actloop">
       {blocked.map((b) => (
@@ -80,6 +81,15 @@ export default function ActLoop({ actions, onChanged }) {
             <div className="ct">{a.tag} · {a.quality}</div>
           </div>
           <button className="btn" disabled={busy} onClick={() => restore(a)}>Restore</button>
+        </div>
+      ))}
+      {advice.map((a) => (
+        <div key={`advice-${a.verb}-${a.target}`} className="rec advice">
+          <span className="actpill">{a.verb}</span>
+          <div className="b">
+            <div className="nm">{a.text}</div>
+            <div className="ct">{a.why}</div>
+          </div>
         </div>
       ))}
       {msg && <div className="plc-msg">{msg}</div>}

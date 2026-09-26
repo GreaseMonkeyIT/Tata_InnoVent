@@ -13,10 +13,18 @@ spec:
     metadata:
       labels: { app: aggregator, tier: aiops }
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true           # LOG-095: distroless, user 65532
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: aggregator
           image: localhost:5000/skn/aggregator:v0.1
           imagePullPolicy: Always   # local registry on the box (PIVOT_SETUP step 4)
+          securityContext:            # LOG-095: no privilege escalation, no capabilities, read-only root
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
           ports: [{ containerPort: 9000 }]
           env:
             - { name: PROM_URL,     value: "http://prom-kube-prometheus-stack-prometheus.observability.svc:9090" }
@@ -29,7 +37,7 @@ spec:
             periodSeconds: 10
           resources:
             requests: { cpu: 100m, memory: 128Mi }
-            limits:   { cpu: 300m, memory: 384Mi }   # pivot window is fatter (aiops|observability|plant + plant_* passthrough); 150Mi had the engine forecasting the aggregator's own OOM
+            limits:   { cpu: 300m, memory: 384Mi, ephemeral-storage: 64Mi }   # pivot window is fatter (aiops|observability|plant + plant_* passthrough); 150Mi had the engine forecasting the aggregator's own OOM
       volumes:
         - name: queries
           configMap: { name: aggregator-queries }

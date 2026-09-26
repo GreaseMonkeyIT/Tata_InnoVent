@@ -1,0 +1,16 @@
+{
+  "task": "furnace",
+  "title": "Furnace power control (furnace-1)",
+  "description": "RUN is heat enable, SPEED_PCT the power limit from DERATE_PCT (0..100 %). HEAT_ENABLE = 0 turns the heat off. The coil cooling water trip stays in the OpenPLC interlock.",
+  "st": "furnace.st",
+  "profile_hint": "generic-iec",
+  "cell": {
+    "name": "thermal",
+    "rail_default": "psu-b",
+    "machines_fixed": ["furnace-1"]
+  },
+  "io_extra": [
+    {"asset": "furnace-1", "signal": "HEAT_ENABLE", "address": "%MW21", "unit": "bool",
+     "writable": true, "min": 0, "max": 1}
+  ]
+}
