@@ -13,6 +13,7 @@ import Split from "./Split";
 import useHistory from "./lib/useHistory";
 import { DEV } from "./lib/api";
 import { mockVariant } from "./lib/mock";
+import { usePref } from "./Fold";
 
 // The operator console (LOG-062): one static screen, no page scroll. Every panel keeps a fixed
 // place, and only panel bodies scroll. The layout reads left to right in the order of the engine
@@ -34,6 +35,14 @@ export default function Console({ d }) {
   const [focusPlc, setFocusPlc] = useState(null);
   const hist = useHistory(d.plant);
   const [lay, setLay] = useState({});             // operator panel sizes in px, by LAY_VAR key
+  // focus: the map takes the whole screen (visr.focus). Esc leaves it. The stored sizes are untouched.
+  const [focus, setFocus] = usePref("visr.focus", false);
+  useEffect(() => {
+    if (!focus) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setFocus(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus]);   // eslint-disable-line react-hooks/exhaustive-deps
   const layRef = useRef(lay);
   layRef.current = lay;
 
@@ -79,11 +88,11 @@ export default function Console({ d }) {
   const actionCount = (d.actions?.proposals?.length || 0) + (d.actions?.active?.length || 0) + d.derived.advisory.length;
 
   return (
-    <main className="console" style={layStyle}>
+    <main className={`console${focus ? " focus" : ""}`} style={layStyle}>
       <CommandBar d={d} review={review} text={{ size: txt, setSize: setText }} />
       <div className="col col-l">
         <Panel id="assets" title="Assets">
-          <Assets plant={d.plant} hist={hist} sel={sel} onSelect={(id) => onPick("asset", id)} statusOf={d.derived.statusOf} />
+          <Assets plant={d.plant} hist={hist} sel={sel} onSelect={(id) => onPick("asset", id)} statusOf={d.derived.statusOf} scada={d.scada} fleetTags={d.fleetTags} />
         </Panel>
         <Split dir="h" size="logH" of="next" sign={-1} min={90} max={800} {...sp} />
         <Panel id="log" title="Event log"
@@ -93,7 +102,7 @@ export default function Console({ d }) {
         <Split dir="v" size="colL" of="parent" min={240} max={Math.max(260, vw - (lay.colR || 400) - 480)} {...sp} />
       </div>
       <div className="col col-c">
-        <MapPanel d={d} plane={plane} setPlane={setPlane} view={view} setView={setView} sel={sel} onPick={onPick} />
+        <MapPanel d={d} plane={plane} setPlane={setPlane} view={view} setView={setView} sel={sel} onPick={onPick} focus={focus} setFocus={setFocus} />
         <Split dir="h" size="tabsH" of="next" sign={-1} min={140} max={900} {...sp} />
         <Tabs d={d} tab={tab} setTab={setTab} sel={sel} picked={picked} auto={auto} clearPick={() => setPicked(null)} focusPlc={focusPlc} />
       </div>

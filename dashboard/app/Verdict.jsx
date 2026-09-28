@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import Glyph from "./Glyph";
+import Fold from "./Fold";
 import { getJSON } from "./lib/api";
 import { RES_WORD, mib, istTime, istTs, num } from "./lib/format";
 
@@ -140,9 +141,9 @@ export default function Verdict({ d }) {
               <span className="lbl">{confEdge ? "strength" : "share"}</span><Meter v={conf} /><b>{conf.toFixed(2)}</b></div>
           )}
           {rootMatches && rootEdge?.evidence?.length ? (
-            <div className="vd-kv"><span className="lbl">evidence</span>
+            <Fold label="evidence" n={rootEdge.evidence.length} open={!!inc}>
               <div className="echips">{rootEdge.evidence.map((e) => <span key={e} className="echip">{e}</span>)}</div>
-            </div>
+            </Fold>
           ) : null}
           <div className="vd-kv"><span className="lbl">chain</span>
             <div className="vd-chain">
@@ -189,15 +190,17 @@ export default function Verdict({ d }) {
       {state !== "error" && <p className="vd-narr">{narr?.text || (state === "wait" ? "…" : "")}</p>}
 
       {phases.length > 0 && (
+        <Fold label="phases" n={inc?.phases?.length} open={!!inc && inc.status !== "recovering"}>
         <div className="vd-ph" aria-label="incident phases">
           {phases.map((p) => (
             <div key={p.n} className={`ph ${p.kind}`}>
               <Glyph st={PHASE_ST[p.kind] || "idle"} size={8} />
               <span className="t">{istTs(p.ts)}</span>
-              <span className="x">{p.text}</span>
+              <span className="tx">{p.text}</span>
             </div>
           ))}
         </div>
+        </Fold>
       )}
 
       {inc && <Ask />}

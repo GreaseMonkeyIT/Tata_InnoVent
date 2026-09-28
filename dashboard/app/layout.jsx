@@ -1,4 +1,5 @@
 import "./globals.css";
+import "./scifi.css";   // the digital-twin theme layer: loaded after globals.css, overrides only what it needs
 import localFont from "next/font/local";
 
 // VISR display face — Industry (Fontfabric), self-hosted via next/font/local so the static export
@@ -16,8 +17,8 @@ const display = localFont({
 });
 
 export const metadata = {
-  title: "VISR · Causal AIOps",
-  description: "Causal correlation verdict for a single-node industrial edge stack.",
+  title: "VISR · Digital twin · Tata Technologies",
+  description: "Causal AIOps digital twin of a stamping and machining hall on one air-gapped edge node. Tata InnoVent 2026.",
 };
 
 export default function RootLayout({ children }) {

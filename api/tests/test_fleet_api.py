@@ -188,3 +188,21 @@ def test_execute_cites_or_dies_and_restore_writes_100(app):
     assert client.post("/api/actions/restore", headers=H, json={"asset": "press-1"}).status_code == 200
     assert [c for c in calls if "/write" in c[1]][-1][2]["value"] == 100
     assert main.AUDIT.verify()[0] is True
+
+
+def test_fleet_tags_is_flat_and_read_only():
+    """/api/fleet/tags: every virtual PLC tag row, flat, straight from the cached tag-server registry."""
+    import main as api
+    api._SCADA_FLEET["ts"] = 9e18
+    api._SCADA_FLEET["data"] = [{"name": "plc-x", "tags": [
+        {"tag": "FLEET.PLC_X.M_1.AMPS", "asset": "m-1", "signal": "AMPS", "value": 4.2, "unit": "A", "quality": "GOOD", "address": "%IW0", "direction": "in"},
+        {"tag": "FLEET.PLC_X.M_1.DERATE_PCT", "asset": "m-1", "signal": "DERATE_PCT", "value": 100, "unit": "pct", "quality": "GOOD", "address": "%MW10", "writable": True},
+    ]}]
+    try:
+        rows = api.fleet_tags()
+    finally:
+        api._SCADA_FLEET["ts"] = 0.0
+        api._SCADA_FLEET["data"] = []
+    assert [r["tag"] for r in rows] == ["FLEET.PLC_X.M_1.AMPS", "FLEET.PLC_X.M_1.DERATE_PCT"]
+    assert rows[0]["plc"] == "plc-x" and rows[0]["writable"] is False and rows[1]["writable"] is True
+    
