@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Logo } from "./Brand";
 
 // VISR Boot — the honest system check (master plan 2D-1; the one approved VISR section never
 // built until now). Every line is a REAL probe against the live API with its measured round-trip;
@@ -80,8 +79,7 @@ export default function Boot({ getJSON, onDone }) {
   return (
     <div className={`boot${phase === "out" ? " out" : ""}`} onClick={leave}>
       <div className="boot-panel">
-        <div className="boot-brand"><b>VISR</b><span>causal aiops · digital twin · edge inference node</span></div>
-        <div className="boot-prog"><Logo height={56} /><span className="sep" /><span>Tata InnoVent 2026</span><span className="sep" /><span>stamping &amp; machining hall</span></div>
+        <div className="boot-brand"><b>VISR</b><span>causal aiops · edge inference node</span></div>
         <div className="boot-rows">
           {rows.map((r) => (
             <div key={r.id} className={`boot-row ${r.st}`}>

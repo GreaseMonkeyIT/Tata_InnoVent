@@ -1,7 +1,6 @@
 "use client";
 import Glyph from "./Glyph";
 import Spark from "./Spark";
-import { TagStrip, tagsFor } from "./MachineTags";
 import { useState } from "react";
 import { railSt, machSt, flowSt, tempSt, thruSt, lowEdge, ST_COLOR } from "./lib/palette";
 
@@ -63,7 +62,7 @@ function Row({ name, d, trip, hist, sel, role, onSelect }) {
   );
 }
 
-export default function Assets({ plant, hist, sel, onSelect, statusOf, scada, fleetTags }) {
+export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
   if (!plant) return <div className="empty">waiting for plant telemetry…</div>;
   if (plant.source === "unavailable" || !plant.devices) return <div className="empty">plant sim unreachable</div>;
   const trip = plant.trip_c ?? 80;   // LOG-100: each machine has its own trip (d.trip_c)
@@ -86,10 +85,7 @@ export default function Assets({ plant, hist, sel, onSelect, statusOf, scada, fl
             </button>
             {r.amps != null && <Details><div className="as-loopnote">feeder {r.amps.toFixed(1)} A</div></Details>}
             {devs.filter(([, d]) => d.rail === rn).map(([dn, d]) => (
-              <div key={dn}>
-                <Row name={dn} d={d} trip={d.trip_c ?? trip} hist={hist} sel={sel === dn} role={statusOf(dn)} onSelect={onSelect} />
-                {sel === dn && <TagStrip tags={tagsFor(dn, scada, fleetTags)} max={4} />}
-              </div>
+              <Row key={dn} name={dn} d={d} trip={d.trip_c ?? trip} hist={hist} sel={sel === dn} role={statusOf(dn)} onSelect={onSelect} />
             ))}
           </div>
         );

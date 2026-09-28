@@ -15,7 +15,7 @@ export const HEX = {
   red: "#f2495c",
 };
 
-// The hologram chrome (the digital-twin theme): the luminous Tata blue that draws wireframes, the
+// The hologram chrome (the digital-twin theme): the luminous blue that draws wireframes, the
 // floor grid, glass edges, and the energy flow. Always dim (thin lines or low alpha), so the three
 // status colors above stay the only bright marks. Keep in step with --holo in scifi.css.
 export const HOLO = {

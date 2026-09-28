@@ -10,7 +10,7 @@
      amber #FF9C00  warning
      red   #F2495C  alarm. Hue 353 is the complement of the teal (174): normal and alarm sit apart.
      black #000000  a live data well: the map, sparkline tracks, inputs
-   Grounds are near-black shades of the Tata blue hue. Industry (--display) sets titles and big
+   Grounds are near-black shades of one blue hue. Industry (--display) sets titles and big
    numbers, the system sans sets body text, and mono sets tags, addresses, and times. */
 :root {
   --void: #000000;

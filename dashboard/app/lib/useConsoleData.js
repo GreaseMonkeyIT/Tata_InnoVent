@@ -18,7 +18,6 @@ export default function useConsoleData() {
   const [fleet, setFleet] = useState(null);       // 2H virtual PLC fleet (/api/fleet)
   const [actions, setActions] = useState(null);   // 3D act loop (/api/actions)
   const [incident, setIncident] = useState(null); // LOG-092 incident record (/api/incident): {active, recent}
-  const [fleetTags, setFleetTags] = useState(null); // every virtual PLC tag row (/api/fleet/tags): the machine tag chips
   const [tasks, setTasks] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [updated, setUpdated] = useState(null);
@@ -31,7 +30,7 @@ export default function useConsoleData() {
     // fleet panels, and a dead tag server must show as blind, not as the last good picture.
     const miss = [];
     const core = (path) => getJSON(path).catch(() => { miss.push(path); return null; });
-    const [g, n, h, t, p, pr, pl, tg, fl, ac, inc, ft] = await Promise.all([
+    const [g, n, h, t, p, pr, pl, tg, fl, ac, inc] = await Promise.all([
       core("/api/graph"),
       core("/api/narrative"),
       core("/api/health"),
@@ -43,14 +42,12 @@ export default function useConsoleData() {
       getJSON("/api/fleet").catch(() => null),
       getJSON("/api/actions").catch(() => null),
       getJSON("/api/incident").catch(() => null),
-      getJSON("/api/fleet/tags").catch(() => null),
     ]);
     if (g) setGraph(g); if (n) setNarr(n); if (h) setHealth(h);
     if (t) setTopo(t); if (p) setPods(p); if (pr) setPodres(pr); if (pl) setPlant(pl);
     if (tg) setScada(tg);
     if (tg && tg.source === "scada") setTagsOkAt(new Date());
     if (fl) setFleet(fl); if (ac) setActions(ac); if (inc) setIncident(inc);
-    if (Array.isArray(ft)) setFleetTags(ft);
     if (miss.length) setFeedErr({ what: miss.join(", "), at: new Date() });
     else { setFeedErr(null); setUpdated(new Date()); }
   }
@@ -202,7 +199,7 @@ export default function useConsoleData() {
   const fairness = nsGinis.length ? 1 - nsGinis.reduce((a, b) => a + b, 0) / nsGinis.length : null;
 
   return {
-    graph, narr, health, topo, pods, podres, plant, recs, audit, scada, fleet, actions, tasks, profiles, incident, fleetTags,
+    graph, narr, health, topo, pods, podres, plant, recs, audit, scada, fleet, actions, tasks, profiles, incident,
     updated,
     fleetChanged, reloadAll,
     feedErr, now, tagsOkAt,

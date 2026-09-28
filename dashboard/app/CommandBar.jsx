@@ -1,6 +1,5 @@
 "use client";
 import Glyph from "./Glyph";
-import Brand from "./Brand";
 import { usePref } from "./Fold";
 import { DEV } from "./lib/api";
 import { istTime } from "./lib/format";
@@ -76,7 +75,9 @@ export default function CommandBar({ d, review, text }) {
   const shown = allLamps ? lamps : lamps.filter((l) => l.st !== "ok");
   return (
     <header className="cmdbar">
-      <Brand />
+      <div className="brand">
+        <span className="brand-plate">VISR</span>
+      </div>
       <div className="lamps">
         {shown.map((l) => <Lamp key={l.k} {...l} />)}
         <button className={`lamp lamp-pill${allLamps ? " on" : ""}`} onClick={() => setAllLamps(!allLamps)} aria-expanded={allLamps}

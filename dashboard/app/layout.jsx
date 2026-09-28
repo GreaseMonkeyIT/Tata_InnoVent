@@ -17,8 +17,8 @@ const display = localFont({
 });
 
 export const metadata = {
-  title: "VISR · Digital twin · Tata Technologies",
-  description: "Causal AIOps digital twin of a stamping and machining hall on one air-gapped edge node. Tata InnoVent 2026.",
+  title: "VISR · Causal AIOps",
+  description: "Causal correlation verdict for a single-node industrial edge stack.",
 };
 
 export default function RootLayout({ children }) {

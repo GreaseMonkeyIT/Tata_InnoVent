@@ -41,7 +41,7 @@
 ## 3. Reskin: design system (restrained "VISR"), SHIPPED
 - **Font:** Industry (Fontfabric), self-hosted via next/font/local. Trial "Test" weights today. The licensed swap is open.
 - **Palette (LOG-062):** the Stage 2 deck colors, used sparsely on a near-black navy base. Teal `#12C6B3` is the normal state and the accent. Blue `#0000B3` fills operator commands only. Amber `#FF9C00` is warning, red `#F2495C` is alarm, and black `#000000` marks live data wells.
-- **Layout (LOG-062):** one static operator console, no page scroll. Boot overlay, then: Assets and Event log (left) · Map with FLOOR/EDGE and ISO/PLAN, plus the Selected, Fleet, Tags, Trends, and Edge tabs (center) · Verdict and Actions (+ inline Execute) (right). The operator resizes panels by dragging the gaps. Faults run from `deploy/faults.sh` on the box, not the console (LOG-081).
+- **Layout (LOG-062):** one static operator console, no page scroll. Boot overlay, then: Assets and Event log (left) · Map with FLOOR/EDGE and 3D/PLAN, plus the Selected, Fleet, Tags, Trends, and Edge tabs (center) · Verdict and Actions (+ inline Execute) (right). The operator resizes panels by dragging the gaps. Faults run from `deploy/faults.sh` on the box, not the console (LOG-081).
 
 ## 4. Repair agents (Stage 3)
 The third loop step is **explain → recommend → act**. The system uses a closed action vocabulary,

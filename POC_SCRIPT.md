@@ -73,7 +73,7 @@ The laptop has one 1920×1080 display. The capture records the full display.
 |---|---|---|
 | 1 | Open the console in a private window | the login wall (TLS, per-role accounts) |
 | 2 | Log in as **operator** | the boot screen runs its six real probes, then "all systems nominal" |
-| 3 | Enter the console. **Map**, FLOOR + ISO: drag slowly to rotate the hall. Then **PLAN**, then **ISO** | eight machines, two rails, the coolant trench |
+| 3 | Enter the console. **Map**, FLOOR + 3D: drag slowly to rotate the hall. Then **PLAN**, then **3D** | eight machines, two rails, the coolant trench |
 | 4 | Point at the **Verdict** panel | STEADY |
 | 5 | **Assets** (left column): live V, A, °C per machine | rails psu-a, psu-b, psu-c, the loop |
 | 6 | **Edge** tab | the edge box watched by the same engine, the eBPF traffic map |

@@ -17,7 +17,7 @@ The layout reads left to right in the order of the engine pipeline:
 |---|---|
 | Top | **Command bar**: the VISR plate and lamps for engine, aggregator, PLC link, historian, fleet, auth, and the audit chain |
 | Left column | **Assets** (machines grouped by rail and coolant loop) and **Event log** (the audit ledger). The event log says "Scenario 1" where the API says PS1 (LOG-078) |
-| Center | **Map** (FLOOR or EDGE, ISO or PLAN camera) and the detail tabs: **Selected**, **Fleet**, **Tags**, **Trends**, **Edge** |
+| Center | **Map** (FLOOR or EDGE, 3D or PLAN camera, FOCUS) and the detail tabs: **Selected**, **Fleet**, **Tags**, **Trends**, **Edge** |
 | Right column | **Verdict** (STEADY, FORECAST, ROOT CAUSE, INCIDENT, or RECOVERING, from `/api/incident`: the current driver, "started by" the origin, the reason, the chain, the narrative, the last phases, and an **Ask** box), which takes the free height, and **Actions** (Execute, holding, and the advisory suggestions) |
 
 - The console has no fault controls and never says that a fault is injected (LOG-081). Faults run
@@ -27,8 +27,21 @@ The layout reads left to right in the order of the engine pipeline:
   it to reset that size. The sizes stay in this browser only (`localStorage` key `visr.layout`).
 
 - The floor map uses a normal orbit camera (three.js OrbitControls, LOG-063): drag rotates, and the
-  scene follows the cursor. Right-drag pans, and the wheel zooms. A rotation never changes the zoom.
-  ISO and PLAN are camera presets, and a second click on the active preset resets the view.
+  scene follows the cursor. Right-drag pans, and the wheel moves the camera in and out. A rotation
+  never changes the distance. 3D and PLAN are camera presets, and a second click on the active preset
+  resets the view.
+- The camera is a perspective camera with a 38° vertical field of view (LOG-104). A near machine shows
+  larger than a far one. A preset moves the camera along its line of sight until the whole hall fits
+  the map. The camera moves only when the operator moves it. The map has no fog. The clip planes
+  follow the camera, so a close zoom never cuts or hides a machine.
+- `MOTION` in `Floor.jsx` is on (LOG-105): energy and coolant flows move at measured speeds, and pulses
+  march along the causal path, at 30 frames per second. With `MOTION` off, the map draws a frame only
+  when data, the selection, the pointer, or the camera changes, and a causal path shows fixed
+  arrowheads from cause to effect. `MOTION` ignores the browser's reduced-motion setting. Windows
+  reports reduced motion when its "Animation effects" setting is off.
+- A machine or a rail in warning or alarm keeps its value plate on the map. The selected asset and the
+  asset under the pointer show theirs too. The plates draw on top of the scene.
+- FOCUS gives the map the whole screen. Esc leaves it.
 - A click on a machine, a rail, or the coolant loop (in Assets or on the map) opens it in the
   Selected tab. A click on a PLC cabinet on the map opens its card in the Fleet tab.
 - Until the operator picks an asset, Selected follows the root cause, then the soonest forecast,
@@ -101,7 +114,9 @@ while the Trends tab is open.
 | `app/Console.jsx` | The shell: the columns, the selection state, the tab state |
 | `app/lib/useConsoleData.js` | Every poll, the operator actions, and the values derived from the verdict |
 | `app/lib/api.js`, `app/lib/mock.js` | `getJSON` and `send`, and the dev-only design-review mock |
-| `app/Floor.jsx`, `app/Graph.jsx` | The 3D plant floor (picking, ISO and PLAN) and the edge force graph |
+| `app/Floor.jsx`, `app/Graph.jsx` | The 3D plant floor (picking, 3D and PLAN) and the edge force graph |
+| `app/Fold.jsx` | The fold toggle and the `visr.*` preference hook |
+| `app/scifi.css` | The theme layer. It loads after `globals.css` and overrides only what it needs |
 | `app/*.jsx` | One file per panel or tab |
 
 ## Local development (laptop)

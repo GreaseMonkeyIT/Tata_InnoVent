@@ -28,7 +28,7 @@ const LAY_VAR = { colL: "--col-l", colR: "--col-r", logH: "--log-h", tabsH: "--t
 export default function Console({ d }) {
   const [mock, setMock] = useState("incident");
   const [plane, setPlane] = useState("floor");   // map: plant floor | edge stack
-  const [view, setViewReq] = useState({ mode: "iso", n: 0 });   // floor camera preset request
+  const [view, setViewReq] = useState({ mode: "3d", n: 0 });   // floor camera preset request
   const setView = (mode) => setViewReq((v) => ({ mode, n: v.n + 1 }));
   const [tab, setTab] = useState("selected");
   const [picked, setPicked] = useState(null);    // operator pick. null = follow the verdict
@@ -92,7 +92,7 @@ export default function Console({ d }) {
       <CommandBar d={d} review={review} text={{ size: txt, setSize: setText }} />
       <div className="col col-l">
         <Panel id="assets" title="Assets">
-          <Assets plant={d.plant} hist={hist} sel={sel} onSelect={(id) => onPick("asset", id)} statusOf={d.derived.statusOf} scada={d.scada} fleetTags={d.fleetTags} />
+          <Assets plant={d.plant} hist={hist} sel={sel} onSelect={(id) => onPick("asset", id)} statusOf={d.derived.statusOf} />
         </Panel>
         <Split dir="h" size="logH" of="next" sign={-1} min={90} max={800} {...sp} />
         <Panel id="log" title="Event log"

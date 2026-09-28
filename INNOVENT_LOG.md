@@ -2286,3 +2286,81 @@ every production machine 100 %. The factory-up wipe deletes the ConfigMap with t
 `api/tests/test_scenarios_api.py`, `dashboard/app/lib/palette.js`, `dashboard/app/Assets.jsx`,
 `dashboard/app/Selected.jsx`, `dashboard/app/lib/mock.js`, `video/record.ps1`, `video/layout.ps1`,
 `SCENARIOS.md` (7), `FLEET.md` (11), `PIVOT_SETUP.md`, `POC_SCRIPT.md` (4), `INNOVENT_LOG.md`.
+
+**LOG-104 · 2026-09-28 · Pull request 3 merged, then trimmed. The floor map gets a perspective camera.**
+**Merged (pull request 3, squash, `e961213`):** a theme layer (`scifi.css`: glass panels, blue chrome
+hairlines, bloom on the floor map), machine silhouettes by kind, energy and coolant flows at measured
+speeds, tag plates on hover and for alarms, a slow auto-orbit, folds for evidence, phases, and advisory
+cards, "details" toggles in Assets, a lamp pill that folds the healthy lamps, FOCUS mode, an asset card on
+the map (`MapHud.jsx`), and `GET /api/fleet/tags`.
+**Removed after the merge (operator):**
+- Every sponsor name and logo: the two logo files in `dashboard/public/brand/`, `Brand.jsx`, the boot line,
+  and the page title. The title is "VISR · Causal AIOps" again. Code comments name the chrome hue as
+  "blue" only.
+- The plant name and the programme line in the command bar. LOG-080 removed the brand subtitle.
+- The `info` map overlay: the plant summary and a site line that the pull request made up.
+- The tag chips under the selected asset row and in the map card (`MachineTags.jsx`). LOG-082 replaced
+  the chips with the Tags table because they looked cluttered. The console no longer polls
+  `/api/fleet/tags`, so the endpoint and its test are removed too. `api/` is the same as in `efe40a9`.
+- The CSS rules of the removed parts (38 lines of `scifi.css`).
+**Camera:** the floor map used an orthographic camera. That camera draws the far end of the hall at the same
+size as the near end, and the eye reads it as wider. `Floor.jsx` now uses a perspective camera with a 38°
+vertical field of view (about a 35 mm lens). `fit()` moves the camera along its line of sight until the 8
+corners of the hall box fit the view with a 5 % margin. A panel resize refits while the operator has not
+moved the camera. The auto-orbit refits at each frame, because the hall is long: seen along its length, the
+near end clipped at the home distance. The fog follows the camera distance. The wheel limits are 0.15 to 2.5
+times the fitted distance. The ISO preset is now 3D (`view.mode` "3d").
+**Measured (dev preview, incident mock, reduced motion, so no flows):** 253 draw calls, 257 materials, 241
+geometries, and about 9,500 triangles per frame. Bloom adds 14 render passes per frame, and the frame
+time went from 2.35 ms to 3.72 ms at 798 × 484 px on the laptop GPU.
+**Verified:** `next build` passes. In the dev preview, the 3D preset shows the far wall shorter than the near
+edge, a side angle keeps the whole hall in view, PLAN frames the hall from above, and the command bar
+shows only the VISR plate.
+**Files:** `dashboard/app/Floor.jsx`, `dashboard/app/MapPanel.jsx`, `dashboard/app/MapHud.jsx`,
+`dashboard/app/Console.jsx`, `dashboard/app/CommandBar.jsx`, `dashboard/app/Boot.jsx`, `dashboard/app/Assets.jsx`,
+`dashboard/app/layout.jsx`, `dashboard/app/scifi.css`, `dashboard/app/globals.css`, `dashboard/app/lib/palette.js`,
+`dashboard/app/lib/useConsoleData.js`, `dashboard/app/Brand.jsx` (removed), `dashboard/app/MachineTags.jsx`
+(removed), `dashboard/public/brand/` (removed), `api/main.py`, `api/tests/test_fleet_api.py`,
+`dashboard/README.md`, `INNOVENT_PLAN.md`, `POC_SCRIPT.md` (3.1), `INNOVENT_LOG.md`.
+
+**LOG-105 · 2026-09-28 · The floor map: function over looks, and a frame only on change.**
+**Why (operator):** the 3D view must put function before looks. The operator kept the perspective camera of
+LOG-104 and asked for items 2 to 7 of the review, then a trial of item 1.
+**Change (`Floor.jsx`, `MapPanel.jsx`, `scifi.css`):**
+- No bloom. The scene renders straight to the canvas, so the 4x MSAA of the canvas applies again. The bloom
+  passes rendered into render targets without MSAA, so the old map had no antialiasing at all.
+- No auto-orbit. The camera moves only when the operator moves it.
+- Shared materials. A state change swaps the material of an object and never edits one. Each machine is one
+  merged body mesh and one outline. Every static part of the room merges into one object per material.
+  Flow particles are one instanced mesh per flow.
+- Outlines only on the outer shape of a machine. Fins, rollers, legs, the ram, and small fittings have none.
+- Value plates for warnings too: a machine or a rail in warning keeps its plate, as an alarm did. The plates
+  draw on top of the scene, so a pole or a lamp never hides a value.
+- The asset card on the map (`MapHud.jsx`) is removed. It repeated the Selected tab and covered part of the
+  hall. Its CSS goes too.
+- Frames on demand (the item 1 trial): the map draws a frame only when data, the selection, the pointer, or
+  the camera changes. A causal path shows fixed arrowheads from cause to effect in place of the marching
+  pulses. The flows are off, and the selection ring does not pulse. `MOTION = true` restores the flows and the
+  pulses at 30 frames per second. After the trial, the operator chose `MOTION = true`. The other changes stay.
+- The fog is removed (operator). Pull request 3 added it. It followed the distance from the camera to its
+  look-at point, so after a close zoom it hid every machine past about twice that distance. The near plane
+  is now 1/200 of the look-at distance, so a close zoom does not cut a machine.
+- `MOTION` ignores the reduced-motion setting of the browser (operator). "Animation effects" is off in
+  Windows on the laptop, and Chromium reports that as reduced motion, so the flows never moved there.
+- The coolant trench now runs on to the chiller (operator). The chiller takes the heat out of the loop,
+  but the floor ended the trench at the last cooled machine, so the chiller had no line. Two lines, supply
+  and return, join the trench to the chiller, so it reads as the source and not as one more load. The api
+  names the unit in `loop.chiller.name`. The dev mock has no such field, so the floor also takes the
+  device of kind "chiller".
+- Two defects of pull request 3 are gone. First, the furnace coil band never lit, because each update set its
+  glow to black. It is now part of the furnace body. Second, every poll wrote the text, color, and border of
+  all 17 plates, and each write draws a new canvas. A plate now gets a write only for a changed value.
+**Measured (dev preview, incident mock, 1600 x 900):** 79 draw calls per frame, from 253. With the map idle,
+0 frames in 3 s, from 30 frames per second before. With `MOTION = true`: 87 draw calls per frame.
+**Verified:** the dev preview renders with no console errors. The 3D preset, FOCUS, and a wheel zoom work. At
+the closest zoom, the far machines stay visible.
+The plates of press-1, rail psu-a, cnc-1, and qa-scanner-1 show in the incident mock. The arrowheads follow
+the coolant path from press-1. The MOTION path was run once with the reduced-motion check off, and then
+restored.
+**Files:** `dashboard/app/Floor.jsx`, `dashboard/app/MapPanel.jsx`, `dashboard/app/MapHud.jsx` (removed),
+`dashboard/app/scifi.css`, `dashboard/README.md`, `INNOVENT_LOG.md`.
