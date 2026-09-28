@@ -15,6 +15,18 @@ export const HEX = {
   red: "#f2495c",
 };
 
+// The hologram chrome (the digital-twin theme): the luminous Tata blue that draws wireframes, the
+// floor grid, glass edges, and the energy flow. Always dim (thin lines or low alpha), so the three
+// status colors above stay the only bright marks. Keep in step with --holo in scifi.css.
+export const HOLO = {
+  line: "#3d8bff",          // wireframe edges, landing rings, brackets
+  bright: "#9cc4ff",        // selection, window strips
+  grid: "#2458b8",          // the fine floor grid
+  flow: "#bcd6ff",          // energy particles on the bus bars (bright enough to bloom)
+  coolant: "#5fd8ff",       // coolant particles in the trench
+  plateEdge: "rgba(120, 170, 255, 0.55)",   // the border of a floating tag plate
+};
+
 // Status word -> CSS color. The Glyph component adds the shape (ISA-101 redundant coding).
 export const ST_COLOR = { hot: "var(--red)", strained: "var(--amber)", ok: "var(--normal)" };
 

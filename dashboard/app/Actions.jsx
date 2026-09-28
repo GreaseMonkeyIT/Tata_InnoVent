@@ -1,5 +1,6 @@
 "use client";
 import ActLoop from "./ActLoop";
+import Fold from "./Fold";
 
 // Actions: explain, recommend, then act. Executable act-loop proposals come first (a human
 // confirms each write). Advisory cards follow: the causal throttle and the edge right-sizing.
@@ -11,16 +12,19 @@ export default function Actions({ d }) {
     <>
       {loopItems > 0 && <div className="lbl act-grp">act</div>}
       <ActLoop actions={d.actions} onChanged={d.fleetChanged} />
-      {adv.length > 0 && <div className="lbl act-grp">advisory</div>}
-      {adv.map((a) => (
-        <div key={`${a.verb}-${a.name}`} className="rec">
-          <span className={`actpill ${a.kind}`}>{a.verb}</span>
-          <div className="b">
-            <div className="nm">{a.name}</div>
-            <div className="ds">{a.detail}</div>
-          </div>
-        </div>
-      ))}
+      {adv.length > 0 && (
+        <Fold label="advisory" n={adv.length} open={!!d.incident?.active}>
+          {adv.map((a) => (
+            <div key={`${a.verb}-${a.name}`} className="rec">
+              <span className={`actpill ${a.kind}`}>{a.verb}</span>
+              <div className="b">
+                <div className="nm">{a.name}</div>
+                <div className="ds">{a.detail}</div>
+              </div>
+            </div>
+          ))}
+        </Fold>
+      )}
       {!loopItems && !adv.length && (
         <div className="empty">{d.recs?.source === "unavailable" ? "Prometheus unavailable" : "no actions"}</div>
       )}

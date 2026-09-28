@@ -1,5 +1,7 @@
 "use client";
 import Glyph from "./Glyph";
+import Brand from "./Brand";
+import { usePref } from "./Fold";
 import { DEV } from "./lib/api";
 import { istTime } from "./lib/format";
 
@@ -55,21 +57,34 @@ export default function CommandBar({ d, review, text }) {
   // and red at 30 s without a full update, so a stale screen never passes as a calm one.
   const age = d.updated ? (d.now - d.updated.getTime()) / 1000 : null;
   const clockSt = age == null ? "" : age > 30 ? " stale-hot" : age > 15 ? " stale-warn" : "";
+  // The lamps fold (LOG-062 clutter pass): only an abnormal lamp shows by itself; the healthy ones sit
+  // behind one pill that reads how many are ok. A click on the pill opens the full row until the next
+  // click. The choice stays in this browser (visr.lamps).
+  const [allLamps, setAllLamps] = usePref("visr.lamps", false);
+  const lamps = [
+    { st: svcSt(svc.engine), k: "engine", title: "correlation engine /healthz" },
+    { st: svcSt(svc.aggregator), k: "aggregator", title: "aggregator /healthz" },
+    { st: !d.scada ? "idle" : tagsDown ? "hot" : "ok", k: "scada", v: tagsDown ? "blind" : null, title: "the tag server: every SCADA tag goes through it" },
+    { st: d.scada && !tagsDown ? (d.scada.plc_connected ? "ok" : "hot") : "idle", k: "plc link", title: "OpenPLC over Modbus, read by the tag server" },
+    { st: hist ? (hist.connected ? "ok" : "hot") : "idle", k: "historian", title: "TimescaleDB plant_tags" },
+    { st: fleetOff ? "idle" : run === plcs.length ? "ok" : "strained", k: "fleet", v: fleetOff ? null : `${run}/${plcs.length} run`, title: "virtual PLC fleet" },
+    { st: auth === "enforced" ? "ok" : auth ? "strained" : "idle", k: "auth", v: auth && auth !== "enforced" ? auth : null, title: "operator action gate" },
+    { st: d.audit ? (d.audit.chain_ok ? "ok" : "hot") : "idle", k: "audit", v: d.audit && !d.audit.chain_ok ? "CHAIN BROKEN" : null, title: "hash-chained action ledger" },
+    { st: !d.graph ? "idle" : integ.length ? "hot" : "ok", k: "integrity", v: integ.length ? `${integ.length} open` : null, title: "unsigned setpoint changes and current-balance checks (SCENARIOS.md 5.2)" },
+  ];
+  const okCount = lamps.filter((l) => l.st === "ok").length;
+  const shown = allLamps ? lamps : lamps.filter((l) => l.st !== "ok");
   return (
     <header className="cmdbar">
-      <div className="brand">
-        <span className="brand-plate">VISR</span>
-      </div>
+      <Brand />
       <div className="lamps">
-        <Lamp st={svcSt(svc.engine)} k="engine" title="correlation engine /healthz" />
-        <Lamp st={svcSt(svc.aggregator)} k="aggregator" title="aggregator /healthz" />
-        <Lamp st={!d.scada ? "idle" : tagsDown ? "hot" : "ok"} k="scada" v={tagsDown ? "blind" : null} title="the tag server: every SCADA tag goes through it" />
-        <Lamp st={d.scada && !tagsDown ? (d.scada.plc_connected ? "ok" : "hot") : "idle"} k="plc link" title="OpenPLC over Modbus, read by the tag server" />
-        <Lamp st={hist ? (hist.connected ? "ok" : "hot") : "idle"} k="historian" title="TimescaleDB plant_tags" />
-        <Lamp st={fleetOff ? "idle" : run === plcs.length ? "ok" : "strained"} k="fleet" v={fleetOff ? null : `${run}/${plcs.length} run`} title="virtual PLC fleet" />
-        <Lamp st={auth === "enforced" ? "ok" : auth ? "strained" : "idle"} k="auth" v={auth && auth !== "enforced" ? auth : null} title="operator action gate" />
-        <Lamp st={d.audit ? (d.audit.chain_ok ? "ok" : "hot") : "idle"} k="audit" v={d.audit && !d.audit.chain_ok ? "CHAIN BROKEN" : null} title="hash-chained action ledger" />
-        <Lamp st={!d.graph ? "idle" : integ.length ? "hot" : "ok"} k="integrity" v={integ.length ? `${integ.length} open` : null} title="unsigned setpoint changes and current-balance checks (SCENARIOS.md 5.2)" />
+        {shown.map((l) => <Lamp key={l.k} {...l} />)}
+        <button className={`lamp lamp-pill${allLamps ? " on" : ""}`} onClick={() => setAllLamps(!allLamps)} aria-expanded={allLamps}
+          title={allLamps ? "fold the healthy lamps away" : "show every lamp"}>
+          <Glyph st={okCount === lamps.length ? "ok" : "idle"} size={8} />
+          <span className="k">{okCount === lamps.length ? "all systems ok" : `${okCount} ok`}</span>
+          <span className="v">{allLamps ? "−" : `${okCount}`}</span>
+        </button>
       </div>
       <div className="cmd-right">
         {DEV && review && <Review {...review} />}

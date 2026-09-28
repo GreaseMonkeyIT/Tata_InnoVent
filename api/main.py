@@ -1038,6 +1038,21 @@ def fleet_tasks():
     return [fleet.task_summary(n, e) for n, e in sorted(_library().items())]
 
 
+@app.get("/api/fleet/tags", tags=["fleet"])
+def fleet_tags():
+    """Every virtual PLC's tag rows, flat, from the tag server registry (FLEET.<PLC>.<ASSET>.<SIGNAL>):
+    the value read over the PLC protocol this poll, its quality, its address, and whether VISR may
+    write it. Read-only. The console's machine tag chips read it next to /api/tags."""
+    out = []
+    for entry in _scada_fleet():
+        for t in entry.get("tags") or []:
+            out.append({"plc": entry.get("name"), "tag": t.get("tag"), "asset": t.get("asset"), "signal": t.get("signal"),
+                        "value": t.get("value"), "unit": t.get("unit"), "quality": t.get("quality"),
+                        "address": t.get("address"), "direction": t.get("direction"), "writable": bool(t.get("writable")),
+                        "ts": t.get("ts")})
+    return out
+
+
 @app.get("/api/fleet", tags=["fleet"])
 def fleet_list():
     """Every virtual PLC with its six onboarding phases. Each timestamp is a real observation."""

@@ -1,12 +1,26 @@
 "use client";
 import Glyph from "./Glyph";
 import Spark from "./Spark";
+import { TagStrip, tagsFor } from "./MachineTags";
+import { useState } from "react";
 import { railSt, machSt, flowSt, tempSt, thruSt, lowEdge, ST_COLOR } from "./lib/palette";
 
 // Assets outliner: every machine, grouped by the shared medium that carries the causal story
 // (rail, coolant loop). One compact row per machine. The full trends and the SCADA tags of a
 // machine open in the Selected tab. Values are neutral text while normal and take the warning or
 // alarm color only when abnormal, so a calm plant reads calm.
+// The note lines of a group (feeder amps, pump health, segment load) sit behind one small toggle,
+// closed by default. A trip note is an alarm, so it never hides.
+function Details({ children }) {
+  const [on, setOn] = useState(false);
+  return (
+    <>
+      <button className="as-details" onClick={(e) => { e.stopPropagation(); setOn(!on); }} aria-expanded={on}>details {on ? "−" : "+"}</button>
+      {on && children}
+    </>
+  );
+}
+
 const ink = (st) => (st === "ok" ? undefined : ST_COLOR[st === "trip" ? "hot" : st]);
 
 // ISA-101 analog indicator: a black track, the normal range marked, and a marker at the value.
@@ -49,7 +63,7 @@ function Row({ name, d, trip, hist, sel, role, onSelect }) {
   );
 }
 
-export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
+export default function Assets({ plant, hist, sel, onSelect, statusOf, scada, fleetTags }) {
   if (!plant) return <div className="empty">waiting for plant telemetry…</div>;
   if (plant.source === "unavailable" || !plant.devices) return <div className="empty">plant sim unreachable</div>;
   const trip = plant.trip_c ?? 80;   // LOG-100: each machine has its own trip (d.trip_c)
@@ -70,9 +84,12 @@ export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
               <Band v={r.volts} lo={0.85 * r.v_src} hi={1.01 * r.v_src} okLo={0.882 * r.v_src} okHi={r.v_src} st={st} />
               <span className="rv" style={{ color: ink(st) }}>{r.volts.toFixed(1)}<small>V</small></span>
             </button>
-            {r.amps != null && <div className="as-loopnote">feeder {r.amps.toFixed(1)} A</div>}
+            {r.amps != null && <Details><div className="as-loopnote">feeder {r.amps.toFixed(1)} A</div></Details>}
             {devs.filter(([, d]) => d.rail === rn).map(([dn, d]) => (
-              <Row key={dn} name={dn} d={d} trip={d.trip_c ?? trip} hist={hist} sel={sel === dn} role={statusOf(dn)} onSelect={onSelect} />
+              <div key={dn}>
+                <Row name={dn} d={d} trip={d.trip_c ?? trip} hist={hist} sel={sel === dn} role={statusOf(dn)} onSelect={onSelect} />
+                {sel === dn && <TagStrip tags={tagsFor(dn, scada, fleetTags)} max={4} />}
+              </div>
             ))}
           </div>
         );
@@ -85,7 +102,7 @@ export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
             <Band v={loop.flow} lo={0} hi={nom * 1.1} okLo={0.85 * nom} okHi={nom * 1.1} st={lst} />
             <span className="rv" style={{ color: ink(lst) }}>{loop.flow.toFixed(1)}<small>L/min</small></span>
           </button>
-          <div className="as-loopnote">pump {Math.round((loop.pump_health ?? 1) * 100)} %</div>
+          <Details><div className="as-loopnote">pump {Math.round((loop.pump_health ?? 1) * 100)} %</div></Details>
           {Object.entries(plant.devices).filter(([, d]) => d.trip_reason).map(([dn, d]) => (
             <div key={dn} className="as-loopnote hot">{dn} TRIP · {d.trip_reason}</div>
           ))}
@@ -102,7 +119,7 @@ export default function Assets({ plant, hist, sel, onSelect, statusOf }) {
               <Band v={u} lo={0} hi={1.5} okLo={0} okHi={0.8} st={sst} />
               <span className="rv" style={{ color: ink(sst) }}>{(sg.latency_ms ?? 0).toFixed(0)}<small>ms</small></span>
             </button>
-            <div className="as-loopnote">load {Math.round(u * 100)} % · drops {Math.round((sg.drop_ratio ?? 0) * 100)} %</div>
+            <Details><div className="as-loopnote">load {Math.round(u * 100)} % · drops {Math.round((sg.drop_ratio ?? 0) * 100)} %</div></Details>
           </div>
         );
       })}

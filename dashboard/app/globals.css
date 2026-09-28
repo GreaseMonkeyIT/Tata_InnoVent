@@ -248,7 +248,7 @@ button { font-family: inherit; color: inherit; }
 .vd-ph { display: flex; flex-direction: column; gap: 3px; padding-top: 8px; border-top: 1px solid var(--line); }
 .vd-ph .ph { display: grid; grid-template-columns: 10px calc(58px * var(--fz)) minmax(0, 1fr); align-items: baseline; gap: 6px; font-family: var(--mono); font-size: calc(10.5px * var(--fz)); color: var(--text-weak); }
 .vd-ph .ph .t { color: var(--text-faint); font-variant-numeric: tabular-nums; }
-.vd-ph .ph .x { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vd-ph .ph .tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vd-ph .ph:last-child { color: var(--text); }
 .vd-ask { display: flex; flex-direction: column; gap: 6px; }
 .vd-ask .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }

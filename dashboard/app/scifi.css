@@ -1,0 +1,168 @@
+/* VISR digital-twin theme. Loaded after globals.css and only overrides what it needs, so every rule
+   in globals.css keeps working. Two ideas hold it together:
+   1. light comes from data: a glow is a measured value or a verdict state, never decoration
+   2. the chrome is one hue, the luminous Tata blue (--holo), and it stays dim: hairlines, low alpha,
+      soft edges. The three status colors (teal normal, amber warning, red alarm) stay the only
+      bright marks, so a color on the screen is still always a state.
+   Everything animated here respects prefers-reduced-motion. */
+
+:root {
+  --void: #04060b;
+  --bg: #070a12;
+  --panel: rgba(12, 17, 29, 0.78);
+  --panel-2: rgba(16, 23, 39, 0.86);
+  --line: rgba(110, 160, 255, 0.16);
+  --line-2: rgba(110, 160, 255, 0.3);
+  --holo: #3d8bff;
+  --holo-bright: #9cc4ff;
+  --holo-dim: rgba(61, 139, 255, 0.14);
+  --holo-glow: 0 0 0 1px rgba(61, 139, 255, 0.14);   /* a hairline, no outer blur: panels never compete with the map */
+  --gap: 10px;
+  --glass: rgba(6, 11, 24, 0.66);
+}
+
+/* the ground: a faint hall grid with a vignette, so the panels read as glass over the twin */
+body {
+  background:
+    linear-gradient(rgba(61, 139, 255, 0.022) 1px, transparent 1px) 0 0 / 80px 80px,
+    linear-gradient(90deg, rgba(61, 139, 255, 0.022) 1px, transparent 1px) 0 0 / 80px 80px,
+    var(--bg);
+  background-attachment: fixed;
+}
+
+/* ── panels as glass ── */
+.pnl { background: var(--panel); border: 1px solid var(--line); box-shadow: var(--holo-glow), inset 0 1px 0 rgba(255, 255, 255, 0.03); backdrop-filter: blur(10px) saturate(120%); -webkit-backdrop-filter: blur(10px) saturate(120%); position: relative; }
+.pnl-b { padding: 12px 14px; }
+.pnl-b.flush { padding: 0; }
+.pnl::before, .pnl::after { content: ""; position: absolute; width: 12px; height: 12px; pointer-events: none; z-index: 2; }
+.pnl::before { top: -1px; left: -1px; border-top: 1.5px solid var(--holo); border-left: 1.5px solid var(--holo); border-top-left-radius: 6px; }
+.pnl::after { bottom: -1px; right: -1px; border-bottom: 1.5px solid var(--holo); border-right: 1.5px solid var(--holo); border-bottom-right-radius: 6px; }
+.pnl-h { background: linear-gradient(90deg, rgba(61, 139, 255, 0.14), rgba(61, 139, 255, 0.02) 60%, transparent); border-bottom: 1px solid var(--line-2); }
+.pnl-t::before { border-color: var(--holo-bright); }
+.pnl-t { text-shadow: 0 0 12px rgba(120, 170, 255, 0.35); }
+
+/* the map well: the twin sits on black with a soft horizon so the floor grid fades out */
+.map-well { background: radial-gradient(120% 90% at 50% 100%, #0a1225 0%, #04060b 60%); }
+.map-well::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.55); }
+.map-legend { background: var(--glass); border: 1px solid var(--line); border-radius: 4px; padding: 3px 8px; opacity: 0.7; }
+
+/* ── command bar: the brand strip ── */
+.cmdbar { border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(61, 139, 255, 0.06), transparent); }
+.brand { gap: 14px; }
+.brand-plate { box-shadow: 0 0 14px rgba(61, 139, 255, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+.brand-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 1.15; }
+.brand-plant { font-family: var(--display); font-weight: 700; font-size: 13.5px; letter-spacing: 0.4px; color: var(--text); white-space: nowrap; }
+.brand-site { margin-left: 8px; font-family: var(--mono); font-size: 10.5px; font-weight: 400; letter-spacing: 0.6px; color: var(--text-weak); }
+.brand-prog { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.brand-tt { font-family: var(--display); font-weight: 600; font-size: 11.5px; letter-spacing: 1.2px; color: var(--holo-bright); text-shadow: 0 0 10px rgba(61, 139, 255, 0.45); }
+.brand-logo { width: auto; display: block; }                       /* height comes from the Logo component */
+.brand-logo.plate { background: #fff; padding: 4px 7px; border-radius: 4px; box-sizing: content-box; }   /* the colour logo on a white plate */
+.brand-logo.reversed { opacity: 0.94; }                                                                /* the white logo straight on the dark ground */
+.brand-sep { width: 1px; height: 12px; background: var(--line-2); }
+.brand-ev { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.8px; color: var(--text-weak); }
+@media (max-width: 1599px) { .brand-ev, .brand-sep { display: none; } .brand-logo { height: 28px !important; } }
+@media (max-width: 1279px) { .brand-id { display: none; } }
+
+/* lamps: a lit rim on the normal ones, a glow on any that carries an alarm */
+.lamp { background: var(--glass); border-color: var(--line); box-shadow: inset 0 0 0 1px rgba(61, 139, 255, 0.06); }
+.lamp .k { color: rgba(210, 214, 228, 0.72); }
+.clock { font-family: var(--display); font-weight: 600; letter-spacing: 1.2px; color: var(--holo-bright); text-shadow: 0 0 10px rgba(61, 139, 255, 0.4); }
+
+/* ── assets: each machine row carries its tag chips ── */
+.as-rail { border-color: var(--line); background: rgba(4, 8, 18, 0.35); }
+.as-rhead { background: linear-gradient(90deg, rgba(61, 139, 255, 0.12), rgba(61, 139, 255, 0.03)); }
+.as-row.sel, .as-rhead.sel { background: rgba(61, 139, 255, 0.16); box-shadow: inset 2px 0 0 var(--holo-bright); }
+.band { border-color: var(--line-2); box-shadow: inset 0 0 6px rgba(61, 139, 255, 0.18); }
+.tagstrip { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 7px 6px 27px; }
+.tagstrip.open { padding-left: 12px; }
+.tagchip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px 1px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--glass); font-family: var(--mono); font-size: calc(10px * var(--fz)); letter-spacing: 0.3px; color: var(--text-weak); white-space: nowrap; }
+.tagchip .k { color: var(--text-weak); }
+.tagchip .v { font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+.tagchip .a { color: var(--text-faint); }
+.tagchip.sp { border-color: rgba(61, 139, 255, 0.4); }
+.tagchip.stale .v { color: var(--amber); }
+.tagchip.bad .v { color: var(--red); }
+.tagmore { font-family: var(--mono); font-size: calc(10px * var(--fz)); padding: 1px 7px; border: 1px dashed var(--line-2); border-radius: 3px; background: transparent; color: var(--holo-bright); cursor: pointer; }
+.tagmore:hover { border-style: solid; background: var(--holo-dim); }
+.tagcard { display: flex; flex-direction: column; gap: 2px; }
+.tagrow { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 3px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--glass); font-family: var(--mono); font-size: calc(11px * var(--fz)); }
+.tagrow .k { color: var(--text-weak); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tagrow .v { color: var(--text); font-variant-numeric: tabular-nums; }
+.tagrow .a { color: var(--text-faint); }
+.tagrow.stale .v { color: var(--amber); }
+.tagrow.bad .v { color: var(--red); }
+
+/* ── map HUD: the selected asset as a glass card, top-left of the well ── */
+.map-hud { position: absolute; top: 10px; left: 10px; max-width: min(360px, 46%); padding: 9px 11px 8px; background: var(--glass); border: 1px solid var(--line-2); border-radius: 5px; box-shadow: var(--holo-glow); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); pointer-events: auto; }
+.map-hud::before { content: ""; position: absolute; top: -1px; left: -1px; width: 10px; height: 10px; border-top: 1.5px solid var(--holo-bright); border-left: 1.5px solid var(--holo-bright); }
+.map-hud.hot, .map-hud.trip { border-color: rgba(242, 73, 92, 0.6); box-shadow: 0 0 0 1px rgba(242, 73, 92, 0.2), 0 0 22px rgba(242, 73, 92, 0.18); }
+.map-hud.strained { border-color: rgba(255, 156, 0, 0.55); box-shadow: 0 0 0 1px rgba(255, 156, 0, 0.18), 0 0 22px rgba(255, 156, 0, 0.14); }
+.hud-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.hud-name { font-family: var(--display); font-weight: 700; font-size: 15px; letter-spacing: 0.4px; color: var(--text); white-space: nowrap; text-shadow: 0 0 12px rgba(120, 170, 255, 0.3); }
+.hud-kind { display: block; font-family: var(--mono); font-size: 10px; font-weight: 400; letter-spacing: 0.6px; color: var(--text-weak); }
+.hud-vals { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 6px; }
+.hud-val { display: flex; flex-direction: column; min-width: 54px; }
+.hud-val .k { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.8px; color: var(--text-faint); }
+.hud-val b { font-family: var(--display); font-weight: 600; font-size: 17px; letter-spacing: 0.3px; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--text); }
+.hud-val b small { font-family: var(--mono); font-size: 10px; font-weight: 400; margin-left: 3px; color: var(--text-weak); }
+.map-hud .tagstrip { padding: 6px 0 0; }
+.map-hud .x { position: absolute; top: 4px; right: 4px; }
+.map-twin { position: absolute; left: 12px; bottom: 8px; display: flex; gap: 12px; align-items: center; padding: 4px 8px; background: var(--glass); border: 1px solid var(--line); border-radius: 4px; font-family: var(--mono); font-size: calc(10.5px * var(--fz)); color: var(--text-faint); pointer-events: none; }
+.map-twin .tw-plant { font-family: var(--display); font-weight: 600; font-size: 11.5px; letter-spacing: 0.6px; color: var(--holo-bright); }
+@media (max-width: 1279px) { .map-twin span:not(.tw-plant) { display: none; } }
+
+/* ── verdict: the state strip glows in its state color ── */
+.vd.root .vd-state { box-shadow: inset 0 -1px 0 rgba(242, 73, 92, 0.5), 0 0 24px rgba(242, 73, 92, 0.12); }
+.vd.forecast .vd-state { box-shadow: inset 0 -1px 0 rgba(255, 156, 0, 0.5); }
+.vd.recovering .vd-state { box-shadow: inset 0 -1px 0 rgba(18, 198, 179, 0.5); }
+.vd-who { text-shadow: 0 0 18px rgba(120, 170, 255, 0.25); }
+.echip { background: var(--glass); border-color: rgba(61, 139, 255, 0.35); }
+
+/* ── controls and tabs ── */
+.seg { background: var(--glass); }
+.seg button.on, .tab.on { box-shadow: 0 0 12px rgba(61, 139, 255, 0.35); }
+.btn { background: var(--glass); }
+.btn.cmd { box-shadow: 0 0 14px rgba(61, 139, 255, 0.28); }
+.split:hover::after, .split:active::after { background: var(--holo-bright); box-shadow: 0 0 8px rgba(61, 139, 255, 0.6); }
+
+/* ── boot: the same honest self-check, set on the twin ground ── */
+.boot { background: radial-gradient(900px 600px at 50% 30%, rgba(61, 139, 255, 0.14), transparent 65%), var(--bg); }
+.boot-panel { background: var(--glass); border: 1px solid var(--line-2); border-radius: 6px; box-shadow: var(--holo-glow); backdrop-filter: blur(10px); }
+.boot-panel::before, .boot-panel::after { border-color: var(--holo-bright); }
+.boot-brand b { box-shadow: 0 0 18px rgba(61, 139, 255, 0.4); }
+.boot-prog { display: flex; align-items: center; gap: 10px; margin: -14px 0 18px; font-family: var(--mono); font-size: 11px; letter-spacing: 0.8px; color: var(--text-weak); }
+.boot-prog .tt { font-family: var(--display); font-weight: 600; font-size: 12.5px; letter-spacing: 1.2px; color: var(--holo-bright); text-shadow: 0 0 10px rgba(61, 139, 255, 0.45); }
+.boot-prog .sep { width: 1px; height: 12px; background: var(--line-2); }
+.boot-row.ok .st { text-shadow: 0 0 8px rgba(18, 198, 179, 0.6); }
+
+/* one orchestrated moment: the console fades up once after boot; nothing else animates on a timer */
+.console { animation: visr-in 0.6s ease-out 1; }
+@keyframes visr-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .console { animation: none; } }
+
+/* ── the clutter pass: one close control, folds, the lamp pill, focus mode ── */
+.x { width: 22px; height: 22px; padding: 0; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--text-weak); font-family: var(--mono); font-size: 15px; line-height: 1; cursor: pointer; }
+.x:hover { color: var(--text); border-color: var(--line-2); }
+.x:focus-visible { outline: 2px solid var(--blue-edge); outline-offset: 1px; }
+.tagtoggle, .as-details, .fold-h { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--text-weak); font-family: var(--mono); font-size: calc(10.5px * var(--fz)); letter-spacing: 0.6px; cursor: pointer; }
+.tagtoggle:hover, .as-details:hover, .fold-h:hover { color: var(--text); border-color: var(--line); }
+.tagtoggle:focus-visible, .as-details:focus-visible, .fold-h:focus-visible, .lamp-pill:focus-visible { outline: 2px solid var(--blue-edge); outline-offset: 1px; }
+.as-details { margin: 2px 0 2px 21px; }
+.fold { display: flex; flex-direction: column; gap: 4px; }
+.fold-h { width: 100%; justify-content: space-between; padding-left: 0; }
+.fold-h .lbl { color: var(--text-faint); }
+.fold.on .fold-h .lbl { color: var(--text-weak); }
+.fold-c { color: var(--text-faint); font-size: 12px; }
+.fold-b { display: flex; flex-direction: column; gap: 6px; }
+/* the lamps: the healthy ones fold into one pill */
+.lamp-pill { cursor: pointer; color: var(--text-weak); }
+.lamp-pill:hover { border-color: var(--line-2); color: var(--text); }
+.lamp-pill.on { border-color: var(--line-2); }
+/* the sidebar breathes: one calm line per machine */
+.assets { gap: 10px; }
+.as-row { min-height: 28px; }
+.as-cols { margin-bottom: -4px; }
+/* focus: the map takes the whole screen; the stored column sizes are untouched */
+.console.focus { grid-template-columns: minmax(0, 1fr); }
+.console.focus > .col-l, .console.focus > .col-r { display: none; }
+.console.focus > .col-c > .tabs, .console.focus > .col-c > .split { display: none; }
