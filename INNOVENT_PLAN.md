@@ -1,10 +1,12 @@
 # Tata Technologies InnoVent 2026: Project Plan
 **Team SiliconKnights · VISR, an edge causal-AIOps brain for industrial systems**
 
-> **Status (2026-09-15):** registration submitted on 2026-07-05 (LOG-050). Stage 2 is code-complete
-> locally (LOG-051 to LOG-055), plus the virtual PLC fleet and act loop verb 1 (Phase 2H, LOG-058).
-> **The Stage 2 PPT and demo video are due 2026-09-26.** Remaining: deploy and verify on the box,
-> soak, record per `POC_SCRIPT.md`, and the deck on the official template.
+> **Status (2026-10-03):** Stage 2 is submitted. The deck and the demo video went in on 2026-09-30,
+> and the pre-read went to the organizers on 2026-10-02 (LOG-106). The virtual PoC presentation is in
+> October 2026, on MS Teams. On 2026-09-28 the stack on forge ran the code of `main` (`7f698cd`): the realism pass
+> (LOG-100), four static PLCs, learned display bands (LOG-103), and the floor map of LOG-105. The last
+> full test run passed all seven scenarios (2026-09-22, LOG-079). A watch of every scenario on the
+> LOG-100 plant followed on 2026-09-26 (LOG-103). Section 5 lists what is open.
 > **Target category:** §3.2.2.5 **Edge AI for Connected, Secure & Intelligent Industrial Systems**.
 > **Repo:** `GreaseMonkeyIT/Tata_InnoVent`. One working folder (`Tata InnoVent`) on the laptop.
 > **Runs on:** the Linux desktop (single-node K3s, needs real-kernel PSI). Full decision history: `INNOVENT_LOG.md`.
@@ -22,12 +24,13 @@
 | Honesty rail | The engine is deterministic statistical inference behind a witness gate. The LLM narrator is a spokesperson only. Simulated values carry a simulation label. |
 | Reskin | Restrained Halo "VISR" look: clarity is the product, and Halo is the accent (~90/10). |
 | Virtual PLC fleet | Soft PLCs with real S7comm and Modbus protocol profiles, Structured Text tasks, signed enrollment, real onboarding phases (LOG-058, `FLEET.md`). |
-| Act loop | Verb 1 `derate` shipped for Stage 2: cite-or-die proposal, human confirm, SCADA setpoint write, measured relief (LOG-058). More verbs and hardware rungs are Stage 3. |
+| Act loop | Shipped for Stage 2: `derate` a machine to 55 %, `stop` compressor-1 (LOG-100), and `restore`. Cite-or-die proposal, human confirm, SCADA setpoint write, measured relief (LOG-058, LOG-091). No action on chiller-1. Advisory suggestions for the rest (LOG-093). More verbs and hardware rungs are Stage 3. |
 
 ## 1. Scope by stage
 - **Stage 1: Registration** (done 2026-07-05): deck, subtitled demo video, form.
-- **Stage 2: Virtual PoC** (10 min presentation + 5 min jury Q&A, online): the PoC package is
-  `POC_SCRIPT.md`. The official Stage 2 template and rules sit in the local `New_Rules_PPT/` folder.
+- **Stage 2: Virtual PoC** (10 min presentation + 5 min jury Q&A, online): deck and demo video
+  submitted 2026-09-30, pre-read 2026-10-02. `POC_SCRIPT.md` records how the video was made. The
+  official Stage 2 template and rules sit in the local `New_Rules_PPT/` folder.
 - **Stage 3: Final demo day** (January 2027): the act loop, the hardware rung (a real PLC and a power analyzer), and the
   finals package. The prototype is due by mid-December 2026.
 - The step-by-step build plan for Stages 2 and 3 is `INNOVENT_MASTER_PLAN.md`.
@@ -55,8 +58,14 @@ act loop writes into the 2E audit ledger.
 - [x] Stage 2 code-complete locally: Boot, 2A truth pass, 2E secure pass, PoC script, 2F tag server (LOG-051 to LOG-055).
 - [x] `claimRef` baked into `deploy/slowdisk.yaml` (LOG-054).
 - [x] Phase 2H virtual PLC fleet + act loop verb 1, local tests green (LOG-058).
-- [ ] **Box session (before 2026-09-26):** deploy LOG-051 to LOG-058, 2A/2E/2H box-verify on the PS-series, OpenPLC latch re-confirm, tag-server cutover, LOG-035 soak, and the recording per `POC_SCRIPT.md`.
-- [ ] Stage 2 deck on the official template: add a Solution Architecture slide, and back Novelty with prior-art search and benchmarks.
+- [x] Box session: deploy, box-verify, OpenPLC latch, tag-server cutover (the SCADA read switch, LOG-100), soak, full test run (LOG-060 to LOG-079, LOG-097 to LOG-103).
+- [x] Stage 2 deck on the official template, with the Solution Architecture slide, prior art, and the benchmark. Submitted with the demo video on 2026-09-30. Pre-read sent on 2026-10-02 (LOG-106).
+- [x] The one-day soak (`soak/soak.sh`, LOG-107): 20 cycles in 24 h on 2026-10-04 and 05. Every fault that fired got the right result, 103 of 103.
+- [x] A Scenario 4A-only run with the fixed `soak.sh` (`SCENARIOS=PS4A DURATION_H=1`), 2026-10-05: 9 of 9 fires accepted, `unsigned_write` in every fire, median 49 s (LOG-108).
+- [ ] Open from the scenario watch and the soak (LOG-103, LOG-107): a false current-balance finding on the `plc-utilities` compressor AMPS channel in Scenario 3 (15 of 19 soak cycles), the last root that stays after a reset (after Scenario 1, a median of 138 s), a chiller-1 root that stays after Scenarios 2 and 5 (cleared within 450 s in 3 of 19 cycles), trip cards on cnc-1 (Scenario 5) and press-1 (Scenario 4B) that settle just under the trip, and derate proposals for every cooled machine in Scenarios 2 and 5.
+- [ ] Scenario 7 (supply dip): the explained-load test in the engine source path (SCENARIOS.md 4.5).
+- [x] PIVOT_SETUP 5.2c on forge: Prometheus keeps 30 days on the slow disk, and the Prometheus and Grafana NodePorts are closed (2026-10-03, LOG-106).
+- [ ] The API auth Secrets are still `optional: true` (FIELD_RESEARCH S5): make the api fail closed.
 - [ ] Swap the trial Industry "Test" weights for licensed files.
 - [ ] **Stage 3:** act loop, the hardware rung (a real PLC and a power analyzer), finals package.
 - [ ] **Long-horizon learning.** This needs the history of a real plant. The simulated plant has no wear.

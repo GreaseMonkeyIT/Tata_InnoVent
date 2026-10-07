@@ -314,7 +314,7 @@ between them with **Load task**.
 ## 10. API (`api/`)
 
 Env: `FLEET_NS` (default `fleet`), `FLEET_ENROLL_KEY`, `SCADA_WRITE_TOKEN` (both from Secret
-`visr-fleet`, optional), `VPLC_IMAGE` (default `skn/vplc:v0.1`), `TASKS_DIR` (default `/tasks`,
+`visr-fleet`, optional), `VPLC_IMAGE` (default `localhost:5000/skn/vplc:v0.1`), `TASKS_DIR` (default `/tasks`,
 the ConfigMap `vplc-tasks`), `DERATE_TARGET_PCT` (default 55), `RELIEF_CHECK_S` (default 60).
 Every POST, PUT, and DELETE below goes through the existing operator gate and the audit ledger.
 
@@ -364,8 +364,11 @@ Every POST, PUT, and DELETE below goes through the existing operator gate and th
     first. `cites: {forecast, eta_s, value, limit, evidence: ["forecast"], signal}`. The `id` hashes
     the verb, the asset, and "forecast", so it holds while the card counts down.
 
-  Shape: `{id, verb: "derate", asset, plc, tag, from: 100, to: DERATE_TARGET_PCT, reason, cites,
-  expected}`.
+  Shape: `{id, verb, asset, plc, tag, from: 100, to, reason, cites, expected}`. `verb` is `derate`
+  (`to` = `DERATE_TARGET_PCT`) for every machine except compressor-1. A root on compressor-1 gives
+  `verb: "stop"` and `to: 0`, because its DERATE_PCT is its run command (LOG-100, `STOP_ASSETS`).
+  compressor-1 gets no forecast proposal. chiller-1 never gets a proposal: less cooling only makes the
+  loop hotter (`NEVER_PROPOSE`).
 - `POST /api/actions/execute` body `{id}`: re-derive the proposals from the current verdict.
   An unknown `id` answers 409 "the verdict changed, review again" (cite or die). Else write the
   tag through the tag server, audit verb `execute` with the citation, and after
@@ -403,20 +406,23 @@ Every POST, PUT, and DELETE below goes through the existing operator gate and th
 
 - LOG-103: Assets and Selected grade throughput and the derate badge against the machine's learned band
   (`thru_band`, SCENARIOS.md 7). Selected shows the learned range under the throughput value.
-- New **Fleet** section after Machines. One card per PLC: name, "virtual" badge, profile label,
+- The **Fleet** tab of the console (LOG-062). One card per PLC: name, "virtual" badge, profile label,
   protocol and port, task title and short hash, state, scan time, SCADA RTT, tag quality
   count, cell machines, and the six onboarding phases with real times and elapsed seconds.
-  Buttons (operator): Run or Stop, Load task, Remove (hidden for `managed: static`).
-- **Add PLC** dialog: name, profile, task (from `/api/fleet/tasks`, with a read-only ST source
-  view), rail. It posts, then the card appears in `STARTING` and fills in phase by phase.
-- Recommendations: a proposal from `/api/actions` shows an **Execute** button. A confirm dialog
-  shows the citation and the write (`tag: 100 -> 55`). A ledger strip lists the `execute`,
-  `relief`, and `restore` audit rows, and a **Restore** button per active derate.
-- `Floor.jsx`: handle any number of rails (one row per rail). Group cell machines behind their
-  controller. Machines section: show the controller for each machine. Draw `incomer-1` as one row
-  above the rails, with the board voltage and the plant total current. Mark the row when the supply dips.
+  Buttons (operator): Run or Stop, Load task (same cell layout only), Remove (hidden for
+  `managed: static`, armed for 5 s for a second click).
+- **Add PLC** opens as a form inside the Fleet tab, not a dialog: name, profile, task (from
+  `/api/fleet/tasks`, with a read-only ST source view), rail. It posts, then the card appears in
+  `STARTING` and fills in phase by phase.
+- **Actions** panel: a proposal from `/api/actions` shows an **Execute** button. The confirmation opens
+  inside the card and shows the citation and the write (`tag: 100 -> 55`). The **Event log** is the
+  ledger and lists the `execute`, `relief`, and `restore` rows. Each active derate has a **Restore**
+  button.
+- `Floor.jsx`: any number of rails (one row per rail), cell machines grouped behind their controller,
+  and a PLC cabinet per cell. A click on a cabinet opens its card in the Fleet tab. Not built: the
+  `incomer-1` row above the rails. PS7 is out of the demo until it passes (SCENARIOS.md 4.5).
 - `Boot.jsx`: a sixth real probe, "PLC fleet", on `/api/fleet`.
-- `page.jsx` MOCK: realistic dev data for `/api/fleet`, `/api/fleet/tasks`,
+- `lib/mock.js`: realistic dev data for `/api/fleet`, `/api/fleet/tasks`,
   `/api/fleet/profiles`, `/api/actions`. It is never used in the production export.
 
 ## 12. Deploy

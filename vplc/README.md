@@ -24,8 +24,14 @@ around each real scan. Machine physics stays in plant-sim.
 
 ## Tasks
 
-The library is in `tasks/`: `stamping-line`, `packaging-cell`, and `packaging-cell-rush`. Each task
-is a `.st` source and a `.json` manifest.
+The library is in `tasks/`. Each task is a `.st` source and a `.json` manifest.
+
+- Base cells (static PLCs in `deploy/fleet.yaml`): `stamping-line` (press-1, press-2), and since LOG-100
+  `utilities` (compressor-1, chiller-1), `machining` (cnc-1), and `furnace` (furnace-1).
+- New cells (Add PLC in the console): `packaging-cell` and `packaging-cell-rush`.
+
+`ews.py` is not a PLC. It is the test attacker of Scenario 4A (`rogue-ews`). It writes one setpoint
+over S7comm with no SCADA path and no ledger row (SCENARIOS.md 2.4).
 
 ## Environment
 

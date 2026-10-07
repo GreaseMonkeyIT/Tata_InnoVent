@@ -1,5 +1,5 @@
 # SKN Plant dashboard, provisioned as code (same sidecar pattern as grafana-psi-dashboard.yaml).
-# Fixed uid (skn-plant) + panel ids that the VISR Machines section embeds as d-solo iframes:
+# Fixed uid (skn-plant) + panel ids that the console Trends tab embeds as d-solo iframes:
 #   panelId 1 = bus voltage per rail · 2 = current draw per machine · 3 = coolant temps vs trip.
 #   panelId 4 = one asset only, for the console's Selected tab (LOG-081). The console sets the hidden
 #   variable with var-asset=<name>. Each query matches only the series that the asset has: a machine

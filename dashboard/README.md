@@ -15,7 +15,7 @@ The layout reads left to right in the order of the engine pipeline:
 
 | Region | Panels |
 |---|---|
-| Top | **Command bar**: the VISR plate and lamps for engine, aggregator, PLC link, historian, fleet, auth, and the audit chain |
+| Top | **Command bar**: the VISR plate, the text size buttons, the refresh clock, and lamps for engine, aggregator, SCADA, PLC link, historian, fleet, auth, the audit chain, and integrity. Only an abnormal lamp shows by itself. The healthy lamps fold behind one pill that counts them |
 | Left column | **Assets** (machines grouped by rail and coolant loop) and **Event log** (the audit ledger). The event log says "Scenario 1" where the API says PS1 (LOG-078) |
 | Center | **Map** (FLOOR or EDGE, 3D or PLAN camera, FOCUS) and the detail tabs: **Selected**, **Fleet**, **Tags**, **Trends**, **Edge** |
 | Right column | **Verdict** (STEADY, FORECAST, ROOT CAUSE, INCIDENT, or RECOVERING, from `/api/incident`: the current driver, "started by" the origin, the reason, the chain, the narrative, the last phases, and an **Ask** box), which takes the free height, and **Actions** (Execute, holding, and the advisory suggestions) |
@@ -129,8 +129,9 @@ npm run build    # writes the static export to out/
 ```
 
 The mock data in `app/lib/mock.js` is for design review only. The production export never uses it.
-In the dev build, the command bar has a `mock` switch with three states: `incident` (PS1 root
-cause), `forecast` (PS5 trip ETAs), and `steady`. The URL parameter `?mock=` sets the same state.
+In the dev build, the command bar has a `mock` switch with seven states: `incident` (PS1 root
+cause), `forecast` (PS5 trip ETAs), `steady`, `chain` (PS2), `network` (PS3), `integrity` (PS4A and
+PS4B), and `blind` (PS6). The URL parameter `?mock=` sets the same state.
 
 ## Build and deploy (box)
 
@@ -144,5 +145,6 @@ kubectl -n aiops rollout restart deploy/dashboard
 ```
 
 Open `https://<node-ip>:30443`. Port 30080 only redirects to HTTPS. Log in as `viewer` to look, or
-as `operator` to fire and reset scenarios. The node IP includes the box's Tailscale address, and
+as `operator` to execute and restore actions and to add, load, run, stop, or remove PLCs. Faults
+run from the fault shell on the box, never from the console. The node IP includes the box's Tailscale address, and
 there is no public ingress.

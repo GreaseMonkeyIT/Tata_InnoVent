@@ -108,7 +108,11 @@ verify() {
 import json, sys
 d = json.load(sys.stdin)["data"]
 print(d.get("storage.tsdb.retention.time"), d.get("storage.tsdb.retention.size"))' 2>/dev/null)
-  [ "$ret" = "30d 100GB" ] && pass "retention 30d, 100GB" || { echo "FAIL retention flags: '$ret'"; bad=1; }
+  # Prometheus reads "100GB" in base-2 units and prints the flag back as "100GiB" (seen on forge 2026-10-03).
+  case "$ret" in
+    "30d 100GB"|"30d 100GiB") pass "retention 30d, 100GB" ;;
+    *) echo "FAIL retention flags: '$ret'"; bad=1 ;;
+  esac
   n=$(curl -s -m 10 "$PROM/api/v1/query?query=count(plant_current_draw_amps)" | python3 -c '
 import json, sys
 r = json.load(sys.stdin)["data"]["result"]

@@ -198,8 +198,11 @@ while [ "$(date +%s)" -lt "$END" ]; do
     [ "$(date +%s)" -lt "$END" ] || break
     log "cycle $cycle · baseline → $s"
     FIRE_EPOCH=""; FIRE_OK=""
-    sample_window "$BASELINE_S" "baseline" "$cycle" "$s"
+    # Start rogue-ews before the baseline, not after it. Ready is not reachable: the kubelet probe
+    # passes before the api can reach a new pod, and a fire right after the rollout answered 503 in
+    # 13 of 19 cycles (2026-10-04 soak). The baseline gives the new pod 60 s to settle.
     [ "$s" = PS4A ] && ews 1
+    sample_window "$BASELINE_S" "baseline" "$cycle" "$s"
     log "cycle $cycle · FIRE $s"
     fire "$s"
     sample_window "$(window OBSERVE "$s")" "$s" "$cycle" "$s"

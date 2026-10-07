@@ -1,6 +1,16 @@
 # INNOVENT MASTER PLAN — Stages 2 & 3
 **Team SiliconKnights · the step-by-step build plan for after registration**
 
+> **Status (2026-10-03).** This is the plan of July 2026. It stays as written, for history.
+> `INNOVENT_PLAN.md` has the current state and the open items, and `INNOVENT_LOG.md` has every decision.
+> - Stage 2 is built, verified on the box, and submitted: phases 2A, 2B′, 2C′, 2D, 2E, 2F, 2G, and 2H.
+>   The deck and the demo video went in on 2026-09-30, and the pre-read on 2026-10-02 (LOG-106).
+> - Act-loop verb 1 (3D) shipped inside 2H, with `stop` for compressor-1 added in LOG-100.
+> - The hardware rung changed. It is now a real PLC and a power analyzer, not the ESP32-S3 of phase 3A.
+>   Phase 3B on the college lab PLCs is dropped (LOG-061, LOG-076). The plant stays on the physics sim.
+> - Network zones (the 2E/S8 roadmap item) are built for `aiops`, `plant`, and `fleet` (LOG-095).
+> - The scenario names below (S1 to S5) are the retired bench. The PS set in `SCENARIOS.md` replaces them.
+
 > **How this document works.** Stage 1 (registration, → 2026-07-05) is done, and
 > `INNOVENT_PLAN.md` holds the current state at a glance. This plan covers **Stage 2 (Virtual PoC)** and
 > **Stage 3 (Final display)**. Phases are named **2A, 2B…** and **3A, 3B…** — deliberately NOT

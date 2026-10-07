@@ -248,13 +248,14 @@ kubectl apply -f deploy/grafana-plant-dashboard.yaml
 # 5.2b Grafana serves from /grafana/ (LOG-062). The console is HTTPS, and a browser blocks a
 #      plain-HTTP frame inside it as mixed content, so nginx proxies /grafana/ on the console's own
 #      origin, behind the same login. Use kubectl set env, NOT a helm upgrade. The same values again
-#      change nothing. Grafana has no NodePort (LOG-095): open it through the console at /grafana/.
+#      change nothing. Grafana has no NodePort since 5.2c (LOG-095): open it through the console at /grafana/.
 kubectl -n observability set env deploy/prom-grafana -c grafana \
   GF_SERVER_ROOT_URL='%(protocol)s://%(domain)s:%(http_port)s/grafana/' GF_SERVER_SERVE_FROM_SUB_PATH=true
 kubectl -n observability rollout status deploy/prom-grafana --timeout=180s
 curl -s http://$(kubectl -n observability get svc prom-grafana -o jsonpath='{.spec.clusterIP}')/grafana/api/health   # expect "database": "ok"
 
-# 5.2c Prometheus on the slow disk, 30 days (LOG-088). On an existing install only: a fresh install
+# 5.2c Prometheus on the slow disk, 30 days (LOG-088). DONE on forge 2026-10-03 17:04 (helm revision 37,
+#      VERIFY PASS, LOG-106). On an existing install only: a fresh install
 #      gets the same storage from skctl (values/prometheus-storage.yaml). The script stops during a
 #      soak or a proof run. apply asks for sudo once, so run it in a terminal, not in screen.
 #      The Prometheus pod starts again once. The series of the last 12 h are lost, and the engine is
@@ -358,18 +359,20 @@ echo "https://<box-ip-or-tailscale>:30443"     # 30080 redirects here. Log in as
 #    from /grafana/, not a Mixed Content error.
 ```
 
-## 7. What works now vs what's next (honest state)
+## 7. What works now vs what's next (honest state, 2026-10-03)
 
-| Works after this runbook | Pending (the box session, `POC_SCRIPT.md` step 0) |
+| Works on forge (last checked 2026-09-28) | Still open |
 |---|---|
-| 64Gi/5Gi volumes laid out and **claimRef-pinned** | **Box-verify after the soak (`deploy/proof-run.sh`):** PS0 silent, PS1 roots press-1, Execute relief, PS5 forecast lead, PS2 roots compressor-1 with the loop hop, PS3 roots hmi-gw, PS4A and PS4B integrity findings, PS6 leak card then the blind SCADA view. `deploy/refusals.sh`: 401, 409, 403 with ledger rows. |
-| Plant physics live: PS1 to PS6 injectable (SCENARIOS.md), cascades emerge | **OpenPLC box-verify: DONE (LOG-060).** Headless upload compiled, PS5 tripped press-1 and furnace-1, the latch held, one reset cleared it. |
-| **2C′ (LOG-033):** rail/loop domain witnesses, `PLANT_SOURCES`, sag inversion, trip forecast. Env baked in `deploy/engine.yaml`. Fixtures green (`correlation/tests/test_plant.py`). | Tag-server stability watch, then the ServiceMonitor cutover pair (LOG-055) |
-| **2E front door (LOG-053):** TLS + basic auth, operator token gate, hash-chained audit ledger | **2H box-verify:** plc-stamping connected over S7comm, Add PLC shows six real phases, Load task swaps the cadence, Execute derates press-1 and the relief row lands |
-| **2F.2 tag server + tag browser (LOG-055):** tag DB, quality, historian ingest into `plant_tags` | LOG-035 soak (`soak/soak.sh`), then the recording |
-| **2G 3D plant floor (LOG-038):** FLOOR/EDGE toggle, N rails, PLC cabinets per cell | |
-| **2H virtual PLC fleet (LOG-058, `FLEET.md`):** vPLC runtime, S7comm and Modbus profiles, enrollment, run-time domains | |
-| **3D act loop verb 1 (LOG-058):** Execute derate with cite-or-die, action ledger, measured relief | |
-| Plant families ENABLED (engine.yaml). Rollback = drop them from `ENGINE_SIGNALS` | |
-| PLC trip loop in the sim (closed-loop when OpenPLC answers; trips latch, `/reset` pulses the reset word) | |
-| **OpenPLC web login from Secret `plant/openplc-auth`, REST API off (LOG-077):** tested on the box in throwaway containers only | **LOG-077 rollout:** `deploy/openplc-rollout.sh test`, then `deploy`. Never during a soak, a proof run, or a recording. |
+| 64Gi/5Gi volumes laid out and **claimRef-pinned**. Prometheus on the slow disk for 30 days, and no Prometheus or Grafana NodePort (5.2c, 2026-10-03) | |
+| Plant physics with the realism pass (LOG-100): PS1 to PS6 injectable from the fault shell, cascades emerge | **The one-day soak** (`soak/soak.sh`, LOG-102). The run of 2026-09-27 stopped at a power cut in cycle 2 (LOG-106). |
+| Full proof run 3 (2026-09-22, LOG-079): all seven scenarios and the refusals (401, 409, 403) | **PS7** (supply dip) still roots a machine, not `incomer-1` (SCENARIOS.md 4.5). |
+| Scenario watch on the LOG-100 plant (2026-09-26, LOG-103) | The open findings of the watch and the partial soak (SCENARIOS.md status). |
+| OpenPLC trip interlock: a trip per machine, latched, web login from Secret `plant/openplc-auth`, REST API off (LOG-077, LOG-100) | **FIELD_RESEARCH S5:** the api auth Secrets are still `optional: true`. |
+| 2E front door: TLS + basic auth, operator token gate, hash-chained audit ledger (LOG-053) | |
+| SCADA tag server, historian, and the SCADA read switch: Prometheus reads the PLC signals from the tag server (LOG-055, LOG-100) | |
+| Four static PLCs (`plc-stamping`, `plc-utilities`, `plc-machining`, `plc-furnace`) and Add PLC with six real phases (LOG-058, LOG-100) | |
+| Act loop: derate, stop compressor-1, restore, cite-or-die, measured relief (LOG-058, LOG-091) | |
+| Learn, then lock baselines (LOG-089) and learned display bands (LOG-103) | |
+| Network zones in `aiops`, `plant`, `fleet`: 17 policies (LOG-095, LOG-097) | |
+| Incident record, narrator, Ask VISR (LOG-092, LOG-093) | |
+| Operator console with the LOG-105 floor map (deployed 2026-09-28) | |

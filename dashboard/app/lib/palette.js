@@ -22,7 +22,7 @@ export const HOLO = {
   line: "#3d8bff",          // wireframe edges, landing rings, brackets
   bright: "#9cc4ff",        // selection, window strips
   grid: "#2458b8",          // the fine floor grid
-  flow: "#bcd6ff",          // energy particles on the bus bars (bright enough to bloom)
+  flow: "#bcd6ff",          // energy particles on the bus bars
   coolant: "#5fd8ff",       // coolant particles in the trench
   plateEdge: "rgba(120, 170, 255, 0.55)",   // the border of a floating tag plate
 };

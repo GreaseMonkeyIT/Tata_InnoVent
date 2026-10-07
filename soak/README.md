@@ -4,7 +4,7 @@ This harness cycles the PS fault set (SCENARIOS.md: PS1 PS2 PS3 PS4A PS4B PS5) f
 causal verdict every few seconds and builds a **self-contained HTML report** that opens by
 double-click.
 
-The harness fakes nothing. Each fault fires through the API console route (`POST /api/scenarios/<id>/trigger`),
+The harness fakes nothing. Each fault fires through the API scenario route (`POST /api/scenarios/<id>/trigger`),
 which perturbs the physics model in the plant sim. The recorder only watches `/api/graph` and writes
 down what the engine decided, so a mis-root shows up **as-is**. That is the point: the report shows
 a real engine on a live model, not a scripted replay.
@@ -17,6 +17,7 @@ a real engine on a live model, not a scripted replay.
 | `record.py` | Flattens each `/api/graph` snapshot to `samples.jsonl` + `timeline.csv`, and builds `report.html`. |
 | `report_template.html` | The report page (dark theme, vanilla SVG, no external libraries, works offline). |
 | `/var/tmp/visr-soak/<id>/` (`OUT_ROOT`) | One folder per run on the box: `samples.jsonl`, `timeline.csv`, `meta.json`, `soak.log`, `report.html`. |
+| `capture.sh` | One fire with the full engine answer, for slide evidence. It saves every `/api/graph` answer (every 3 s) to `graphs.jsonl`, the graph, narrative, plant and tags at the first finding, and `markers.json` (fire, detection and reset times). Default `SCENARIO=PS4B`. Not for PS4A or PS6. Output: `/var/tmp/visr-capture-<id>-<time>/`. |
 
 ## Requirements
 
@@ -65,10 +66,21 @@ only with auth disabled. If the API enforces auth and no token is found, the pre
 | `BASELINE_S` / `OBSERVE_S` / `COOLDOWN_S` | `60` / `180` / `150` | Watch windows before the fire, during the fault, and after the reset. |
 | `NARR_EVERY` | `5` | Capture `/api/narrative` every Nth sample (it is LLM-backed, so the script keeps it sparse). |
 | `OBSERVE_<ID>` / `COOLDOWN_<ID>` | `OBSERVE_PS2=600`, `COOLDOWN_PS2=1500`, `OBSERVE_PS6=420`, `COOLDOWN_PS6=240` | Per-id windows. They win over the global values. |
-| `EWS` | `1` | Start `rogue-ews` before PS4A and stop it after the reset (LOG-095). `0` leaves it alone. |
+| `EWS` | `1` | Start `rogue-ews` before the PS4A baseline and stop it after the reset (LOG-095). The baseline gives the new pod 60 s to become reachable. `0` leaves it alone. |
 | `OUT_ROOT` | `/var/tmp/visr-soak` | Where runs go. Box-local, so a run never lands in the synced repo folder (LOG-102). |
 | `API_BASE` | the api ClusterIP | The api address for `curl`. With no ClusterIP, the kubectl service proxy. |
 | `VISR_OPERATOR_TOKEN` | Secret `aiops/visr-auth` | The 2E operator token. The script sends it as `X-Auth-Token` on the curl path. |
+
+## Capture one fire for evidence
+
+`soak.sh` keeps a summary row per sample. `capture.sh` keeps the full JSON of one fire. It changes the plant, so the
+operator starts it. Do not run it at the same time as another fire.
+
+```bash
+screen -dmS visr-cap4b bash -c 'bash ~/Tata_InnoVent/soak/capture.sh > /var/tmp/visr-cap4b.log 2>&1'
+```
+
+Knobs: `SCENARIO` (`PS4B`), `BASELINE_S` (60), `OBSERVE_S` (180), `COOLDOWN_S` (150), `POLL_S` (3), `OUT`.
 
 ## Rebuild the report from an existing run
 
@@ -90,6 +102,8 @@ python3 soak/record.py report /var/tmp/visr-soak/<id> soak/report_template.html
 ## Notes
 
 - A fresh deploy needs the engine warm-up (LOG-035) before PS0 is silent. Start the soak after that.
+- The first one-day run started on 2026-09-27 at 01:51. A power cut stopped it at 03:45, in cycle 2
+  (LOG-106). A full one-day run is still open.
 - Every fire and reset lands in the 2E audit ledger with the actor `soak`.
 - A run grows over a long run (a few MB of JSONL). It stays in `/var/tmp/visr-soak` on the box. An
   older run in `soak/runs/` is ignored by git.

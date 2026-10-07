@@ -264,7 +264,7 @@ VISR has five layers and watches two planes.
 One edge box (k3s on one computer, no cloud)
 
 L0  Plant        plant model (physics) · OpenPLC trip interlock · virtual PLCs (S7comm, Modbus TCP)
-L1  Data         SCADA tag server (41 quality-rated tags) · historian (TimescaleDB)
+L1  Data         SCADA tag server (48 quality-rated tags) · historian (TimescaleDB)
                  Prometheus · Linux pressure signals (PSI) · network map from eBPF
 L2  Window       aggregator: one schema-stable window of every signal, every 5 seconds
 L3  Engine       baselines → changepoints → lagged correlation → shared-medium gate
@@ -428,7 +428,8 @@ virtual PLC, and turns raw words into named tags with units, addresses and a qua
 - **BAD** when it has been silent too long. A BAD tag leaves the metrics entirely, so nothing downstream
   mistakes an old value for a new one.
 
-The base plant has 41 tags. The tag server also writes setpoints, but only to tags on a writable list,
+The base plant has 48 tags: 30 measured and 18 calculated, such as the heat of a machine. The four
+base PLCs add their own tags. The tag server also writes setpoints, but only to tags on a writable list,
 only within limits, and only with the API's write token. It is the only path by which VISR changes
 anything in the plant through the act loop.
 
@@ -449,8 +450,9 @@ console draws that map on the EDGE view.
 Prometheus also records what VISR concludes. The API serves the current verdict as series: the root and
 its score, the number of findings, the time left on each forecast card, the causal edges, the open
 integrity findings, and any derate in force. Grafana can then show a fault and the verdict about it on
-one time axis. Prometheus keeps all of this on the slow disk of the edge computer for 30 days, so a
-restart does not erase the history.
+one time axis. Prometheus keeps all of this on the slow disk of the edge computer for 30 days (or
+100 GB), so a restart does not erase the history (`deploy/prometheus-storage.sh`, live since
+3 October 2026).
 
 ### The aggregator: one window every five seconds
 
@@ -601,7 +603,8 @@ On the box, Scenario 5's first trip cards came 30 to 40 seconds after the fault.
 76 seconds before its trip, and press-1's came 102 seconds before.
 
 A trip card on a machine that VISR can control also gives the operator a proposal: derate it, so it makes
-less heat and stays below the line. In Scenario 5 that is press-1 and press-2 on the stamping PLC.
+less heat and stays below the line. In Scenario 5 that is press-1 and press-2 on `plc-stamping`, cnc-1 on
+`plc-machining` (its feed override) and furnace-1 on `plc-furnace` (its power limit).
 
 ## 10. Integrity: when a report breaks the physics
 
@@ -621,7 +624,8 @@ agree with the physics?" (`api/integrity.py`).
 
 Our principle for this part is short: **a fault with no physical cause is a security event.** These
 checks detect. They do not block the writer, and we say so. Blocking belongs to network zones and device
-identity, which are on our roadmap (chapter 13).
+identity. The zones are built and limit who can reach a PLC at all (chapter 13). An identity for each
+device is on our roadmap.
 
 ## 11. The narrator: a local language model that only speaks
 
@@ -664,10 +668,12 @@ is the opposite. Each does the job it is good at.
 Most monitoring tools stop at the alert. VISR goes one step further, carefully. The act loop is written
 up in `FLEET.md` section 10. Its rules are strict:
 
-1. **Bounded verbs.** VISR can execute two things: derate a machine through its PLC to a fixed
-   percentage, and restore a setpoint that someone changed without a signed record. It proposes a derate
-   for the root machine while that machine draws more than its normal current, and for any machine it
-   can control that has a trip card open. Every other suggestion (stop a stuck load, isolate a noisy
+1. **Bounded verbs.** VISR can execute three things: derate a machine through its PLC to a fixed
+   percentage, stop compressor-1 through its PLC, and restore a setpoint that someone changed without a
+   signed record. It proposes a derate for the root machine while that machine draws more than its
+   normal current, and for any machine it can control that has a trip card open. When compressor-1 is
+   the root, the proposal is a stop, because its setpoint is its run command. VISR never proposes an
+   action on chiller-1: less cooling only makes the loop hotter. Every other suggestion (stop a stuck load, isolate a noisy
    network client, restart a leaking service, reset a relay only after its cause is fixed) is advisory:
    the console shows it, and a person does it. No suggestion acts on a tripped machine. There is no
    free-form command.
@@ -698,7 +704,7 @@ We are aligned with 62443 thinking. We are not certified, and we say so.
 | FR4 Data confidentiality | TLS at the console, inference on one air-gapped box, Secrets mounted as files, no plant traffic to the internet | Modbus/TCP Security (TLS) where PLCs support it |
 | FR5 Restricted data flow | the safety interlock kept off the control network segment, network zones with deny-by-default policies, no side doors around the login | zones for the monitoring namespace |
 | FR6 Timely response to events | every refused command writes a ledger row | a durable ledger with an anchored chain head |
-| FR7 Resource availability | edge-first, no cloud, forecasts for its own memory, a memory and a disk limit on every pod, 30 days of history | image scanning and a software bill of materials |
+| FR7 Resource availability | edge-first, no cloud, forecasts for its own memory, a memory and a disk limit on every pod, 30 days of history on the slow disk | image scanning and a software bill of materials |
 
 A few details, in plain words:
 
@@ -726,8 +732,9 @@ A few details, in plain words:
 - **Least privilege in every pod.** No VISR service runs as root except three that need it (the web
   server, the OpenPLC runtime, and the database, which drops to its own user). The others run as an
   unprivileged user, with no Linux capabilities, a read-only file system, and no Kubernetes token. Secrets
-  arrive as files, not as environment variables. The API, Prometheus, and Grafana no longer have side
-  doors on the node: everything goes through the console's TLS login.
+  arrive as files, not as environment variables. The API, Prometheus, and Grafana have no side doors on
+  the node: everything goes through the console's TLS login. The OpenPLC web page keeps its node port
+  by our choice, behind its own random password.
 - **Refusals are part of the demo.** `deploy/refusals.sh` shows three refusals on camera: a command
   with no token (401), an action on a stale verdict (409), and an attempt to delete the base PLC (403).
   Each one writes a ledger row.
@@ -751,13 +758,21 @@ The layout, left to right:
   the real wiring and piping. It switches between the plant FLOOR and the EDGE computer. Below it are
   detail tabs: *Selected* (one machine's values, its Grafana trend and its SCADA tags), *Fleet* (the PLCs and Add PLC), *Tags* (the SCADA tag
   browser), *Trends* (Grafana graphs) and *Edge* (the computer's own health).
-- **Right column:** the *Verdict* (STEADY, FORECAST or ROOT CAUSE, with evidence chips and the chain)
-  and the *Actions* (the act loop and advisory notes).
+- **Right column:** the *Verdict* and the *Actions*. The Verdict follows the incident record (chapter
+  11): STEADY, FORECAST, ROOT CAUSE, INCIDENT (an integrity finding or a blind SCADA view with no
+  driver), or RECOVERING. It shows the current driver, the machine that started the incident, the
+  reason, the evidence chips, the chain, the narrator text, the last phases, and the Ask box. The
+  Actions panel holds the act loop and the advisory notes.
 
 The operator can drag the gaps between panels to give any panel more room.
 
-Above everything sits a command bar with a lamp for each subsystem: engine, aggregator, PLC link,
-historian, fleet, authentication, and the audit chain.
+Above everything sits a command bar with a lamp for each subsystem: engine, aggregator, SCADA, PLC
+link, historian, fleet, authentication, the audit chain, and integrity. Only an abnormal lamp shows by
+itself, and the healthy ones fold behind one pill. Three buttons set the text size.
+
+The map uses a perspective camera, so a far machine looks smaller than a near one. Energy and coolant
+flows move along the bus bars and the coolant trench at their measured speeds, and a value plate stays
+on every machine or rail in warning or alarm.
 
 When the console opens, a short **boot screen** runs six real probes (engine, telemetry, workloads,
 causal graph, plant, PLC fleet) and shows each measured round trip. Our rule for the whole interface
@@ -783,7 +798,7 @@ PS1 to PS6 (plant scenarios).
 |---|---|---|---|---|
 | 0 | Nothing: the steady plant | none | silence: no root, no finding | QUIET every minute after a 15-minute settle |
 | 1 | Rail-sag cascade | Milford Haven, 1994 | root press-1 along rail A | 80.3 s, write + rail + temporal |
-| 2 | A failed pressure sensor overheats the loop | Azure Australia East, 2023 | root compressor-1, then its heat reaches the coolant loop | not measured yet (the old Scenario 2: 304.2 s) |
+| 2 | A failed pressure sensor overheats the loop | Azure Australia East, 2023 | root compressor-1, then its heat reaches the coolant loop | measured on 26 Sep: root 21 s, loop link 189 s (the old Scenario 2 on 22 Sep: 304.2 s) |
 | 3 | Control network storm | Browns Ferry Unit 3, 2006 | root hmi-gw along the segment | 90.2 s |
 | 4A | Setpoint write with no record | Stuxnet 2010, FrostyGoop 2024, Ukraine grid 2015 | an unsigned-write finding, client named | 39.1 s, client rogue-ews |
 | 4B | A current report contradicts the feeder | Stuxnet's replay, Buncefield 2005 | a current-balance finding, channel named | 15.0 s, an 18.1 A gap |
@@ -847,19 +862,19 @@ an aggressor, and the engine names that machine. The fix is known and planned. U
 We follow one rule: **every phase ends proved on the real box, from the runbook, not on a laptop
 preview.** The proof comes in layers.
 
-1. **Unit tests.** About 250 tests across the five Python suites (engine, plant, API, SCADA, virtual
-   PLC), plus a production build of the console. The engine's core pass is a pure function, so its tests
+1. **Unit tests.** 395 tests across the five Python suites (engine 89, plant 52, API 102, SCADA 103,
+   virtual PLC 49), 3 Go tests for the aggregator, plus a production build of the console. The engine's core pass is a pure function, so its tests
    use fixed synthetic signals and never flake.
 2. **The offline replay** (`correlation/tests/replay_offline.py`). It drives the real plant model,
    samples it on the engine's own five-second grid, and runs the real engine pass. It catches a rule
    that is right on its own and wrong once the rest of the plant answers. It prints one line per
    scenario: expected root, measured root, PASS or FAIL.
 3. **The Scenario 2 lab** (`correlation/tests/ps2_lab.py`). A focused harness that runs the real engine
-   memory and merge, emulates the OpenPLC latch, and measures how long both hops of Scenario 2 stay up
-   together for each setting of the chiller's residual flow. It measures relative improvement. Only the
-   box can give the verdict.
-4. **Go-live checks** (`deploy/golive.sh`). After every deploy, 42 checks from outside and inside the
-   cluster: the login wall, the 401s, every rollout, the plant, both PLC protocols, the tag quality, the
+   memory and merge, emulates the OpenPLC latch at each machine's own trip, and measures when the root and
+   the loop link of Scenario 2 hold together. It measures relative improvement. Only the box can give the
+   verdict. Its sister, the idle lab (`idle_lab.py`), counts false roots in a calm plant after a fault.
+4. **Go-live checks** (`deploy/golive.sh`). After every deploy, 53 checks (26 September) from outside
+   and inside the cluster: the login wall, the 401s, every rollout, the plant, both PLC protocols, the tag quality, the
    historian, the engine, and the API views.
 5. **The factory reset** (`deploy/factory-up.sh`). It removes rehearsal PLCs, pushes the images, runs
    the go-live checks, backs up and wipes the engine memory, and starts the soak watcher.
@@ -911,7 +926,7 @@ system better, and because they are the honest story of how it was built.
 - **Trips that did not latch.** Our first OpenPLC program upload failed quietly, so trips reset
   themselves. We fixed the upload flow and now check at every start that the program runs. *Lesson: a
   safety function needs a check that it is actually running.*
-- **A repeated click did damage.** The console can send the same fault twice. A second Scenario 4B
+- **A repeated click did damage.** The fault controls could send the same fault twice. A second Scenario 4B
   recorded its replay from the already faulted current, and the evidence vanished. Faults are now
   idempotent: a repeat changes nothing. *Lesson: every operator action must be safe to repeat.*
 - **A password in a file.** A secret scanner flagged a demo database password in a public deployment
@@ -1039,10 +1054,11 @@ and we say so. What is new is the combination:
 | When | What |
 |---|---|
 | July 2026 | Stage 1: the first prototype |
-| 26 September 2026 | Stage 2: the deck and the demo video, recorded on the box |
+| 30 September 2026 (done) | Stage 2: the deck and the demo video, recorded on the box |
+| 2 October 2026 (done) | Stage 2: the pre-read for the jury |
 | October 2026 | the virtual PoC presentation |
 | October to November 2026 | the hardware rung: a real PLC and a power analyzer in the same graph |
-| November to December 2026 | the security roadmap: network zones, an account per person, a durable ledger |
+| November to December 2026 | the security roadmap: an account per person, per-device keys, a durable ledger |
 | Mid-December 2026 | the prototype, frozen and soaked |
 | January 2027 | the Stage 3 final demo |
 
@@ -1052,14 +1068,14 @@ and we say so. What is new is the combination:
   the machine that reacted to it. The fix is an "explained load" test: a machine whose extra current is
   fully explained by the dip it suffers must not be called the aggressor.
 - **Slow chains.** Since the realism pass, Scenario 2 builds over about 16 minutes, as a real heat
-  problem does. The root comes at once, but the link to the loop takes about four minutes in the lab. We
-  want the loop link sooner, from the rise of the supply water itself.
+  problem does. The root comes at once, but the link to the loop took about three minutes on the box
+  (189 s on 26 September). We want the loop link sooner, from the rise of the supply water itself.
 - **Real hardware in the same graph.** A physical PLC and a power analyzer, the equipment that a real
   plant uses, join the same engine through a thin adapter. Each new kind of device should cost an adapter,
   not a redesign.
 - **More act-loop verbs.** More bounded, reversible actions, each still cited, confirmed and measured.
-- **Security.** Network zones with deny-by-default rules, an account per person, per-device keys and then
-  X.509 certificates, task-hash checks on every PLC, an anchored ledger that no one on the box can quietly
+- **Security.** Network zones for the monitoring namespace and on the real plant network, an account per
+  person, per-device keys and then X.509 certificates, task-hash checks on every PLC, an anchored ledger that no one on the box can quietly
   rewrite, and image scanning with a software bill of materials.
 
 ### Where cloud services fit
@@ -1162,7 +1178,7 @@ We wrote these rules early, and we still follow them.
 - **Structured Text:** the IEC 61131-3 text language for PLC programs.
 - **Tag:** one named, quality-rated value in SCADA.
 - **Trip:** a safety stop of a machine.
-- **Verdict:** the engine's answer: STEADY, FORECAST, or ROOT CAUSE with evidence.
+- **Verdict:** the console's answer: STEADY, FORECAST, ROOT CAUSE with evidence, INCIDENT, or RECOVERING.
 - **Virtual PLC:** our own soft PLC runtime with a real protocol profile.
 - **Witness:** the evidence that two nodes share a medium.
 
@@ -1178,13 +1194,16 @@ We wrote these rules early, and we still follow them.
 | `correlation/` | the causal engine: detectors, correlation, gate, ranking, memory, merge, forecasts |
 | `api/` | the API: login gate, audit ledger, act loop, integrity checks, fleet routes |
 | `dashboard/` | the operator console |
-| `deploy/` | manifests and the scripts: go-live, factory-up, proof run, refusals, Secrets |
+| `deploy/` | manifests and the scripts: go-live, factory-up, proof run, refusals, Secrets, network zones, the fault shell |
 | `soak/` | the soak recorder and its evidence report |
+| `video/` | the window placement and capture scripts of the demo takes |
+| `docs/images/` | the architecture diagram of the README |
 | `SCENARIOS.md` | the contract of the scenario set |
 | `FLEET.md` | the contract of the virtual PLC fleet and the act loop |
 | `PIVOT_SETUP.md` | the runbook to bring the box up |
 | `POC_SCRIPT.md` | the recording script of the demo |
-| `INNOVENT_MASTER_PLAN.md` | the stage plan and the standing rules |
+| `INNOVENT_PLAN.md` | the current state and the open items |
+| `INNOVENT_MASTER_PLAN.md` | the stage plan of July 2026 and the standing rules |
 | `INNOVENT_LOG.md` | the append-only decision log, the authoritative history |
 | `BOOK.md` | this book |
 

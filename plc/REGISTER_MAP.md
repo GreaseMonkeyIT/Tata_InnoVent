@@ -46,9 +46,10 @@ Poll cadence = sim tick (1 s); PLC scan = 100 ms.
 
 ## Semantics
 
-- **Trips are latched** in the PLC and clear only on `reset_cmd` **and** temp < 78.0 °C — the
+- **Trips are latched** in the PLC and clear only on `reset_cmd` **and** a temperature under that
+  machine's own trip (80.0 °C press and cnc, 55.0 °C furnace coil water, LOG-100). This is the
   interlock discipline. The sim's `POST /reset` pulses `reset_cmd`.
 - **PLC unreachable → the sim fails OPEN** (machines keep running, open-loop) so the demo
   survives; a production safety PLC would fail SAFE. Stated honestly on camera if asked.
-- Registers 4–15 are exposed for the Phase-2F.2 tag server (ISA-88 tag names live there),
-  not consumed by the trip program.
+- Registers 4–17 and 24–31 are for the tag server (the ISA-88 tag names live there). The trip
+  program does not use them.

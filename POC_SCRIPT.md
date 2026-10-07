@@ -5,9 +5,11 @@ to a measured relief. Grafana and a raw SCADA feed stay on screen beside the con
 case. A human narrator speaks the video. The narration script is written after the take, from frames
 of the real recording (section 6), so every sentence matches what the screen shows.
 
-**Status (2026-09-26):** not recorded. The take happens only after every fix in the `HANDOFF.md`
-to-do is done and deployed. The feed page (`deploy/feed.py`) and the window and capture scripts
-(`video/layout.ps1`, `video/record.ps1`) are built (LOG-096).
+**Status (2026-10-03):** recorded and submitted. Takes 1 to 3 were recorded on 2026-09-26 and 27
+(LOG-103). The operator then recorded the final take by hand with OBS Studio on 2026-09-28, from about
+20:28, after the LOG-105 dashboard deploy. The demo video went in with the deck on 2026-09-30
+(LOG-106). This file stays as the method for a later take. The feed page (`deploy/feed.py`) and the
+window and capture scripts (`video/layout.ps1`, `video/record.ps1`) are built (LOG-096).
 
 **Honesty rails for the narrator:**
 - The plant is physics-simulated and labeled as such. The inference on top of it is real.
@@ -78,26 +80,27 @@ The laptop has one 1920×1080 display. The capture records the full display.
 | 5 | **Assets** (left column): live V, A, °C per machine | rails psu-a, psu-b, psu-c, the loop |
 | 6 | **Edge** tab | the edge box watched by the same engine, the eBPF traffic map |
 | 7 | **Trends** tab → edge · psi | kernel pressure (PSI) graphs |
-| 8 | **Fleet** tab | `plc-stamping`: S7-1200 profile, S7comm :102, the `virtual` badge, scan time, SCADA RTT |
+| 8 | **Fleet** tab | four static PLCs: `plc-stamping` and `plc-utilities` (S7-1200 profile, S7comm :102), `plc-machining` and `plc-furnace` (generic IEC, Modbus :502), each with the `virtual` badge, scan time, SCADA RTT |
 | 9 | **Tags** tab: type `PRESS_1` in the search | the SCADA tag table with quality |
 | 10 | Click press-1. **Selected** tab | its values, its tags, and its Grafana panel |
 | 11 | **Event log** (left column, bottom) | the hash-chained ledger rows |
 
 ### 3.2 Scenario 1: the rail-sag cascade (layout B, about 4 min raw)
 
-Fire in a compressor-OFF window: watch the compressor-1 current fall in Assets, then fire. The times
-below come from the full-length run of 2026-09-25 (the "+" times count from the fire). The currents,
-voltages, and temperatures follow the LOG-100 plant (0.12 ohm rails, the 80 °C press trip), computed from
-the model. Recheck all of them in the rehearsal. The rail sag is now about 5 V, so rail psu-a keeps its
-normal color on the console. The engine still sees it, because the rail noise is about 0.15 V.
+Fire in a compressor-OFF window: watch the compressor-1 current fall in Assets, then fire. The "+" times
+count from the fire. On the LOG-100 plant, the watch of 2026-09-26 measured the card at +62 s and the root
+at +95 s, and take 3 measured the card at +55 s and the root at +87 s (LOG-103). The currents, voltages,
+and temperatures follow the LOG-100 model (0.12 ohm rails, the 80 °C press trip). The rail sag is now about
+5 V, so rail psu-a keeps its normal color on the console. The engine still sees it, because the rail noise
+is about 0.15 V.
 
 | Beat | Do | On screen | Time |
 |---|---|---|---|
 | 1 | Switch to layout B | the three windows | 0 |
 | 2 | Fault shell (off screen): `f 1` | the feed page shows the fire | +0 s |
 | 3 | Wait | press-1 current 42 → 80 A and rail psu-a 387 → 382 V, in the feed, in Grafana, and in Assets | +5 s |
-| 4 | Wait | the forecast card: press-1 heads for about 83 °C and its 80 °C trip | about +35 s |
-| 5 | Wait | the **Verdict**: root cause press-1, the evidence chips, the chain, the narrator text. The **Actions** card: derate press-1 to 55 % through plc-stamping | about +85 s |
+| 4 | Wait | the forecast card: press-1 heads for about 83 °C and its 80 °C trip | about +55 to +62 s |
+| 5 | Wait | the **Verdict**: root cause press-1, the evidence chips, the chain, the narrator text. The **Actions** card: derate press-1 to 55 % through plc-stamping | about +87 to +95 s |
 | 6 | **Actions** → **Execute** → read the confirmation → **Confirm** | the feed page shows the write acknowledgement for `DERATE_PCT` = 55 | after beat 5 |
 | 7 | Wait | press-1 falls to about 44 A and rail psu-a returns to about 386 V (LOG-100 model). The trip card closes. The Event log shows the `relief` row with volts before and after | about 60 s after beat 6 |
 | 8 | Fault shell: `r all`. **Actions** → **Restore** press-1 to 100 % | the reset and the restore rows in the Event log | end |
@@ -131,8 +134,8 @@ Record beats 2 to 7 in one unbroken take.
 - **Take 3 (2026-09-27, 01:22 to 01:33):** tour, then Scenario 1: fire 7:15, card 8:10 (forecast), root
   press-1 8:42, Execute and Confirm 9:19, relief 9:23 (44 A, peak 75 °C, no trip), reset 10:19. Cut the
   wait for the compressor-OFF window (about 2:00 to 7:15).
-- **Optional next take:** layout A only. The console alone stays full screen while Scenario 1 fires,
-  with no Grafana and no feed window.
+- **Take 4, the final take (2026-09-28, from about 20:28):** the operator recorded by hand with OBS
+  Studio, with no screen-control tools. The deck (slide 15) and the pre-read use frames of this take.
 
 ## 5. Edit
 
@@ -140,7 +143,7 @@ Record beats 2 to 7 in one unbroken take.
 2. Speed up each wait (the 85 s to the verdict, the relief) and keep a visible clock, so the viewer
    sees that time passed. Do not hide a wait.
 3. Add a caption at each beat of section 3.2, and a title card and an end card.
-4. Export 1920×1080 H.264 MP4. Put the link in the "ADD: demo video link" chip of deck slide 15.
+4. Export 1920×1080 H.264 MP4. The video went in with the deck on 2026-09-30.
 
 ## 6. The narration script
 

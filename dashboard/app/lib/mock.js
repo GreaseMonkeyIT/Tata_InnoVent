@@ -6,7 +6,9 @@
 //   (none)     PS1 incident: root press-1, blast radius, an Execute proposal
 //   steady     calm plant: no root, no faults, a full act-loop story in the event log
 //   forecast   PS5 coolant ramp: no root yet, trip ETAs from the engine's incipient findings
-//   chain      PS2: compressor-1 -> rail psu-b -> chiller-1 (overload trip) -> loop cool-1 -> machines
+//   chain      PS2: compressor-1 pressure sensor fails low -> loaded nonstop -> its heat exceeds chiller-1
+//              capacity -> loop cool-1 supply water warms -> the cooled machines heat (LOG-100)
+// The values follow the LOG-100 plant: rails idle near 387 V, trips 80 °C (press, cnc) and 55 °C (furnace).
 //   network    PS3: hmi-gw floods segment field-1, the stamping cell link lags and drops
 //   integrity  PS4A: a setpoint changed with no signed ledger row, and the act loop is blocked
 //   blind      PS6: the tag server leaks toward its limit, then the SCADA view goes blind
@@ -28,7 +30,7 @@ const INCIDENT = {
     incipient: [],
     meta: { pods: 16, active: 1, accepted_edges: 5, signal: "bus_voltage" },
   },
-  "/api/narrative": { text: "press-1 is the likely root of the rail-A voltage sag; cnc-1 and qa-scanner-1 degrade with it. Recommend derating press-1.", source: "llm", model: "gemma4:e4b-it-qat" },
+  "/api/narrative": { text: "press-1 is the likely root of the rail-A voltage sag. cnc-1 and qa-scanner-1 share the rail. Recommend derating press-1.", source: "llm", model: "gemma4:e4b-it-qat" },
   "/api/topology": { edges: [{ src: "tag-server", dst: "historian-db", port: 5432 }], source: "caretta" },
   "/api/pods": [
     { workload: "tag-server", namespace: "plant", signal: "psi_io", value: 0.94, anomalous: true },
@@ -50,26 +52,30 @@ const INCIDENT = {
   },
   "/api/plant": {
     source: "sim",
-    rails: { "psu-a": { volts: 346.3, v_src: 400.0 }, "psu-b": { volts: 372.8, v_src: 400.0 }, "psu-c": { volts: 388.6, v_src: 400.0 } },
-    loop: { name: "cool-1", flow: 118.2, flow_nominal: 120.0, pump_health: 1.0 },
-    trip_c: 78.0,
+    rails: { "psu-a": { volts: 382.1, v_src: 400.0 }, "psu-b": { volts: 387.6, v_src: 400.0 }, "psu-c": { volts: 388.6, v_src: 400.0 } },
+    loop: { name: "cool-1", flow: 118.2, flow_nominal: 120.0, pump_health: 1.0, t_supply: 28.4, t_setpoint: 28.0,
+      chiller: { name: "chiller-1", running: true, capacity_kw: 46, load_pct: 88, at_capacity: false } },
+    trip_c: 80.0,
     cells: {
       stamping: { plc: "plc-stamping", rail: "psu-a", connected: true, mode: "closed-loop", fail_open: true, machines: ["press-1", "press-2"] },
+      utilities: { plc: "plc-utilities", rail: "psu-b", connected: true, mode: "closed-loop", fail_open: true, machines: ["compressor-1", "chiller-1"] },
+      machining: { plc: "plc-machining", rail: "psu-a", connected: true, mode: "closed-loop", fail_open: true, machines: ["cnc-1"] },
+      thermal: { plc: "plc-furnace", rail: "psu-b", connected: true, mode: "closed-loop", fail_open: true, machines: ["furnace-1"] },
       "pack-1": { plc: "plc-pack-1", rail: "psu-c", connected: true, mode: "closed-loop", fail_open: false, machines: ["pack-conveyor-1", "pack-wrapper-1", "pack-labeler-1"] },
     },
     devices: {
-      "press-1":      { amps: 79.6, temp: 66.1, throughput: 99.2, rail: "psu-a", cooled: true, cell: "stamping", controller: "plc-stamping", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
-      "press-2":      { amps: 37.8, temp: 55.9, throughput: 98.7, rail: "psu-a", cooled: true, cell: "stamping", controller: "plc-stamping", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
+      "press-1":      { amps: 79.6, temp: 66.1, throughput: 99.2, rail: "psu-a", cooled: true, trip_c: 80, cell: "stamping", controller: "plc-stamping", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
+      "press-2":      { amps: 37.8, temp: 55.9, throughput: 98.7, rail: "psu-a", cooled: true, trip_c: 80, cell: "stamping", controller: "plc-stamping", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
       "pack-conveyor-1": { amps: 8.9, temp: null, throughput: 100, rail: "psu-c", cooled: false, cell: "pack-1", controller: "plc-pack-1", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
       "pack-wrapper-1":  { amps: 13.6, temp: 41.2, throughput: 100, rail: "psu-c", cooled: true, cell: "pack-1", controller: "plc-pack-1", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
       "pack-labeler-1":  { amps: 3.9, temp: null, throughput: 97.1, rail: "psu-c", cooled: false, cell: "pack-1", controller: "plc-pack-1", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
-      "cnc-1":        { amps: 28.7, temp: 50.6, throughput: 84.4, rail: "psu-a", cooled: true },
-      "qa-scanner-1": { amps: 7.2,  temp: null, throughput: 85.8, rail: "psu-a", cooled: false },
+      "cnc-1":        { amps: 28.7, temp: 50.6, throughput: 100, rail: "psu-a", cooled: true, trip_c: 80, kind: "cnc", cell: "machining", controller: "plc-machining", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
+      "qa-scanner-1": { amps: 7.2,  temp: null, throughput: 100, rail: "psu-a", cooled: false },
       "conveyor-1":   { amps: 18.2, temp: null, throughput: 100,  rail: "psu-b", cooled: false },
       // LOG-103: the utilities report their load as throughput, and plc-utilities commands them. The api
       // attaches thru_band, the range learned over the soak (engine-baselines.sh lock).
       "compressor-1": { amps: 13.7, temp: null, throughput: 25,   rail: "psu-b", cooled: false, kind: "compressor", cell: "utilities", controller: "plc-utilities", commanded: { run: true, speed_pct: 25 }, speed_pct: 25, thru_band: [25, 100] },
-      "furnace-1":    { amps: 30.4, temp: 65.3, throughput: 100,  rail: "psu-b", cooled: true },
+      "furnace-1":    { amps: 30.4, temp: 43.1, throughput: 100,  rail: "psu-b", cooled: true, trip_c: 55, kind: "furnace", cell: "thermal", controller: "plc-furnace", commanded: { run: true, speed_pct: 100 }, speed_pct: 100 },
       "chiller-1":    { amps: 27.1, temp: null, throughput: 64,   rail: "psu-b", cooled: false, kind: "chiller", cell: "utilities", controller: "plc-utilities", commanded: { run: true, speed_pct: 100 }, speed_pct: 100, thru_band: [86.8, 100] },
     },
     active_faults: ["PS1"],
@@ -78,11 +84,12 @@ const INCIDENT = {
   // /api/tags serves (scada/tags.py tag_table + live values).
   "/api/tags": (() => {
     const A = { "press-1": ["psu-a", 79.6, 66.1, 99.2], "press-2": ["psu-a", 37.8, 55.9, 98.7],
-      "cnc-1": ["psu-a", 28.7, 50.6, 84.4], "qa-scanner-1": ["psu-a", 7.2, null, 85.8],
-      "conveyor-1": ["psu-b", 18.2, null, 100], "compressor-1": ["psu-b", 6.7, null, 100],
-      "furnace-1": ["psu-b", 30.4, 65.3, 100], "chiller-1": ["psu-b", 22.0, null, 100] };
+      "cnc-1": ["psu-a", 28.7, 50.6, 100], "qa-scanner-1": ["psu-a", 7.2, null, 100],
+      "conveyor-1": ["psu-b", 18.2, null, 100], "compressor-1": ["psu-b", 13.7, null, 25],
+      "furnace-1": ["psu-b", 30.4, 43.1, 100], "chiller-1": ["psu-b", 27.1, null, 88] };
     const HK = { "press-1": 0.55, "press-2": 0.55, "cnc-1": 0.55, "furnace-1": 1.0 };
-    const RV = { "psu-a": 346.3, "psu-b": 372.8 };
+    const TRIP = { "press-1": 80, "press-2": 80, "cnc-1": 80, "furnace-1": 55 };
+    const RV = { "psu-a": 382.1, "psu-b": 387.6 };
     const T = (a, s) => `PLANT.${a.toUpperCase().replace(/-/g, "_")}.${s}`;
     const rows = [];
     const add = (asset, signal, unit, kind, address, value, i) =>
@@ -98,7 +105,7 @@ const INCIDENT = {
     cooled.forEach((m, k) => add(m, "TRIP", "bool", "measured", `%QX0.${k}`, 0, i++));
     Object.keys(A).forEach((m) => add(m, "VOLTS", "V", "derived", `= ${T(A[m][0], "VOLTS")}`, RV[A[m][0]], i++));
     cooled.forEach((m) => add(m, "HEAT", "W", "derived", `= ${HK[m]} * ${T(m, "AMPS")}`, HK[m] * A[m][1], i++));
-    add("cool-1", "TRIP_LIMIT", "degC", "derived", "= const 78.0", 78.0, i++);
+    cooled.forEach((m) => add(m, "TRIP_LIMIT", "degC", "derived", `= const ${TRIP[m].toFixed(1)}`, TRIP[m], i++));
     return { source: "scada", plc_connected: true,
              historian: { connected: true, rows_total: 128740, rows_per_s: 41.0 }, tags: rows };
   })(),
@@ -120,6 +127,16 @@ const INCIDENT = {
         scan: { last_ms: 0.034, avg_ms: 0.032, max_ms: 0.21, overruns: 0 }, scada: { enrolled: true, connected: true, rtt_ms: 0.41, tags: 23, good: 23 },
         phases: [{ phase: "requested", ts: 1752741000 }, { phase: "scheduled", ts: 1752741000.6 }, { phase: "running", ts: 1752741003.1 },
           { phase: "enrolled", ts: 1752741003.9 }, { phase: "polling", ts: 1752741004.8 }, { phase: "in_window", ts: 1752741011.2 }] },
+      ...[["plc-utilities", "siemens-s7-1200", "utilities", "Utilities", "utilities", "psu-b", ["compressor-1", "chiller-1"], 26],
+          ["plc-machining", "generic-iec", "machining", "Machining line handshake", "machining", "psu-a", ["cnc-1"], 14],
+          ["plc-furnace", "generic-iec", "furnace", "Furnace heat enable", "thermal", "psu-b", ["furnace-1"], 14]].map(([name, profile, task, title, cell, rail, machines, tags], k) => ({
+        name, profile, profile_label: profile === "generic-iec" ? "IEC 61131-3 soft PLC" : "Siemens S7-1200 (virtual)",
+        protocol: profile === "generic-iec" ? { kind: "modbus", port: 502 } : { kind: "s7comm", port: 102 },
+        managed: "static", task: { name: task, title, sha256: ["7c41d2e09ab35f18", "e2b8a6013c9d4f70", "5d0e7f2ab14c8936"][k], interval_ms: 100 },
+        cell: { name: cell, rail, machines }, state: "RUN", fault: null, ready: true,
+        scan: { last_ms: 0.03, avg_ms: 0.03, max_ms: 0.2, overruns: 0 }, scada: { enrolled: true, connected: true, rtt_ms: 0.5, tags, good: tags },
+        phases: [{ phase: "requested", ts: 1752741000 }, { phase: "scheduled", ts: 1752741000.6 }, { phase: "running", ts: 1752741003.4 },
+          { phase: "enrolled", ts: 1752741004.2 }, { phase: "polling", ts: 1752741005.1 }, { phase: "in_window", ts: 1752741011.8 }] })),
       { name: "plc-pack-1", profile: "generic-iec", profile_label: "IEC 61131-3 soft PLC", protocol: { kind: "modbus", port: 502 },
         managed: "ui", task: { name: "packaging-cell", title: "Packaging cell sequencer", sha256: "a81d09e4c3b27f55", interval_ms: 100 },
         cell: { name: "pack-1", rail: "psu-c", machines: ["pack-conveyor-1", "pack-wrapper-1", "pack-labeler-1"] }, state: "STARTING", fault: null, ready: false,
@@ -183,8 +200,8 @@ const STEADY = {
   "/api/graph": QUIET_GRAPH,
   "/api/narrative": { text: "Steady state: no causal contention detected across 16 workloads.", source: "steady", model: null },
   "/api/plant": plantWith(
-    { "press-1": { amps: 42.9, temp: 58.4, throughput: 100 }, "cnc-1": { throughput: 99.1 }, "qa-scanner-1": { throughput: 99.4 } },
-    { rails: { "psu-a": { volts: 361.2, v_src: 400.0 }, "psu-b": { volts: 372.8, v_src: 400.0 }, "psu-c": { volts: 386.5, v_src: 400.0 } }, active_faults: [] }),
+    { "press-1": { amps: 42.9, temp: 58.4, throughput: 100 } },
+    { rails: { "psu-a": { volts: 386.4, v_src: 400.0 }, "psu-b": { volts: 387.6, v_src: 400.0 }, "psu-c": { volts: 386.5, v_src: 400.0 } }, active_faults: [] }),
   "/api/pods": INCIDENT["/api/pods"].map((p) => ({ ...p, value: Math.min(p.value, 0.12), anomalous: false })),
   "/api/actions": { write: "enabled", target_pct: 55, proposals: [], active: [] },
   "/api/fleet": FLEET_RUN,
@@ -195,7 +212,7 @@ const STEADY = {
       { ts: 1752741466.3, actor: "operator", verb: "execute", target: "press-1", status: "executed", hash: "s2",
         evidence: { tag: "FLEET.PLC_STAMPING.PRESS_1.DERATE_PCT", from: 100, to: 55, root: "press-1", evidence: ["write", "rail", "temporal"] } },
       { ts: 1752741526.4, actor: "visr", verb: "relief", target: "press-1", status: "measured", hash: "s3",
-        evidence: { after_s: 60, rail: "psu-a", volts_before: 344.1, volts_after: 356.8, amps_before: 84.9, amps_after: 47.2 } },
+        evidence: { after_s: 60, rail: "psu-a", volts_before: 382.0, volts_after: 386.2, amps_before: 80.1, amps_after: 44.3 } },
       { ts: 1752741590.0, actor: "operator", verb: "reset", target: "PS1", status: "reset", evidence: {}, hash: "s4" },
       { ts: 1752741611.7, actor: "operator", verb: "restore", target: "press-1", status: "restored", hash: "s5",
         evidence: { tag: "FLEET.PLC_STAMPING.PRESS_1.DERATE_PCT", from: 55, to: 100 } },
@@ -207,14 +224,14 @@ const FORECAST = {
   "/api/graph": {
     ...QUIET_GRAPH,
     incipient: [
-      { pod: "press-1", class: "trip", signal: "coolant_temp", eta_s: 38, value: 71.2, limit: 78, headroom_frac: 0.09 },
-      { pod: "furnace-1", class: "trip", signal: "coolant_temp", eta_s: 52, value: 69.8, limit: 78, headroom_frac: 0.11 },
+      { pod: "press-1", class: "trip", signal: "coolant_temp", eta_s: 38, value: 73.2, limit: 80, headroom_frac: 0.09 },
+      { pod: "furnace-1", class: "trip", signal: "coolant_temp", eta_s: 52, value: 50.1, limit: 55, headroom_frac: 0.09 },
     ],
   },
-  "/api/narrative": { text: "Early warning: press-1 coolant temperature is climbing toward the 78 °C trip (71 °C now) — projected trip in ~38s.", source: "forecast", model: null },
+  "/api/narrative": { text: "Early warning: press-1 coolant temperature is climbing toward its 80 °C trip (73 °C now). Projected trip in about 38 s.", source: "forecast", model: null },
   "/api/plant": plantWith(
-    { "press-1": { amps: 42.9, temp: 71.2, throughput: 100 }, "press-2": { temp: 66.3 }, "cnc-1": { temp: 63.0, throughput: 99.1 },
-      "qa-scanner-1": { throughput: 99.4 }, "furnace-1": { temp: 69.8 } },
+    { "press-1": { amps: 42.9, temp: 73.2, throughput: 100 }, "press-2": { temp: 66.3 }, "cnc-1": { temp: 63.0 },
+      "furnace-1": { temp: 50.1 } },
     { rails: STEADY["/api/plant"].rails, loop: { name: "cool-1", flow: 64.0, flow_nominal: 120.0, pump_health: 0.52 }, active_faults: ["PS5"] }),
   "/api/actions": STEADY["/api/actions"],
   "/api/fleet": FLEET_RUN,
@@ -250,27 +267,26 @@ FORECAST["/api/scenarios"] = catalogue(["PS5"]);
 const CHAIN = {
   "/api/scenarios": catalogue(["PS2"]),
   "/api/graph": {
-    root: [{ pod: "compressor-1", score: 0.43, onset_s: 35 }, { pod: "chiller-1", score: 0.18, onset_s: 95 }],
+    root: [{ pod: "compressor-1", score: 0.47, onset_s: 160 }],
     edges: [
-      { src: "compressor-1", dst: "chiller-1", r: 1.0, lag_s: 5, evidence: ["write", "rail", "temporal"], signal: "bus_voltage", confidence: 0.96, state: "active", render_weight: 0.96 },
-      { src: "compressor-1", dst: "conveyor-1", r: 1.0, lag_s: 5, evidence: ["write", "rail", "temporal"], signal: "bus_voltage", confidence: 0.94, state: "active", render_weight: 0.94 },
-      { src: "compressor-1", dst: "psu-b", r: 1.0, lag_s: 5, evidence: ["write", "rail", "temporal"], signal: "bus_voltage", confidence: 0.94, state: "active", render_weight: 0.94 },
-      { src: "chiller-1", dst: "press-1", r: 0.94, lag_s: 15, evidence: ["write", "loop", "temporal"], signal: "coolant_temp", confidence: 0.9, state: "active", render_weight: 0.9 },
-      { src: "chiller-1", dst: "furnace-1", r: 0.93, lag_s: 30, evidence: ["write", "loop", "temporal"], signal: "coolant_temp", confidence: 0.88, state: "active", render_weight: 0.88 },
-      { src: "chiller-1", dst: "cnc-1", r: 0.95, lag_s: 5, evidence: ["write", "loop", "temporal"], signal: "coolant_temp", confidence: 0.9, state: "active", render_weight: 0.9 },
+      { src: "compressor-1", dst: "furnace-1", r: 0.93, lag_s: 30, evidence: ["write", "loop", "temporal"], signal: "coolant_temp", confidence: 0.88, state: "active", render_weight: 0.88 },
+      { src: "compressor-1", dst: "press-1", r: 0.91, lag_s: 40, evidence: ["write", "loop", "temporal"], signal: "coolant_temp", confidence: 0.84, state: "active", render_weight: 0.84 },
+      { src: "compressor-1", dst: "cnc-1", r: 0.9, lag_s: 20, evidence: ["write", "loop", "temporal"], signal: "coolant_temp", confidence: 0.82, state: "active", render_weight: 0.82 },
     ],
-    blast_radius: [{ pod: "chiller-1", impact: 0.9, eta_s: 5 }, { pod: "conveyor-1", impact: 0.8, eta_s: 5 }, { pod: "psu-b", impact: 0.8, eta_s: 5 },
-      { pod: "cnc-1", impact: 0.7, eta_s: 10 }, { pod: "press-1", impact: 0.7, eta_s: 20 }, { pod: "furnace-1", impact: 0.6, eta_s: 35 }],
-    findings: [{ pod: "compressor-1", class: "shift", onset_s: 35, severity: 1 }, { pod: "press-1", class: "leak", onset_s: 110, severity: 0.8 }],
-    incipient: [{ pod: "furnace-1", class: "trip", signal: "coolant_temp", eta_s: 44, value: 72.4, limit: 78, headroom_frac: 0.07 },
-      { pod: "press-1", class: "trip", signal: "coolant_temp", eta_s: 61, value: 70.1, limit: 78, headroom_frac: 0.1 }],
-    meta: { pods: 17, active: 7, accepted_edges: 14, signal: "bus_voltage" },
+    blast_radius: [{ pod: "cool-1", impact: 0.9, eta_s: 30 }, { pod: "furnace-1", impact: 0.8, eta_s: 30 }, { pod: "cnc-1", impact: 0.7, eta_s: 20 },
+      { pod: "press-1", impact: 0.7, eta_s: 40 }, { pod: "press-2", impact: 0.6, eta_s: 60 }],
+    findings: [{ pod: "compressor-1", class: "shift", onset_s: 160, severity: 1 }],
+    incipient: [{ pod: "furnace-1", class: "trip", signal: "coolant_temp", eta_s: 290, value: 50.5, limit: 55, headroom_frac: 0.08, source: "drift" }],
+    meta: { pods: 17, active: 5, accepted_edges: 6, signal: "coolant_temp" },
   },
-  "/api/narrative": { text: "compressor-1 stuck on sags rail psu-b. The sustained undervoltage tripped the chiller-1 overload, so coolant flow fell and the cooled machines are heating. Forecast: furnace-1 trips in about 44 s.", source: "fallback", model: null },
+  "/api/narrative": { text: "compressor-1's pressure sensor reads low, so the compressor never unloads. Its heat in the loop exceeds what chiller-1 can remove, and the supply water is at 38 °C against its 28 °C setpoint. Forecast: furnace-1 trips in about 290 s.", source: "fallback", model: null },
   "/api/plant": plantWith(
-    { "compressor-1": { amps: 57.1 }, "chiller-1": { amps: 0.2, tripped: true, trip_reason: "overload" }, "press-1": { temp: 70.1 }, "furnace-1": { temp: 72.4 }, "cnc-1": { temp: 63.9 } },
-    { rails: { "psu-a": { volts: 360.8, v_src: 400.0, amps: 112.6 }, "psu-b": { volts: 363.4, v_src: 400.0, amps: 104.1 }, "psu-c": { volts: 386.5, v_src: 400.0, amps: 0 } },
-      loop: { name: "cool-1", flow: 53.7, flow_nominal: 120.0, pump_health: 1.0 }, active_faults: ["PS2"] }),
+    { "compressor-1": { amps: 55.0, throughput: 100, speed_pct: 100 }, "chiller-1": { amps: 30.0, throughput: 100 }, "press-1": { amps: 42.9, temp: 65.1, throughput: 100 },
+      "furnace-1": { temp: 50.5 }, "cnc-1": { temp: 59.8 }, "press-2": { temp: 61.0 } },
+    { rails: { "psu-a": { volts: 386.4, v_src: 400.0, amps: 112.6 }, "psu-b": { volts: 383.9, v_src: 400.0, amps: 134.1 }, "psu-c": { volts: 386.5, v_src: 400.0, amps: 0 } },
+      loop: { name: "cool-1", flow: 118.4, flow_nominal: 120.0, pump_health: 1.0, t_supply: 37.7, t_setpoint: 28.0, heat_kw: 58.2,
+        chiller: { name: "chiller-1", running: true, capacity_kw: 46, load_pct: 100, at_capacity: true } },
+      air: { pressure: 8.5, reading: 5.5, pt_fault: true, venting: true, load_bar: 6.9, unload_bar: 7.5, loaded: true }, active_faults: ["PS2"] }),
   "/api/actions": { write: "enabled", target_pct: 55, proposals: [], active: [], blocked: [] },
   "/api/fleet": FLEET_RUN,
 };
@@ -338,45 +354,49 @@ function rec(o) {
 }
 const narr = (sections, source = "llm") => ({ text: Object.values(sections).join(" "), sections, source,
   model: source === "llm" ? "gemma4:e4b-it-qat" : null, tag: 3, status: "active" });
-const P1 = { asset: "press-1", ts: T0 - 40, reason: "press-1 draws 85 A, 99 % above its normal 43 A, and rail psu-a is at 344 V" };
+const P1 = { asset: "press-1", ts: T0 - 40, reason: "press-1 draws 80 A, 86 % above its normal 43 A, and rail psu-a is at 382 V" };
 INCIDENT["/api/incident"] = rec({ origin: P1, driver: P1, chain: ["press-1"], victims: ["cnc-1", "qa-scanner-1"],
-  phases: [[75, "open", "a forecast card opened"], [75, "card", "forecast: press-1 heads for the 78 °C trip in about 167 s"],
+  phases: [[75, "open", "a forecast card opened"], [75, "card", "forecast: press-1 heads for the 80 °C trip in about 167 s"],
     [40, "origin", "press-1 starts it: " + P1.reason]] });
 INCIDENT["/api/narrative"] = narr({
   headline: "press-1 is overloading rail psu-a.",
-  origin: "press-1 draws 85 A, about twice its normal 43 A, and pulls the rail down to 344 V.",
-  chain: "The low rail reaches cnc-1 and qa-scanner-1.",
+  origin: "press-1 draws 80 A, almost twice its normal 43 A, and pulls the rail down to 382 V.",
+  chain: "The sag reaches cnc-1 and qa-scanner-1 on the same rail.",
   evidence: "press-1's current rose before the rail fell, and they all share that rail.",
   suggestion: "Derate press-1 to 55 % through plc-stamping to take the load off the rail." });
-INCIDENT["/api/ask"] = { answer: "press-1 draws 85 A against a normal 43 A, and it shares rail psu-a with cnc-1 and qa-scanner-1.",
+INCIDENT["/api/ask"] = { answer: "press-1 draws 80 A against a normal 43 A, and it shares rail psu-a with cnc-1 and qa-scanner-1.",
   tools: [{ tool: "get_incident", args: {} }, { tool: "get_readings", args: { asset: "press-1" } }], source: "llm" };
 STEADY["/api/incident"] = { active: null, recent: [{ id: "INC-20260926-093000-1", opened_ts: T0 - 3600, closed_ts: T0 - 3100,
   origin: P1, tripped: [] }] };
 STEADY["/api/narrative"] = { text: "Steady: every monitored signal sits inside its learned normal band (16 workloads).",
   sections: {}, source: "steady", model: null, status: "steady" };
 FORECAST["/api/incident"] = rec({ cards: [{ pod: "press-1", class: "trip", eta_s: 38 }],
-  phases: [[20, "open", "a forecast card opened"], [20, "card", "forecast: press-1 heads for the 78 °C trip in about 58 s"]] });
+  phases: [[20, "open", "a forecast card opened"], [20, "card", "forecast: press-1 heads for the 80 °C trip in about 58 s"]] });
 FORECAST["/api/narrative"] = narr({ headline: "press-1 is heading for its trip.",
-  forecast: "Its temperature curve levels off at 83 °C, above the 78 °C trip, so it trips in about 38 s unless it makes less heat.",
+  forecast: "Its temperature curve levels off at 85 °C, above the 80 °C trip, so it trips in about 38 s unless it makes less heat.",
   suggestion: "Derate press-1 to 55 % through plc-stamping." });
-const C1 = { asset: "compressor-1", ts: T0 - 170, reason: "compressor-1 draws 57 A, 764 % above its normal 7 A, and rail psu-b is at 363 V" };
-const D1 = { asset: "chiller-1", since_ts: T0 - 70, reason: "chiller-1's overload relay tripped, and loop flow is 54 of 120 L/min" };
-CHAIN["/api/incident"] = rec({ origin: C1, driver: D1, chain: ["compressor-1", "chiller-1"], victims: ["furnace-1", "press-1", "cnc-1"],
-  tripped: ["chiller-1"], phases: [[175, "open", "the engine found a root cause"], [170, "origin", "compressor-1 starts it: " + C1.reason],
-    [95, "trip", "chiller-1 tripped"], [80, "card", "forecast: furnace-1 heads for the 78 °C trip in about 106 s"],
-    [70, "driver", "chiller-1 now drives it: " + D1.reason]] });
+const C1 = { asset: "compressor-1", ts: T0 - 600, reason: "compressor-1 draws 55 A, 300 % above its normal 14 A, and has not unloaded for 10 min" };
+const D1 = { asset: "chiller-1", since_ts: T0 - 120, reason: "chiller-1 is at its capacity limit, and the supply water is 38 C against its 28 C setpoint" };
+CHAIN["/api/incident"] = rec({ origin: C1, driver: D1, chain: ["compressor-1", "chiller-1"], victims: ["furnace-1", "press-1", "cnc-1", "press-2"],
+  tripped: [], phases: [[605, "open", "the engine found a root cause"], [600, "origin", "compressor-1 starts it: " + C1.reason],
+    [300, "card", "forecast: furnace-1 heads for the 55 °C trip in about 590 s"],
+    [120, "driver", "chiller-1 now drives it: " + D1.reason]] });
 CHAIN["/api/narrative"] = narr({
-  headline: "The stuck compressor-1 knocked out the chiller, and the cooled machines are heating.",
-  origin: "compressor-1 has run nonstop at 57 A instead of its normal 7 A, and rail psu-b sagged to 363 V.",
-  driver: "chiller-1 now drives it: the low rail overloaded its relay, it tripped, and loop flow fell to 54 of 120 L/min.",
-  chain: "The chain runs compressor-1, then chiller-1. It reaches furnace-1, press-1 and cnc-1.",
-  forecast: "furnace-1 heads for 81 °C and trips at 78 °C in about 44 s.",
-  suggestion: "Stop compressor-1 at the machine; derate press-1 to 55 % through plc-stamping; reset the chiller-1 relay only after compressor-1 is fixed." });
-CHAIN["/api/actions"] = { ...CHAIN["/api/actions"], proposals: [{ id: "f1", verb: "derate", asset: "press-1", plc: "plc-stamping",
-  tag: "FLEET.PLC_STAMPING.PRESS_1.DERATE_PCT", from: 100, to: 55, reason: "forecast", expected: "press-1 makes less heat and stays below the 78 °C trip" }],
-  advice: [{ verb: "stop", target: "compressor-1", text: "unload or stop compressor-1 at the machine", why: "no controller VISR can write to holds it" },
-    { verb: "inspect", target: "chiller-1", text: "reset the chiller-1 relay only after compressor-1 is fixed", why: "compressor-1 overloaded it, and a reset now trips it again" },
-    { verb: "stop", target: "furnace-1", text: "reduce the load on furnace-1 before it reaches 78 °C", why: "it trips in about 44 s, and no controller VISR can write to holds it" }] };
+  headline: "A failed pressure sensor keeps compressor-1 loaded, and the coolant loop is overheating.",
+  origin: "compressor-1 has run loaded at 55 A for 10 min, because its pressure sensor reads 5.5 bar while the receiver vents at 8.5 bar.",
+  driver: "chiller-1 now drives it: it runs at its 46 kW limit, and the supply water is 38 C against its 28 C setpoint.",
+  chain: "The heat of compressor-1 reaches loop cool-1. It warms furnace-1, press-1, cnc-1 and press-2.",
+  forecast: "furnace-1 coil water is at 50.5 C and trips at 55 C in about 290 s.",
+  suggestion: "Stop compressor-1 through plc-utilities to take its heat out of the loop. Bring a standby chiller online if there is one." });
+CHAIN["/api/actions"] = { ...CHAIN["/api/actions"], proposals: [
+  { id: "c1", verb: "stop", asset: "compressor-1", plc: "plc-utilities", tag: "FLEET.PLC_UTILITIES.COMPRESSOR_1.DERATE_PCT", from: 100, to: 0, reason: "root",
+    cites: { root: "compressor-1", edge: "compressor-1→furnace-1", evidence: ["write", "loop", "temporal"], confidence: 0.88, signal: "coolant_temp" },
+    expected: "compressor-1 stops: its heat leaves the loop, rail psu-b recovers" },
+  { id: "f1", verb: "derate", asset: "furnace-1", plc: "plc-furnace", tag: "FLEET.PLC_FURNACE.FURNACE_1.DERATE_PCT", from: 100, to: 55, reason: "forecast",
+    cites: { forecast: "furnace-1", eta_s: 290, value: 50.5, limit: 55, evidence: ["forecast"], signal: "coolant_temp" },
+    expected: "furnace-1 makes less heat and stays below the 55 °C trip" }],
+  advice: [{ verb: "inspect", target: "compressor-1", text: "check the compressor-1 pressure transducer", why: "it reads 5.5 bar while the receiver vents at 8.5 bar" },
+    { verb: "hold", target: "chiller-1", text: "bring a standby chiller online if there is one", why: "chiller-1 runs at its capacity limit, and less cooling only makes the loop hotter" }] };
 const H1 = { asset: "hmi-gw", ts: T0 - 60, reason: "hmi-gw floods field-1, which runs at 152 % of its capacity" };
 NETWORK["/api/incident"] = rec({ origin: H1, driver: H1, chain: ["hmi-gw"], victims: ["plc-stamping"],
   phases: [[65, "open", "the engine found a root cause"], [60, "origin", "hmi-gw starts it: " + H1.reason]] });

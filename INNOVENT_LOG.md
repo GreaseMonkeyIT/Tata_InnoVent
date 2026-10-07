@@ -2364,3 +2364,114 @@ the coolant path from press-1. The MOTION path was run once with the reduced-mot
 restored.
 **Files:** `dashboard/app/Floor.jsx`, `dashboard/app/MapPanel.jsx`, `dashboard/app/MapHud.jsx` (removed),
 `dashboard/app/scifi.css`, `dashboard/README.md`, `INNOVENT_LOG.md`.
+
+**LOG-106 · 2026-10-03 · Stage 2 is submitted. A sweep brings every document in line with the code of `7f698cd`.**
+**Submitted (operator):** the Stage 2 deck and the demo video on 2026-09-30, and the pre-read to the organizers
+on 2026-10-02. The operator recorded the final take by hand with OBS Studio on 2026-09-28, from about 20:28,
+after the LOG-105 dashboard deploy. The deck (slide 15) and the pre-read use frames of that take.
+**Recorded late, the first one-day soak (2026-09-27):** `DURATION_H=24 soak/soak.sh` started at 01:51 on the
+LOG-103 images. A power cut stopped forge at 03:45, in cycle 2, while Scenario 3 was active. The box came back
+on 2026-09-28 at about 17:45 with every pod ready, the baseline lock, and the display bands intact. Cycle 1:
+Scenario 1 clean (root press-1 at +85 s), one Scenario 4A fire answered 503, and a `chiller-1` root stayed after
+Scenarios 2 and 5. In cycle 2 that tail hid the Scenario 1 root. The full one-day run is still open.
+**Sweep (operator: "everything"):** every tracked document, the code comments, the dev mock, and the local notes
+were read against the code. Forge did not answer SSH at first. A check at 16:17, with forge up for 1 min,
+confirmed that PIVOT_SETUP 5.2c never ran: retention 12h, the Prometheus database on an emptyDir, no
+`prometheus-pv-slowdisk`, helm revision 36 of 2026-07-02, and NodePorts 30030 and 30090 open.
+- Counts from the code: 48 base SCADA tags (30 measured, 18 calculated), not 41. 395 Python tests (correlation 89,
+  plant 52, api 102, scada 103, vplc 49) and 3 Go tests. golive has 53 checks (LOG-101).
+- The Scenario 2 watch ran on 2026-09-26 (21:16 to 22:53), not on 27 Sep. `BOOK.md` is fixed. The deck footnote
+  and the pre-read keep "27 Sep" (operator: repository only, the pre-read is already sent).
+- PIVOT_SETUP 5.2c had never run on forge. The operator then ran `deploy/prometheus-storage.sh apply` at 17:04
+  (helm revision 37). The claim bound to `prometheus-pv-slowdisk`, retention is 30d or 100 GiB, both NodePorts
+  are gone, Grafana answers on /grafana/, and the engine kept its lock. `verify` first failed one check: it
+  compared the size flag with "100GB", and Prometheus prints "100GiB" (it reads GB in base-2 units). The
+  check now takes both, and VERIFY PASS at 17:07. `BOOK.md` (chapters 7 and 13), `PIVOT_SETUP.md`, and the
+  local research notes (S2, S3 done) say "deployed".
+- The act loop has three executable verbs: derate, stop (compressor-1 only), and restore. No action on chiller-1.
+- The console has seven mock states and nine lamps. The operator role executes actions and manages PLCs. Faults
+  run only from the fault shell.
+- `plc/REGISTER_MAP.md`: a trip clears under the machine's own limit, not under 78 °C.
+- `docs/images/visr-architecture.svg`: "latched trip at 80 / 55 °C", "48 tags", and "baselines + EWMA / CUSUM
+  onsets". The edits broke its embedded C2PA content credential, so the
+  operator had the `<metadata>` block removed. The file is now a plain SVG.
+- `dashboard/app/lib/mock.js`: the LOG-100 plant (rails near 387 V, a trip per machine, the new Scenario 2 with a
+  stop proposal for compressor-1, the four static PLCs). The dev preview renders all seven states with no script
+  error.
+- `INNOVENT_PLAN.md` lists the open items. `INNOVENT_MASTER_PLAN.md` gets a status banner and stays a July plan.
+  `FLEET.md` 11 describes the console as built and names the `incomer-1` floor row as not built.
+**Open (unchanged by this entry):** the one-day soak, the LOG-103 findings, the chiller-1 tail and the 503 above,
+Scenario 7, the api auth Secrets with `optional: true`, the trial fonts.
+**Files:** `README.md`, `BOOK.md`, `SCENARIOS.md`, `FLEET.md`, `PIVOT_SETUP.md`, `POC_SCRIPT.md`, `INNOVENT_PLAN.md`,
+`INNOVENT_MASTER_PLAN.md`, `dashboard/README.md`, `vplc/README.md`, `plc/REGISTER_MAP.md`, `soak/README.md`,
+`docs/images/visr-architecture.svg`, `dashboard/app/lib/mock.js`, `dashboard/app/lib/palette.js`,
+`deploy/grafana-plant-dashboard.yaml`, `deploy/prometheus-storage.sh` (the retention check), `plant/sim/main.py`
+(a docstring), `.gitignore` (`splash.html`, the
+video title card, stays local), `INNOVENT_LOG.md`. Local:
+`HANDOFF.md`, `FIELD_RESEARCH.md`, `LabVIEW_CLAD/VISR_APPLICATION.md`.
+
+**LOG-107 · 2026-10-05 · The one-day soak passes for every fault that fired. A start race in the soak script blocked Scenario 4A.**
+**Run:** `DURATION_H=24 COOLDOWN_PS5=450 soak/soak.sh` on forge, `/var/tmp/visr-soak/soak-20261004-012950`. It started
+at 01:29 on 2026-10-04, after three quiet checks in a row, and ended at 01:49 on 2026-10-05. It ran 20 cycles and 116
+fires on the LOG-103 images, with the baseline lock. No pod restarted, and forge did not reboot.
+**Score (`soak/record.py`):** every fault that reached the plant got the right result, 103 of 103.
+
+| Scenario | Right result | Median time to the right result |
+|---|---|---|
+| PS1 | root `press-1` in 20 of 20 cycles | 96 s |
+| PS2 | root `compressor-1` in 20 of 20 | 97 s |
+| PS3 | root `hmi-gw` in 19 of 19 | 96 s |
+| PS4A | `unsigned_write`, writer named, in 6 of 6 fires | 49 s |
+| PS4B | `current_balance` on `FLEET.PLC_STAMPING.PRESS_1.AMPS` in 19 of 19 | 24 s |
+| PS5 | a trip card in 19 of 19 | 60 s |
+
+**The Scenario 4A start race:** 13 of 19 PS4A triggers answered 503. `soak.sh` started rogue-ews after the 60 s
+baseline and fired less than 1 s after the rollout. The kubelet probe comes from 10.42.0.1, which the network
+policy always allows, so the pod is ready before the api can reach it. A capture of cycle 2 showed rogue-ews up at
+03:35:01.6 and the fire at 03:35:02. The stamping vPLC logged no S7 connection for a failed fire. A manual fire 20 s
+after the rollout passed (HTTP 200, `unsigned_write` in under 50 s). **Fix:** `soak.sh` now starts rogue-ews before
+the baseline, so the new pod gets 60 s. `soak/README.md` says the same. The fix is not re-run yet.
+**Found in the quiet windows:**
+- The last root stays after a reset. After PS1 it cleared inside the 150 s cooldown in 10 of 20 cycles (median 138 s).
+- After PS5 the `chiller-1` root cleared inside the 450 s cooldown in only 3 of 19 cycles. It was still shown at the
+  start of the next PS1. PS1 still got root `press-1` in every cycle.
+- PS3 also raised a false `current_balance` finding on `FLEET.PLC_UTILITIES.COMPRESSOR_1.AMPS` in 15 of 19 cycles
+  (the LOG-103 finding, still open). PS3 got the right root in every cycle.
+- PS4B got the right channel in every cycle, and a press-1 trip card in 2 of 285 samples. Correction (LOG-108):
+  PS4B also got root `press-1` at 85 to 97 s in 19 of 19 cycles. The score checked only the integrity finding.
+**Deck (local, gitignored):** the results slide has a long-run row with these numbers.
+**Open:** a PS4A-only run with the fixed `soak.sh`, the PS3 false current balance, the root that stays after a
+reset, the chiller-1 tail, the other LOG-103 findings, Scenario 7, the api auth Secrets with `optional: true`.
+**Files:** `soak/soak.sh`, `soak/README.md`, `SCENARIOS.md`, `INNOVENT_PLAN.md`, `INNOVENT_LOG.md`. Local: `HANDOFF.md`.
+
+**LOG-108 · 2026-10-05 · The fixed soak script passes Scenario 4A 9 of 9. A one-fire capture gives the slide evidence.**
+**Scenario 4A-only run:** `SCENARIOS=PS4A DURATION_H=1 soak/soak.sh` on forge, `/var/tmp/visr-soak/soak-20261005-081944`,
+08:19 to 09:20. 9 fires, 9 triggers accepted, no 503 and no WARN line. Every fire got `unsigned_write` on
+`FLEET.PLC_STAMPING.PRESS_1.DERATE_PCT` in 37 to 50 s (median 49 s), with no root and no other integrity finding. The
+start-race fix of LOG-107 works. The only baseline rows that were not quiet were the first three of cycle 1: a press-1
+trend finding left from the Scenario 4B capture that ran just before.
+**New script `soak/capture.sh`:** it fires one scenario and keeps the full JSON. It saves every `/api/graph` answer
+(every 3 s) to `graphs.jsonl`, the graph, narrative, plant and tags at the first finding, and `markers.json`. It refuses
+PS4A and PS6. A dry run against a fake api on forge passed before the real fire. `soak/README.md` documents it.
+**Scenario 4B capture:** `/var/tmp/visr-capture-ps4b-20261005-081314`, fire at 08:14:14.
+- +15 s: `current_balance` on rail `psu-a`, feeder 127.79 A against 110.8 A reported, gap 16.99 A, channel
+  `FLEET.PLC_STAMPING.PRESS_1.AMPS`. The narrator headline: "A PLC report contradicts the physics."
+- +93 s: root `press-1` (score 0.845, `incomer-1` 0.155) with 5 shifted machines on `psu-a` (cnc-1, press-1, press-2,
+  psu-a, qa-scanner-1) on the `bus_voltage` signal.
+- After the reset at +180 s: the integrity finding cleared at about +198 s and the root at about +231 s. A press-1 trend
+  finding stayed until the end of the 150 s cooldown.
+- Plant data (historian and Prometheus): press-1 current 42.0 A to 58.8 A, the PLC channel stayed at 42 A, the psu-a
+  feeder 111 A to 127.8 A, the psu-a bus 386.5 V to 384.6 V, press-1 temperature 57 °C to 66 °C.
+**Why Scenario 4B looks like Scenario 1 on the console:** the fault is a real overload (friction 1.4) that the PLC
+channel hides. The extra current sags the `psu-a` bus, so the same bus-voltage shift as Scenario 1 names `press-1`.
+The one-day soak shows the same root in 19 of 19 cycles, so the LOG-107 line "PS4B was clean" was wrong (corrected).
+The engine is right on the physics. The scenario contract (`SCENARIOS.md` 2.5) does not list this root yet.
+**Deck (local, gitignored):** the evidence slide now shows the Scenario 4B capture (timeline, verbatim engine answer,
+callouts). The old log-excerpt slide moved to the end as a backup. A second Scenario 4B fire at 13:39 (flagged at
++15.3 s again) gave two console screenshots (+25 s integrity only, +125 s root `press-1`) for a new slide 20. A new
+slide 22 shows the sponsor-tool plan: AWS (EC2, S3, Budgets, KMS, ECR only, no credits active yet) and NI LabVIEW
+(plant models, TestStand, hardware in the loop only with NI hardware).
+**Open:** console screenshots of Scenario 4B (one more fire, operator start), the PS3 false current balance, the
+root that stays after a reset, the chiller-1 tail, the other LOG-103 findings, Scenario 7.
+**Files:** `soak/capture.sh` (new), `soak/README.md`, `SCENARIOS.md`, `INNOVENT_PLAN.md`, `INNOVENT_LOG.md`. Local:
+`HANDOFF.md`.

@@ -20,6 +20,26 @@ gives 80 % of its input to the loop water. Each cooled machine trips at its own 
 utilities, cnc-1, and furnace-1 (FLEET.md), and the engine reads the plant through SCADA (section 4.6).
 The images went live on forge at 18:51 on 2026-09-26, after one failed try (LOG-101).
 
+**Scenario watch on the LOG-100 plant (LOG-103, 2026-09-26, 21:16 to 22:53).** One run of each scenario on
+locked baselines. Every scenario showed its expected finding: PS1 root `press-1` at +95 s, PS2 root
+`compressor-1` at +21 s with the loop edge at +189 s, PS3 root `hmi-gw`, PS4A `unsigned_write` at +56 s,
+PS4B `current_balance` at +15 s, PS5 cards 76 s to 163 s before the trips, PS6 the leak card at +91 s.
+This was a watch, not a scored proof run. The last full proof run is the one of 2026-09-22.
+
+**One-day soak (2026-10-04 and 05, LOG-107).** 20 cycles in 24 h. Every fault that fired got the right result,
+103 of 103: PS1 root `press-1` (median 96 s), PS2 root `compressor-1` (97 s), PS3 root `hmi-gw` (96 s), PS4A
+`unsigned_write` (49 s), PS4B `current_balance` on the press-1 AMPS channel (24 s), PS5 a trip card (60 s). A
+start race in `soak.sh` blocked 13 of 19 PS4A fires. The script now starts rogue-ews before the baseline.
+PS4B also got root `press-1` at 85 to 97 s in 19 of 19 cycles: the hidden overload sags the `psu-a` bus (LOG-108).
+
+**Scenario 4A-only run (2026-10-05, LOG-108).** The fixed `soak.sh` fired PS4A 9 times with no failed trigger.
+Every fire got `unsigned_write` (median 49 s) with no root and no other finding.
+
+**Open (2026-10-05).** A false `current_balance` finding on the `plc-utilities` compressor AMPS channel in PS3
+(15 of 19 soak cycles). The last root stays after a reset (after PS1, a median of 138 s). A `chiller-1` root
+stays after PS2 and PS5 (cleared within 450 s in 3 of 19 cycles). Trip cards on cnc-1 (PS5) and press-1
+(PS4B) settle just under the 80 °C trip. Derate proposals for every cooled machine in PS2 and PS5. PS7 still fails (below). The Stage 2 deck and video were submitted on 2026-09-30.
+
 **Supply boundary (2026-09-20, this change).** The plant had no supply above its rails. `Rail.step` used a
 constant source voltage, so every sag in the model started inside the plant. A power quality meter at the
 distribution board measures the supply above the plant load, and that measurement separates an external cause
@@ -76,7 +96,8 @@ machine gets its own card first (furnace-1 86 s ahead, press-1 117 s ahead).
 Offline after LOG-100 (plant model alone, seed 7, the OpenPLC latch emulated): PS1 trips press-1 at +213 s.
 PS5 trips press-1 at +124 s, furnace-1 at +132 s, and press-2 at +262 s. PS2 trips furnace-1 at +941 s. PS7
 trips furnace-1 at +270 s, press-1 at +416 s, press-2 at +543 s, and cnc-1 at +556 s. The PS5 trips come
-sooner than before LOG-100, so the next box watch must confirm that each card still leads its trip.
+sooner than before LOG-100. The box watch of 2026-09-26 confirmed that each card still leads its trip:
+76 s, 87 s, and 163 s before the press-1, furnace-1, and press-2 trips (LOG-103).
 
 ### 2.1 PS1 (unchanged)
 
@@ -232,8 +253,9 @@ after the working set passes half of the limit. At 0.5 MiB/s the kill comes abou
 **Honesty:** until LOG-100 the engine plant plane read plant-sim directly, and the claim was "the SCADA view
 and the historian go blind, and the console says so". It was not "VISR goes blind". Since the SCADA read switch
 (section 4.6), the PLC-read signals of the engine also pass through the tag server, so the kill leaves a gap in
-the engine plant plane too. The edge plane (the pod memory and the restart) stays visible. Measure the claim
-again in the next box watch before the deck uses it.
+the engine plant plane too. The edge plane (the pod memory and the restart) stays visible. The watch of
+2026-09-26 caught the leak card at +91 s and the restart phase (LOG-103). It did not record the gap in the
+engine plant plane, so that measurement is still open.
 
 ### 2.8 PS7: the supply dips and the plant loses cooling
 
@@ -291,7 +313,7 @@ state, a PS verdict, or the random stream. The offline replay and the PS2 lab gi
 
 1. **A repeat fault does nothing.** `POST /fault/<id>` for an active fault answers 200 "already active" and
    changes nothing. A second PS4B apply recorded the replay from the faulted current, so the vPLC word matched
-   the truth and the PS4B evidence was gone. The console can send one fault twice.
+   the truth and the PS4B evidence was gone. A client can send one fault twice.
 2. **Throughput recovers at any voltage.** A machine that the voltage does not slow climbs back 2 points per
    tick after a trip, at any rail voltage. Rail A idles under the brownout line, so the old rule kept press-1
    near 0 % after a trip while it drew full current. This showed only when the press ran without its PLC.
@@ -648,10 +670,12 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
 - **Event log:** verbs `unsigned` and `balance` render red. `format.js` gives each a detail line.
 - **Actions:** an unsigned hold shows a red pill. A blocked asset shows its reason. The advisory suggestions of
   `/api/actions` `advice` list under the executable ones (LOG-093).
-- **Assets:** a segment group (latency, drops, members). `chiller-1` shows "tripped · overload".
+- **Assets:** a segment group (latency, drops, members). A tripped `chiller-1` shows "TRIP · overload" or
+  "TRIP · undervoltage" (its `trip_reason`).
 - **Command bar:** an `integrity` lamp. The refresh clock turns amber after 15 s and red after 30 s without an update.
 - **Palette:** no new color. Red means an alarm or an integrity finding. Amber means a warning or STALE.
-- **Mocks:** add variants `chain` (PS2), `network` (PS3), `integrity` (PS4A and PS4B), `blind` (PS6).
+- **Mocks:** variants `chain` (PS2), `network` (PS3), `integrity` (PS4A and PS4B), `blind` (PS6), next to
+  `incident`, `forecast`, and `steady`.
 
 ## 8. Soak
 
@@ -708,7 +732,8 @@ open integrity finding gets no proposal. Each `active` derate gets `signed: true
   segment drops frames only above `ρ ≈ 1`. PS4B changes the vPLC AMPS channel only. Feeder amps equal the device sum.
   `test_cells.py` equality guard updated for the relay.
 - plant PS7: at nominal, every rail voltage matches the pre-change model for the same seed. A dip to 0.85
-  drops every rail together and trips the chiller relay inside 100 s from any cycle phase. The brownout
+  drops every rail together and stops the chiller on undervoltage (LOG-100). After the reset the chiller
+  restarts when its anti-recycle wait ends. The brownout
   branch still fires during a dip, which proves that the threshold uses `v_nom` and not the live supply.
 - plant freeze review (section 2.9): a repeat PS4B POST keeps the healthy recording, press-1 recovers to 100 %
   throughput under the brownout line, an idle load never reads below 0 A, `tick_dt` caps a stall at 5 s,

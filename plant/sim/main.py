@@ -1441,7 +1441,7 @@ def metrics_text():
 
 def state_json():
     """The /state document. It carries the static topology too (rail/cooled/nominals) so the
-    dashboard's Machines section can group by medium without a second source of truth."""
+    console's Assets panel can group by medium without a second source of truth."""
     with _lock:
         return {
             "supply": {"name": SUPPLY.name, "volts": round(SUPPLY.voltage, 2),
