@@ -67,3 +67,7 @@ mechatronics_lab_manual.pdf
 # files), on the assumption this repo stays PRIVATE to the team. If the repo ever goes
 # public, uncomment the line below and swap to licensed files first (LOG-014).
 # dashboard/app/fonts/*.otf
+# vendor datasheets and standards notes: copyrighted, kept local (the model docs cite the URLs)
+/references/
+# concept-run outputs (plots, models): regenerate with twin/experiments/*.py
+/twin/experiments/out/

@@ -2475,3 +2475,77 @@ slide 22 shows the sponsor-tool plan: AWS (EC2, S3, Budgets, KMS, ECR only, no c
 root that stays after a reset, the chiller-1 tail, the other LOG-103 findings, Scenario 7.
 **Files:** `soak/capture.sh` (new), `soak/README.md`, `SCENARIOS.md`, `INNOVENT_PLAN.md`, `INNOVENT_LOG.md`. Local:
 `HANDOFF.md`.
+
+**LOG-109 · 2026-10-08 · Overhaul phase 1 (branch `overhaul`): the shared part models, the utilities, and concept check CP-1.**
+**Where:** the worktree `VISR_Overhaul` on the branch `overhaul` (`ideas.md` 13.1, phase 1). Nothing here
+touches `main` or forge. The PoC stack stays as it is until 2026-10-14.
+**New physics library `plant/model/`** (each number from a cited public source or marked "project choice";
+sources and verification tables in `plant/model/README.md`, local datasheet copies in the gitignored
+`references/`):
+- `motor.py`: a double-cage induction motor with leakage saturation, fitted to the manufacturer data sheet
+  (ABB M3BP 22 kW and 37 kW IE3), two-mass thermal network, star-delta, faults (bearing drag, cooling,
+  rotor bars, locked rotor). The fit uses the rated, 75 % load, no-load and starting points. The 50 % load
+  point, the IEEE 141 low-voltage table, the V/f behaviour and the energy balance are independent checks.
+- `power.py`: the 11 kV grid, TR-1 (2000 kVA) and TR-2 (1600 kVA) per IS 1180 level 2, the LV cable feeders,
+  a radial load flow, IEC 60076-7 transformer temperatures, IEC 61000-4-11 class 3 dips.
+- `heat.py` (effectiveness-NTU exchanger), `pump.py` (pump curve, affinity laws), `cooling.py` (the cool-1
+  loop), `protection.py` (class 10 overload, ANSI 27), `sensors.py` (instrument accuracy classes),
+  `gas.py` (regulator, header, burners, low-gas-pressure lockout).
+- `compressor.py`: compressor-1 as an Atlas Copco GA 37 W (load/unload, auto stop, star-delta, blow-down,
+  thermostatic oil circuit, safety valve, overload relay). It matches the data sheet (40.8 kW, 116 l/s),
+  the DOE rule of about 7 % power per bar, and the DOE part-load curves.
+- `chiller.py`: chiller-1 as a Daikin EWAD190AJYNN from its capacity tables, behind a tempering valve
+  (an air-cooled chiller leaves water at 15 C at most, the process loop runs at 27 C).
+- `plant.py`: the utilities wired together. F7 (failed transducer) and F11 (grid sag) act through the plant.
+- `press_brake.py`: press-1 as an LVD PPEB 320/40 hydraulic press brake on the 37 kW motor (bend cycle,
+  air-bending force, VG 46 viscosity and pump leakage, oil heat, cooler, 70 C trip; faults F1, F2, F15).
+- `gas.py` gets its sourced values in the catalog (PPAC gas basis, EN 334 regulator class, DOE available
+  heat); furnace-1 uses them next.
+**Concept check CP-1** (`twin/`, `twin/README.md`): one small model per node (filter bank on the inputs, a
+linear path and a small network, 2,660 weights), learned from 12 h of normal running of the compressor.
+The residual stays quiet for normal running and for victims (supply sag, warm cooling water, more air
+demand), and it rises on the right signal for faults in the machine (oil cooler fouling, bearing drag,
+failed transducer, clogged filter). Today's raw band flags the victims and misses the transducer fault.
+**Tests:** 130 pass in `plant/tests` (the new part, machine and plant tests and the old sim's tests; the two
+`test_cells.py` errors are the missing pymodbus of the local Python) and 7 in `twin/tests`.
+press-1 also runs inside the utilities plant (psu-a, oil cooler on cool-1): its bends dip psu-a, and psu-c on
+TR-2 barely moves.
+Rhythm discovery v0 (`twin/rhythm.py`, autocorrelation, a stand-in for the Matrix Profile) finds press-1's
+cycle time from its motor current alone, within 5 %.
+**Same day, after the session reset:**
+- Operator decision: the conventional process cooling. cool-1 now runs on an induced-draft cooling tower with a
+  plate heat exchanger (`cooling_tower.py`: Merkel fill model calibrated to the EVAPCO AT 14-99 rating, the
+  Jamshedpur 1 % wet bulb 28.1 C, fan thermostat, fill fouling). F9 becomes tower fill (or plate exchanger)
+  fouling (ideas.md 11.7 and 11.10 updated). chiller-1 stays as a part (`cooling="chiller"`).
+- Concept check CP-2 (`twin/experiments/cp2_press.py`): press-1 has no state signal; rhythm discovery takes
+  its period from the motor current, a causal phase goes into the small model, and a 10 Hz current gives
+  the duration of each cycle part. Victims quiet; F1 shows on the return stroke; F2 stretches the bend;
+  F15 (harder plate) only loads the bend: material, not machine (`twin/README.md`).
+- furnace-1 (`furnace.py`): the gas-fired car-bottom stress-relief furnace, AWS D1.1 program, EN 1993-1-2
+  steel, DOE available heat, controlled air cooling, faults flame failure, F10, door seal, thermocouple drift.
+  It runs in the utilities plant on the plant gas header (F10 there locks its burners out).
+- cnc-1 (`cnc.py`, DN Solutions DBC 130 boring mill, Sandvik cutting power with Kienzle kc, flank wear to the
+  ISO 3685 limit, VFD undervoltage trip) and conveyor-1 (`conveyor.py`, SEW 5.5 kW IE3 gearmotor, jam F3).
+- press-2 (`mech_press.py`, Aida NC1-2000 mechanical press on a Wannan YH2 high-slip motor, the press convention):
+  13 % flywheel slowdown per stroke as "Stamping 101" gives, brake monitor, clutch air from the plant header.
+  In the plant a large air leak (F6) stops press-2 and the plasma.
+- Engine assembly line, part 1 (`assembly.py`): pallet transfer (Rexroth TS 5), tightening (Desoutter EAD on
+  CVI3), parts washer (MecWash at an Indian truck maker), pressure-decay leak test. A block that leaves the
+  washer warm fails the leak test by the ideal-gas effect (F13). Cold test (motored friction, a tight bearing as
+  the F16 product fault) and hot test (Cummins QSL9 heat balance against a regenerative Horiba dyno, F12 dyno
+  trip) are built, and the whole assembly line runs on TR-2 in the plant: a dyno trip (F12) raises TR-2's load
+  at once, and a hot washer (F13) makes tight blocks fail the leak test. Every machine of ideas.md 11.5 and
+  11.6 now exists as a verified model in one plant (174 plant tests, 2 pymodbus environment errors).
+- The rest of the fabrication line (`fab_stations.py`): plasma (Hypertherm XPR300), two welding cells (Fronius
+  TPS 500i, IEC 60974-1 load line), shot blast (Roesler RRB 16/5), paint booth and gas bake oven, weld scanner
+  (Mean Well 16 ms hold-up). The whole line runs in the plant on TR-1: the welders show on psu-a and not on
+  psu-c, a 50 % dip trips the boring mill and spares the scanner, an interruption resets the scanner.
+**Open (next session):** CP-3, the multi-node twin (steps 6, 8, 9: learned graph, twin, two-step training) on
+the full plant; the fault list F1 to F20 as plant scenarios and the fault-pair tests (11.10); the Matrix
+Profile in place of rhythm discovery v0; the rhythm discovery (step 2) and then the press's small model (CP-2), furnace-1.
+**Files:** `plant/model/*` (new), `plant/tests/test_part_*.py`, `test_machine_compressor.py`,
+`test_machine_chiller.py`, `test_machine_press.py`, `test_machine_furnace.py`, `test_machine_cnc_conveyor.py`,
+`test_machine_fab_stations.py`, `test_machine_press2.py`, `test_machine_assembly.py`,
+`test_part_cooling_tower.py`,
+`test_plant_utilities.py` (new), `twin/*` (new), `.gitignore` (`/references/`,
+`/twin/experiments/out/`), `INNOVENT_LOG.md`.
