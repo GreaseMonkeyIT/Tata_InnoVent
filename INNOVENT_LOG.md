@@ -2549,3 +2549,61 @@ Profile in place of rhythm discovery v0; the rhythm discovery (step 2) and then 
 `test_part_cooling_tower.py`,
 `test_plant_utilities.py` (new), `twin/*` (new), `.gitignore` (`/references/`,
 `/twin/experiments/out/`), `INNOVENT_LOG.md`.
+
+**LOG-110 · 2026-10-15 · The site becomes one shop: building services, transformers sized for the shop, no export, power factor correction, and the realism fixes of the first full-plant run.**
+**Where:** the worktree `VISR_Overhaul` on the branch `overhaul`. Committed with LOG-111 on 2026-10-15.
+**Why:** a 2.5 h run of the whole plant (`ideas.md` 17.4 and 17.5) showed six findings: the site exported up to
+80 kW when hot-1 fed back, the transformers ran at 6 to 16 %, the four furnace zones read the same, many
+signals never moved, press-1's input went to -1.3 kW, and leak-1, cold-1 and hot-1 had no tags. The operator:
+"fix all the findings, check from ground up, not band-aid fixes"; the site is one shop with HVAC loads and
+offices, and the transformers fit that shop.
+**Changes** (sources and verification in `plant/model/README.md`):
+- `building.py` (new): shop and office lighting (2021 IECC power densities), roof ventilation at 8 and 6 air
+  changes per hour (Sodeca HTTI-100 class fans), evaporative make-up air washers, a fume extractor per
+  welding cell (IperJet DF6), two 15 t EOT cranes, office plug loads and air conditioning with a time of day.
+- Transformers from a 24 h load study and a stated rule (15 min maximum demand at most 80 %, no overload even
+  for a second): TR-1 630 kVA, TR-2 315 kVA (`catalog.is1180_level2()` carries the whole IS 1180 level 2 table).
+  A new services feeder psu-d on TR-2.
+- No export: `check()` flags reverse power at the incomer; hot-1's dyno has an export limiter with a braking
+  resistor (the usual fallback at a site without an export permit).
+- APFC panels on both LV mains (KSEB and MERC power factor penalties): the median power factor was 0.84,
+  the billing power factor is now 0.958. `KwLoad` gave a regenerating drive leading reactive power: fixed.
+- Root cause of press-1's negative power: the motor's implicit step linearised the torque curve once, so
+  a step after a load drop overshot synchronous speed (-10.7 kW at 0.1 s, +1.9 kW at 0.005 s). The step is now
+  solved to convergence; the result no longer depends on the step size.
+- Furnace zones from the chamber geometry (end walls, door) and a real boom load (heavier ends); the zones
+  differ in firing and load temperature, and meet API's +-8 C at the hold.
+- Signals that never moved: washer on/off thermostat (2 K band), press-2 brake time from brake physics with
+  friction scatter, material batches inside S355J2 and EN 10029, a leak per part (0.5 % porosity leakers),
+  a friction spread per engine at cold-1.
+- Found on the way: the leak-test reject limit was 500 Pa where 12 scc/min over 25 s in 12 l is 42.2 Pa (ten
+  times too high, every real leaker passed). Fixed, with a part cooling station before the test, because a
+  pressure-decay test sees about 28 Pa per kelvin of part cooling. chiller-1 (the optional cooling) and the
+  5 s dip to 80 % are a near miss that depends on the bus: it passed by 0.5 V on the old 2000 kVA unit,
+  stops on the loaded 630 kVA bus without APFC (424 V), and rides through with APFC (428 V). The test now
+  checks the physics: a stop exactly when the bus is under the 340 V stage for more than 2 s.
+**24 h result:** no export (lowest import 76 kW), TR-1 mean 59 %, TR-2 mean 39 %, no physics violation.
+
+**LOG-111 · 2026-10-15 · The score harness, and the first measured accuracy of today's engine.**
+**Where:** the worktree `VISR_Overhaul`, new package `eval/` (`metrics.py`, `legacy.py`, `harness.py`, tests, README).
+Committed with LOG-110 on 2026-10-15. The PoC stack on forge is paused by the operator (k3s disabled); it must stay relaunchable
+with `resume.sh` and `golive.sh` (`ideas.md` 13).
+**What it does:** random trials of today's engine through the box service path (baselines learn, then lock, a
+random calm stretch, the fault at a random magnitude, OpenPLC's latch emulated), one fresh process per trial,
+scored against the simulator's truth. Every rate has its n and a 95 % Wilson interval. A tuning split (seeds
+from 10,000) and a held-out test split (seeds from 900,000, only with `--freeze`). Each report names the commit
+and a hash of the settings, the engine source and the simulator.
+**First score** (run `eval/results/20261015T064121Z-tuning`, 130 trials, about 15 min on the laptop): top-1
+PS1 27/30, PS2 30/30, PS5 30/30, PS7 1/30 (the known supply-dip failure); overall 88/120 = 73 % (95 % CI 65 to
+80 %), top-3 97 %, MRR 0.83; verdict delay about 100 s; 0 false alarms in 36.4 calm hours; trip cards
+precision 89 %, recall 59 %, median lead 95 s. A harness bug found on the smoke run (trip times on the onset
+clock, passes on the run clock: card recall 0) was fixed before this run, with a regression test.
+**forge:** a user venv `~/visr-venv` (numpy, pytest) outside both Syncthing folders, for the next campaigns.
+**Same day, the machine score** (`eval/machines.py`, `ideas.md` 17.6): CP-1 and CP-2 made into a harness on the
+new plant model (compressor-1 now the GA 37 on the 37 kW motor). Each machine's small model trains on 12 h of
+normal running; 30 random runs per fault, victim and control case; detection by today's gate on the residuals.
+Run on forge outside the cluster (user venv `~/visr-venv`, `nice`, one math thread per worker after a first
+start oversubscribed the CPU: load 29 on 16 threads). compressor-1: transducer 30/30, cooler fouling 30/30,
+filter 25/30, bearing drag 24/30 (misses only the smallest faults). press-1: F1 30/30, F2 14/30 (from about 4x
+leakage), oil cooler fouling 13/30 (the thermostatic valve hides it). 0 false alarms in 240 normal, victim and
+control runs and 97 h before onsets; F15 (a plate above S355) stays quiet.

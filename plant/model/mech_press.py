@@ -17,12 +17,16 @@ Physics per stroke (energy method, the usual basis of press sizing):
     Fabricator, "Stamping 101").
   - The brake stops the crank at the top; its stopping time is measured each stroke (ISO 16092-2
     and ANSI B11.1 ask for a brake monitor that stops the press when the stopping time grows past
-    its limit).
+    its limit). Stopping time = valve and brake response (50 ms: project choice) + J w / T_brake.
+    The brake torque comes from the rated stopping time at the rated speed; its friction scatters
+    from stroke to stroke (1 sigma 2 %: project choice), so the stopping time moves with the brake
+    friction and with the speed at which the brake engages.
 Faults (parameters only): brake wear (a longer stopping time), flywheel bearing friction (a motor
 friction torque), belt slip (less speed at the flywheel), a thicker or harder plate (more work per
 stroke: a load, not a fault), low clutch air (the plant air header or a leak at the press).
 """
 import math
+import random
 from dataclasses import dataclass
 
 from .motor import InductionMotor
@@ -59,8 +63,14 @@ class Blank:
 class MechanicalPress:
     IDLE, STROKE, BRAKING, LOCKED = "idle", "stroke", "braking", "locked"
 
-    def __init__(self, name, rating, motor_rating, handling_s=6.0):
+    T_RESPONSE_S = 0.05
+
+    def __init__(self, name, rating, motor_rating, handling_s=6.0, seed=0, brake_scatter=0.02):
         self.name, self.r = name, rating
+        self.rng = random.Random(f"brake:{name}:{seed}")
+        self.brake_scatter = brake_scatter
+        w_fw_n = rating.flywheel_rpm * math.pi / 30.0
+        self.t_brake_nm = rating.j_crank_kgm2 * w_fw_n / (rating.brake_stop_ms / 1000.0 - self.T_RESPONSE_S)
         self.motor = InductionMotor(f"{name}-motor", motor_rating)
         self.w_m_n = motor_rating.n_rpm * math.pi / 30.0
         # belt ratio: the flywheel turns at its rated speed when the motor runs at no load
@@ -116,7 +126,10 @@ class MechanicalPress:
             self.min_fw_rpm = min(self.min_fw_rpm, self.fw_rpm())
             if self.t_state >= t_stroke:
                 self.state, self.t_state = self.BRAKING, 0.0
-                self.last_stop_ms = r.brake_stop_ms * (1.0 + self.brake_wear)
+                w_b = self.fw_rpm() * math.pi / 30.0
+                mu = 1.0 + (self.rng.gauss(0.0, self.brake_scatter) if self.brake_scatter else 0.0)
+                t_stop = self.T_RESPONSE_S + r.j_crank_kgm2 * w_b / (self.t_brake_nm * mu)
+                self.last_stop_ms = 1000.0 * t_stop * (1.0 + self.brake_wear)
                 self.strokes += 1
         elif self.state == self.BRAKING:
             if self.t_state * 1000.0 >= self.last_stop_ms:

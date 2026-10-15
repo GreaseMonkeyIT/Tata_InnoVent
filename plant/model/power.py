@@ -325,3 +325,66 @@ class ConstantLoad:
     def s_va(self):
         k = self.bus.v_pu ** 2 if (self.z_model and self.bus is not None) else 1.0
         return complex(self.p, self.q) * k
+
+
+# ----------------------------------------------------------- power factor correction --
+@dataclass(frozen=True)
+class ApfcRating:
+    """An automatic power factor correction (APFC) panel: capacitor steps switched by a controller."""
+    step_kvar: float          # one capacitor step at its rated voltage
+    steps: int
+    v_rated_ll: float
+    target_pf: float          # the controller's lagging target
+    switch_s: float           # minimum time between two switchings
+    reconnect_s: float        # a removed step must discharge before it reconnects
+    loss_w_per_kvar: float = 0.5
+    source: str = ""
+
+
+class Apfc:
+    """APFC panel on an LV main bus (2026-10-15). Indian tariffs penalise a low power factor (KSEB
+    HT industry: penalty below 0.95, doubled below 0.90; MERC: penalty below 0.90, incentive above
+    0.95), so a factory corrects it at each transformer's LV main.
+
+    The controller reads the power flow into its bus (the transformer secondary, with the panel's
+    own steps in it) and adds a step while the flow is more than 0.6 of a step more lagging than
+    the target, or removes one when the flow leads by more than 0.2 of a step (a leading power
+    factor earns no incentive and raises the voltage). Capacitor reactive power goes with V^2.
+    A removed step stays out for reconnect_s (IEC 60831-1: discharge to 75 V within 3 min)."""
+
+    def __init__(self, name, bus, rating):
+        self.name, self.bus, self.r = name, bus, rating
+        self.n = 0
+        self.t = 0.0
+        self._t_switch = -1e9
+        self._t_removed = -1e9
+        self.failed_steps = 0         # fault: blown fuses or failed capacitors
+        bus.loads.append(self)
+
+    def kvar(self):
+        k = (self.bus.v_ll / self.r.v_rated_ll) ** 2
+        return max(0, self.n - self.failed_steps) * self.r.step_kvar * k
+
+    def s_va(self):
+        q = self.kvar() * 1000.0
+        return complex(q * self.r.loss_w_per_kvar / 1000.0, -q)
+
+    def step(self, dt):
+        r = self.r
+        self.t += dt
+        if self.t - self._t_switch < r.switch_s:
+            return
+        s = self.bus.s_down
+        step_var = r.step_kvar * 1000.0
+        excess = s.imag - math.tan(math.acos(r.target_pf)) * max(s.real, 0.0)
+        if excess > 0.6 * step_var and self.n < r.steps and self.t - self._t_removed >= r.reconnect_s:
+            self.n += 1
+            self._t_switch = self.t
+        elif s.imag < -0.2 * step_var and self.n > 0:
+            self.n -= 1
+            self._t_switch = self._t_removed = self.t
+
+    def tags(self):
+        s = self.bus.s_down
+        pf = s.real / abs(s) if abs(s) > 0 else 1.0
+        return {"steps_on": self.n, "kvar": self.kvar(), "pf": pf}

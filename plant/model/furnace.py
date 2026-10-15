@@ -83,6 +83,14 @@ class FurnaceRating:
     g_zone: float                 # heat exchange between neighbouring zones, W/K
     blower_kw: float              # combustion air blower at full fire
     source: str = ""
+    # Zone layout (2026-10-15). With the chamber size, each zone has its share of the side walls and
+    # the roof, and the end zones also carry an end wall: zone 1 the back wall, the last zone the
+    # door. The load is not even along the car: shares of the load mass and of its surface per zone.
+    chamber_w_m: float = 0.0      # 0: even split of wall_area_m2 (the old behaviour)
+    chamber_h_m: float = 0.0
+    chamber_l_m: float = 0.0
+    load_mass_share: tuple = ()   # per zone, sums to 1; empty: even
+    load_area_share: tuple = ()
 
 
 @dataclass
@@ -120,7 +128,15 @@ class Furnace:
         n = rating.zones
         self.t_f = [t_amb_c] * n
         self.t_l = [t_amb_c] * n
-        self.m_zone = (rating.load_t + rating.car_t) * 1000.0 / n
+        ms = rating.load_mass_share or (1.0 / n,) * n
+        as_ = rating.load_area_share or (1.0 / n,) * n
+        self.m_zone = [(rating.load_t * ms[i] + rating.car_t / n) * 1000.0 for i in range(n)]
+        self.a_load = [rating.load_area_m2 * as_[i] for i in range(n)]
+        if rating.chamber_l_m > 0.0:
+            w, h, l = rating.chamber_w_m, rating.chamber_h_m, rating.chamber_l_m
+            self.a_wall = [(2.0 * h + w) * l / n + (w * h if i in (0, n - 1) else 0.0) for i in range(n)]
+        else:
+            self.a_wall = [rating.wall_area_m2 / n] * n
         self.setpoint = t_amb_c
         self.state = self.LOADING
         self.t_state = 0.0
@@ -196,7 +212,6 @@ class Furnace:
                 self.damper[i], self._ic[i] = 0.0, 0.0
         # heat per zone
         n = r.zones
-        a_l, a_w = r.load_area_m2 / n, r.wall_area_m2 / n
         q_av_tot = q_ld_tot = q_wl_tot = q_fl_tot = 0.0
         new_f, new_l = list(self.t_f), list(self.t_l)
         for i, b in enumerate(self.burners):
@@ -204,6 +219,7 @@ class Furnace:
             ah = available_heat(self.t_f[i])
             q_av = q_gas * ah
             tf, tl = self.t_f[i] + 273.15, self.t_l[i] + 273.15
+            a_l, a_w = self.a_load[i], self.a_wall[i]
             q_ld = r.h_conv * a_l * (tf - tl) + SIGMA * r.eps * a_l * (tf ** 4 - tl ** 4)
             q_wl = r.u_wall * a_w * (1.0 + self.door_leak * (1.0 if i == n - 1 else 0.0)) * (self.t_f[i] - self.t_amb)
             q_zz = sum(r.g_zone * (self.t_f[i] - self.t_f[j]) for j in (i - 1, i + 1) if 0 <= j < n)
@@ -211,7 +227,7 @@ class Furnace:
             q_wl_air = q_air
             c_f = r.c_furnace_j_k / n
             new_f[i] = self.t_f[i] + (q_av - q_ld - q_wl - q_zz - q_wl_air) / c_f * dt
-            new_l[i] = self.t_l[i] + q_ld / (self.m_zone * cp_steel(self.t_l[i])) * dt
+            new_l[i] = self.t_l[i] + q_ld / (self.m_zone[i] * cp_steel(self.t_l[i])) * dt
             q_av_tot += q_av
             q_ld_tot += q_ld
             q_wl_tot += q_wl
@@ -237,6 +253,9 @@ class Furnace:
     def tags(self):
         out = {f"zone{i + 1}_c": self.zone_reading(i) for i in range(self.r.zones)}
         out.update({f"load{i + 1}_c": t for i, t in enumerate(self.t_l)})
+        # each zone controller holds its own thermocouple at the setpoint, so the zones differ in how
+        # hard they fire (the end zones with an end wall and heavier load fire harder) and in their load
+        out.update({f"fire{i + 1}_pct": 100.0 * b.firing for i, b in enumerate(self.burners)})
         out.update({"setpoint_c": self.setpoint, "gas_m3h": sum(b.flow_m3h for b in self.burners),
                     "blower_kw": self.blower_kw(), "state": self.state})
         return out

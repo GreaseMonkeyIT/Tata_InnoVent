@@ -38,7 +38,7 @@ ABB_M3BP_180MLB4_22KW_CHECKS = {
 }
 
 # ------------------------------------------------------------------------------ power supply --
-from .power import CableRating, GridRating, TransformerRating   # noqa: E402
+from .power import ApfcRating, CableRating, GridRating, TransformerRating   # noqa: E402
 
 # 11 kV utility supply. Fault level: the 11 kV system fault level of 500 MVA that the MSEDCL
 # technical specification for 5 and 10 MVA power transformers (2019, clauses 2.15 and 2.16) uses
@@ -51,20 +51,33 @@ GRID_11KV = GridRating(v_ll=11000.0, fault_mva=500.0, x_r=10.0,
 # https://www.bis.gov.in/wp-content/uploads/2022/04/Transformers-_compressed.pdf
 # IS 1180 gives the total loss at 50 % and 100 % load; with total = P0 + k^2 Pk:
 #   Pk = (T100 - T50) / 0.75,  P0 = T100 - Pk.
-# Impedance 6.25 % at 75 C for 1600 and 2000 kVA. No-load current: IS 1180 allows at most 2 %;
-# 1 % is a project choice. Temperature rise limits of IS 1180: top oil 40 K, winding 45 K.
+# Impedance at 75 C from the same table. No-load current: IS 1180 allows at most 2 %; 1 % is a
+# project choice. Temperature rise limits of IS 1180 for 250 to 2500 kVA: top oil 40 K, winding 45 K.
 # Hot-spot gradient H g_r: g_r = 45 K - average oil rise (0.8 x 40 K, project choice) = 13 K, H = 1.1
 # (IEC 60076-7 for distribution transformers) -> 14.3 K. Time constants: oil 180 min, winding 4 min,
 # x = 0.8, y = 1.6, k11 = 1, k21 = 1, k22 = 2 (IEC 60076-7 values for ONAN distribution transformers,
 # as cited by arXiv 1906.01570; the standard's own table not seen).
-_IS1180 = dict(v1_ll=11000.0, v2_ll=433.0, uk_pct=6.25, i0_pct=1.0, d_theta_or=40.0, h_gr=14.3,
+_IS1180 = dict(v1_ll=11000.0, v2_ll=433.0, i0_pct=1.0, d_theta_or=40.0, h_gr=14.3,
                tau_o_min=180.0, tau_w_min=4.0)
-TR_2000KVA = TransformerRating(kva=2000.0, p0_w=14100.0 - (14100.0 - 4790.0) / 0.75,
-                               pk_w=(14100.0 - 4790.0) / 0.75,
-                               source="IS 1180-1:2014 A4 level 2, 2000 kVA (BIS summary)", **_IS1180)
-TR_1600KVA = TransformerRating(kva=1600.0, p0_w=11300.0 - (11300.0 - 3970.0) / 0.75,
-                               pk_w=(11300.0 - 3970.0) / 0.75,
-                               source="IS 1180-1:2014 A4 level 2, 1600 kVA (BIS summary)", **_IS1180)
+# IS 1180-1 table (BIS summary, page 3): kVA -> (impedance %, level 2 total loss at 50 % and 100 % load, W)
+IS1180_LEVEL2 = {
+    250: (4.50, 920.0, 2700.0), 315: (4.50, 955.0, 2750.0), 400: (4.50, 1150.0, 3330.0),
+    500: (4.50, 1430.0, 4100.0), 630: (4.50, 1745.0, 4850.0), 800: (5.00, 2147.0, 5838.0),
+    1000: (5.00, 2620.0, 7000.0), 1250: (5.00, 3220.0, 8400.0), 1600: (6.25, 3970.0, 11300.0),
+    2000: (6.25, 4790.0, 14100.0), 2500: (6.25, 5900.0, 17500.0),
+}
+
+
+def is1180_level2(kva):
+    """A distribution transformer of a standard IS 1180 rating, energy efficiency level 2."""
+    uk, t50, t100 = IS1180_LEVEL2[int(kva)]
+    pk = (t100 - t50) / 0.75
+    return TransformerRating(kva=float(kva), p0_w=t100 - pk, pk_w=pk, uk_pct=uk,
+                             source=f"IS 1180-1:2014 A4 level 2, {int(kva)} kVA (BIS summary)", **_IS1180)
+
+
+TR_2000KVA = is1180_level2(2000)
+TR_1600KVA = is1180_level2(1600)
 
 # LV feeder cable: 1.1 kV XLPE armoured, 3.5 core, 300 mm2 aluminium. Polycab LT cable catalogue:
 # AC resistance at 90 C 0.129 ohm/km, reactance 0.0703 ohm/km, 452 A in air (40 C):
@@ -197,7 +210,15 @@ from .furnace import FurnaceRating   # noqa: E402
 CAR_BOTTOM_SR = FurnaceRating(
     zones=4, burner_kw=375.0, burner_p_kpa=15.0, load_t=25.0, car_t=6.0, load_area_m2=150.0,
     wall_area_m2=114.0, u_wall=0.65, c_furnace_j_k=3.0e6, h_conv=30.0, eps=0.6, g_zone=2000.0,
-    blower_kw=15.0, source="pattern: Nutec Bickley, Pyradia, BHEL tender; sizes project choices")
+    blower_kw=15.0, chamber_w_m=3.5, chamber_h_m=3.5, chamber_l_m=8.5,
+    load_mass_share=(0.30, 0.20, 0.20, 0.30), load_area_share=(0.24, 0.26, 0.26, 0.24),
+    source="pattern: Nutec Bickley, Pyradia, BHEL tender; sizes project choices")
+# Zone layout (2026-10-15): the end zones carry the back wall and the door (12.25 m2 each on top of
+# their 22.3 m2 of side walls and roof). A boom is heavier at its ends (the foot pin boss, the arm
+# and cylinder bosses), so the end zones carry 30 % of the load mass each on 24 % of its surface
+# (project choices). The end zones then lag in a heat-up, as real car-bottom furnaces do; at the
+# hold the zone controllers bring every zone to the setpoint, inside the +-8 C of API stress-relief
+# furnace qualification.
 
 # ------------------------------------------------------------------- cool-1 cooling tower --
 from .cooling_tower import TowerRating   # noqa: E402
@@ -326,10 +347,14 @@ MECWASH = WasherRating(t_wash_c=80.0, tank_l=2000.0, heater_kw=120.0, hp_pump_kw
                        source="Wanner/MecWash case study; StingRay 8473 web spec")
 # Water-jacket pressure-decay test: 12 l volume, 40 s test (InterTech M1075 note); 1.4 bar test pressure
 # and a 12 scc/min reject on heads (Cincinnati Test Systems); supply 1 to 2 bar over the test pressure
-# (ATEQ F620). Settle 15 s and a 500 Pa reject over 25 s (the 12 scc/min level, derived ~ 400 Pa, with
-# margin), part cooling rate: project choices.
+# (ATEQ F620). Settle 15 s, part cooling rate: project choices. The reject limit is the pressure fall
+# of the 12 scc/min reject leak over the 25 s test in 12 l: dP = p_atm Q t / V = 42.2 Pa. (Fixed
+# 2026-10-15: the old comment derived ~400 Pa and set 500 Pa, ten times too high, so real leakers
+# passed.)
+LEAK_REJECT_SCCM = 12.0
 LEAK_TEST = LeakTestRating(p_test_bar=1.4, volume_l=12.0, fill_s=10.0, settle_s=15.0, test_s=25.0,
-                           reject_pa=500.0, supply_margin_bar=1.0, cool_k_per_s_per_k=0.0015,
+                           reject_pa=101325.0 * LEAK_REJECT_SCCM * 1e-6 / 60.0 / 0.012 * 25.0,
+                           supply_margin_bar=1.0, cool_k_per_s_per_k=0.0015,
                            source="InterTech M1075; Cincinnati Test Systems; ATEQ F620")
 
 # ---------------------------------------------------------------------- engine assembly, tests --
@@ -345,3 +370,73 @@ from .assembly import EngineRating   # noqa: E402
 QSL9_F85 = EngineRating(displacement_l=8.9, rated_kw=306.0, rated_rpm=1760.0, fuel_l_h_rated=89.1,
                         coolant_kw_rated=145.0, ambient_kw_rated=36.0,
                         source="Cummins CFP9E-F85 spec sheet 0062918")
+
+# ---------------------------------------------------------------------- building services --
+from .building import AirWasherRating, CraneRating, FanRating, LightingRating, OfficeRating   # noqa: E402
+
+# The site: one shop with two bays and an office block (operator, 2026-10-15). Sizes are project
+# choices: fab bay 30 x 120 m, 12 m to the eaves (EOT crane bay); assembly bay 24 x 80 m, 8 m high;
+# office block 800 m2 (two floors of 400 m2: offices, QA room, control room).
+FAB_BAY_M2, FAB_BAY_H_M = 30.0 * 120.0, 12.0
+ASM_BAY_M2, ASM_BAY_H_M = 24.0 * 80.0, 8.0
+OFFICE_M2 = 800.0
+
+# Lighting power density, building area method (2021 IECC, as the energycodes.gov interior LPD update
+# and the Washington state code table give it): manufacturing facility 0.82 W/ft2 (8.8 W/m2), office
+# 0.64 W/ft2 (6.9 W/m2). ECBC 2017 values not found. Shop lighting stays on (three shifts); office
+# lighting in office hours, 10 % outside them (security and corridors: project choice).
+LIGHT_FAB = LightingRating(lpd_w_m2=0.82 * 10.764, area_m2=FAB_BAY_M2, source="2021 IECC building area LPD")
+LIGHT_ASM = LightingRating(lpd_w_m2=0.82 * 10.764, area_m2=ASM_BAY_M2, source="2021 IECC building area LPD")
+LIGHT_OFFICE = LightingRating(lpd_w_m2=0.64 * 10.764, area_m2=OFFICE_M2, off_share=0.10,
+                              source="2021 IECC building area LPD; off share project choice")
+
+# Roof extractor: Sodeca HTTI-100-4T, 7.5 kW, 1465 rpm, 56,700 m3/h maximum flow (Sodeca HTTI table).
+# Air changes: 8 per hour in the welding bay (OHS Feb/Mar 2024: start at 8 to 10 in a welding area),
+# 6 in the assembly bay (general ventilation 6 to 8, with local exhaust at the sources).
+ROOF_FAN = FanRating(motor_kw=7.5, q_max_m3h=56700.0, source="Sodeca HTTI-100-4T")
+ACH_FAB, ACH_ASM = 8.0, 6.0
+
+# Evaporative air washer, 30,000 to 40,000 CFM class (51,000 m3/h used): 145 Pa static, 0.37 kW pump
+# (L&T-SuFin listing). Fan efficiency 0.6 and the 30 C switch-on: project choices.
+AIR_WASHER = AirWasherRating(q_unit_m3h=51000.0, static_pa=145.0, fan_eta=0.6, pump_kw=0.37, t_on_c=30.0,
+                             source="L&T-SuFin air washer listing; fan efficiency project choice")
+
+# Central fume extractor per robotic welding cell: IperJet DF6, 4 kW, 4,000 m3/h nominal.
+FUME_DF6 = FanRating(motor_kw=4.0, q_max_m3h=4000.0, source="IperJet DF6 product page")
+
+# EOT crane, 15 t: hoist 32.5 kW electrical at the rated load (a 15 t x 20 m span crane calculation,
+# 37 kW motor at 60 % CDF); long travel 11 kW and cross travel 5.5 kW at 40 % CDF (BHEL tender, 28.5 m
+# span crane). Hook block and ropes 0.5 t: project choice.
+EOT_15T = CraneRating(swl_t=15.0, hook_t=0.5, hoist_kw_el_rated=32.5, lt_kw=11.0, ct_kw=5.5,
+                      source="15 t crane motor calculation (studylib); BHEL crane specification")
+
+# Office block: design cooling 175 W/m2 (Indian planning range 150 to 200 W/m2, from the ASHRAE and
+# thumb-rule sq ft per TR figures), system EER 3.5 (project choice: no VRF value found), plug loads
+# 8.07 W/m2 (ASHRAE AEDG medium office), 30 % left on outside office hours, control room and server
+# room 10 kW of cooling always on (project choices).
+OFFICE = OfficeRating(area_m2=OFFICE_M2, cooling_w_m2=175.0, eer=3.5, plug_w_m2=8.07, plug_off_share=0.30,
+                      always_cooled_kw=10.0,
+                      source="cooling planning range; ASHRAE AEDG plug load; EER project choice")
+
+# The shop's transformers (2026-10-15), sized from a 24 h load study of the whole shop (machines,
+# building services and the APFC panels, 1 s samples, 35 C day; the old 2000 and 1600 kVA units ran
+# at 6 to 16 %):
+#   TR-1 (fab bay, utilities): mean 373 kVA, 15 min maximum demand 396 kVA, 1 s peak 511 kVA
+#   TR-2 (assembly bay, office): mean 122 kVA, 15 min maximum demand 159 kVA, 1 s peak 288 kVA
+# Rule (the conventional choice): the smallest IS 1180 standard rating with the 15 min maximum
+# demand at most 80 % of the rating and no overload even for a second. Distribution transformers
+# have their best efficiency near 50 % load (BIS: designed for maximum efficiency at lower loads;
+# US DOE: optimised at 50 % load factor). Result: TR-1 630 kVA (mean 59 %; 500 kVA would peak at
+# 102 %), TR-2 315 kVA (mean 39 %; 250 kVA would peak at 115 %). Billing power factor 0.958.
+TR_FAB = is1180_level2(630)
+TR_ASM = is1180_level2(315)
+
+# APFC panels on the LV mains (2026-10-15). Sized from the reactive power each main needs to reach
+# PF 0.98 in a 3 h run of the shop (Q - P tan(acos 0.98)): LV-1 127 to 143 kVAr, LV-2 up to 89 kVAr,
+# with Q_c = P (tan phi1 - tan phi2), the usual sizing rule. Steps of 25 kVAr at 440 V, a 30 s step
+# delay, and a 0.98 target: project choices. Reconnection after 180 s (IEC 60831-1: discharge to
+# 75 V within 3 min).
+APFC_LV1 = ApfcRating(step_kvar=25.0, steps=6, v_rated_ll=440.0, target_pf=0.98, switch_s=30.0,
+                      reconnect_s=180.0, source="sizing from the shop run; IEC 60831-1 discharge time")
+APFC_LV2 = ApfcRating(step_kvar=25.0, steps=4, v_rated_ll=440.0, target_pf=0.98, switch_s=30.0,
+                      reconnect_s=180.0, source="sizing from the shop run; IEC 60831-1 discharge time")

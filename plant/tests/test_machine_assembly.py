@@ -22,12 +22,17 @@ from model import catalog as C                                      # noqa: E402
 
 
 def test_leak_test_leak_thermal_and_air():
-    lt = A.LeakTester("leak-1", C.LEAK_TEST)
+    lt = A.LeakTester("leak-1", C.LEAK_TEST, part_spread=False)
     d0, ok0, _ = lt.test(35.0)
     assert ok0 and d0 == pytest.approx(0.0, abs=1e-9)
     lt.leak_sccm = 12.0
     d, ok, _ = lt.test(35.0)
     assert d == pytest.approx(101325.0 * 12e-6 / 60.0 / 0.012 * 25.0, rel=1e-9)
+    assert d == pytest.approx(C.LEAK_TEST.reject_pa)       # the reject limit is the 12 scc/min leak
+    lt.leak_sccm = 13.0
+    assert not lt.test(35.0)[1]
+    lt.leak_sccm = 10.0
+    assert lt.test(35.0)[1]
     lt.leak_sccm = 0.0
     dw, okw, _ = lt.test(65.0)
     assert not okw and dw > C.LEAK_TEST.reject_pa

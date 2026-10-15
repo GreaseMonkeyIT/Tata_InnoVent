@@ -136,12 +136,18 @@ class PartsWasher:
         self.parts = 0
         self.t_part_out = t_amb
         self.p_el = 0.0
+        self.heating = False
+        self.band_k = 2.0             # on/off thermostat: on 2 K under the setpoint, off at it (project choice)
 
     def step(self, dt):
         r = self.r
         self.t += dt
         sp = r.t_wash_c + self.offset_k
-        heater = r.heater_kw * 1000.0 if self.t_tank < sp else 0.0
+        if self.t_tank <= sp - self.band_k:
+            self.heating = True
+        elif self.t_tank >= sp:
+            self.heating = False
+        heater = r.heater_kw * 1000.0 if self.heating else 0.0
         phase = self.t % r.cycle_s
         spraying = phase < 0.75 * r.cycle_s
         # each part takes heat from the tank to come up to the wash temperature (cast iron 460 J/kg K)
@@ -176,22 +182,44 @@ class LeakTestRating:
 
 
 class LeakTester:
-    def __init__(self, name, r, t_room=35.0):
+    """Each part has its own small leak (a casting is never perfectly tight). Project choices, no
+    published production data found: a log-normal leak with a median of 1 scc/min and a geometric
+    spread of 2 (far under the 12 scc/min reject), and porosity leakers in 0.5 % of the parts at 15
+    to 60 scc/min. `part_spread=False` gives tight parts (the old behaviour, for physics checks)."""
+
+    def __init__(self, name, r, t_room=35.0, seed=0, part_spread=True):
         self.name, self.r, self.t_room = name, r, t_room
-        self.leak_sccm = 0.0          # a real leak in the part (scc/min at the test pressure)
+        self.leak_sccm = 0.0          # fault: an extra leak in every part (a worn seal on the fixture)
         self.air_bar = 7.0
         self.results = []             # (decay Pa, passed)
+        self.rng = random.Random(f"leak:{name}:{seed}")
+        self.part_spread = part_spread
+        self.part_leak_sccm = 0.0
+        self.tested = self.rejects = 0
+        self.last_decay_pa = 0.0
+        self.last_ok = True
+
+    def _draw_part_leak(self):
+        if not self.part_spread:
+            return 0.0
+        if self.rng.random() < 0.005:
+            return self.rng.uniform(15.0, 60.0)
+        return self.rng.lognormvariate(0.0, math.log(2.0))
 
     def test(self, t_part_c):
         """One test of a part that arrives at t_part_c. Returns (decay Pa, passed, fill_ok)."""
         r = self.r
+        self.tested += 1
+        self.part_leak_sccm = self._draw_part_leak()
         if self.air_bar < r.p_test_bar + r.supply_margin_bar:
             self.results.append((float("nan"), False))
+            self.rejects += 1
+            self.last_decay_pa, self.last_ok = float("nan"), False
             return float("nan"), False, False
         p_abs = r.p_test_bar * 1e5 + P_ATM_PA
         v = r.volume_l / 1000.0
         # leak: Q at standard conditions (scc/min) -> pressure fall in the volume
-        q_std = self.leak_sccm * 1e-6 / 60.0
+        q_std = (self.leak_sccm + self.part_leak_sccm) * 1e-6 / 60.0
         dp_leak = P_ATM_PA * q_std / v * r.test_s
         # thermal: the part (and the air in it) cools toward the room during settle + test
         k = r.cool_k_per_s_per_k
@@ -203,7 +231,13 @@ class LeakTester:
         decay = dp_leak + dp_th
         ok = decay < r.reject_pa
         self.results.append((decay, ok))
+        self.rejects += 0 if ok else 1
+        self.last_decay_pa, self.last_ok = decay, ok
         return decay, ok, True
+
+    def tags(self):
+        return {"air_bar": self.air_bar, "last_decay_pa": self.last_decay_pa, "last_ok": float(self.last_ok),
+                "tested": self.tested, "rejects": self.rejects}
 
 
 # ----------------------------------------------------------------------------- test stands --
@@ -228,9 +262,14 @@ class EngineRating:
 
 
 class ColdTest:
-    """The unfired engine turned by an electric drive (non-regenerative: brake resistor)."""
+    """The unfired engine turned by an electric drive (non-regenerative: brake resistor).
 
-    def __init__(self, name, engine, test_rpm=500.0, test_s=120.0, load_s=60.0, drive_eta=0.9):
+    Each engine has its own friction: healthy engines scatter around the reference torque with a
+    1 sigma of 3 % (project choice: no published production spread found; it sits well inside the
+    +-20 % reject band). `engine_spread=False` gives identical engines (for physics checks)."""
+
+    def __init__(self, name, engine, test_rpm=500.0, test_s=120.0, load_s=60.0, drive_eta=0.9, seed=0,
+                 engine_spread=True):
         self.name, self.e = name, engine
         self.test_rpm, self.test_s, self.load_s, self.eta = test_rpm, test_s, load_s, drive_eta
         self.t = 0.0
@@ -239,6 +278,13 @@ class ColdTest:
         self.p_el = 0.0
         self.results = []              # (mean torque, passed)
         self._acc = []
+        self.rng = random.Random(f"cold:{name}:{seed}")
+        self.engine_spread = engine_spread
+        self.engine_factor = 1.0
+        self._testing = False
+        self.last_torque_nm = 0.0
+        self.last_ok = True
+        self.rejects = 0
 
     def reference_nm(self):
         return fmep_motored_bar(self.test_rpm) * 1e5 * self.e.displacement_l / 1000.0 / (4.0 * math.pi)
@@ -247,16 +293,27 @@ class ColdTest:
         self.t += dt
         phase = self.t % (self.load_s + self.test_s)
         if phase >= self.load_s:
-            self.torque = self.reference_nm() * (1.0 + self.tight)
+            if not self._testing:                       # a new engine on the stand
+                self._testing = True
+                self.engine_factor = 1.0 + (self.rng.gauss(0.0, 0.03) if self.engine_spread else 0.0)
+            self.torque = self.reference_nm() * self.engine_factor * (1.0 + self.tight)
             w = self.test_rpm * math.pi / 30.0
             self.p_el = self.torque * w / self.eta
             self._acc.append(self.torque)
         else:
+            self._testing = False
             if self._acc:
                 m = sum(self._acc) / len(self._acc)
-                self.results.append((m, abs(m / self.reference_nm() - 1.0) <= 0.20))
+                ok = abs(m / self.reference_nm() - 1.0) <= 0.20
+                self.results.append((m, ok))
+                self.last_torque_nm, self.last_ok = m, ok
+                self.rejects += 0 if ok else 1
                 self._acc = []
             self.torque, self.p_el = 0.0, 0.0
+
+    def tags(self):
+        return {"torque_nm": self.torque, "power_kw": self.p_el / 1000.0, "last_torque_nm": self.last_torque_nm,
+                "last_ok": float(self.last_ok), "tested": len(self.results), "rejects": self.rejects}
 
 
 class HotTest:
@@ -273,6 +330,12 @@ class HotTest:
         self.p_brake = self.p_el = 0.0
         self.q_coolant = self.q_exhaust = 0.0
         self.engines = 0
+        # Export limiter (2026-10-15): the site may not export (no export permit, a reverse-power relay
+        # at the incomer). The plant sets regen_cap_w each tick; the dyno drive feeds back at most that,
+        # and its braking resistor turns the rest into heat (the usual fallback for a regenerative
+        # dyno at a site without an export permit).
+        self.regen_cap_w = float("inf")
+        self.p_resistor = 0.0
 
     def efficiency(self, load):
         """Brake efficiency against load: rated from the spec sheet, lower at part load (project
@@ -311,4 +374,12 @@ class HotTest:
         else:
             self.q_coolant = self.q_exhaust = 0.0
         # the regenerative dyno feeds the brake power back: a negative electrical load
-        self.p_el = -self.p_brake * self.regen_eta + 5000.0          # 5 kW cell services (project)
+        regen = self.p_brake * self.regen_eta
+        fed = min(regen, max(0.0, self.regen_cap_w))
+        self.p_resistor = regen - fed
+        self.p_el = -fed + 5000.0                                     # 5 kW cell services (project)
+
+    def tags(self):
+        return {"load_pct": 100.0 * self.load, "brake_kw": self.p_brake / 1000.0, "power_kw": self.p_el / 1000.0,
+                "coolant_kw": self.q_coolant / 1000.0, "engines": self.engines, "dyno_trip": float(self.dyno_trip),
+                "resistor_kw": self.p_resistor / 1000.0}

@@ -81,7 +81,11 @@ in the datasheet starting time.
 - The fit takes about 15 s per rating. `fits.json` keeps each fit (tracked in git), so a container
   never refits. Raise `FIT_VERSION` in `motor.py` when the circuit or the fit changes.
 - One step costs about 15 µs. Large steps (0.1 s) split into substeps: implicit on the stable
-  slopes only, at most 2 % of synchronous speed per substep.
+  slopes only, at most 2 % of synchronous speed per substep. On the stable slope the implicit step
+  is solved to convergence with Newton iterations (2026-10-15). One linearization was not enough:
+  after a sudden load drop the speed overshot synchronous speed, and press-1 seemed to generate
+  (-10.7 kW at a 0.1 s step, -1.3 kW at 0.02 s). Now the result does not depend on the step size
+  (`test_load_drop_with_a_large_step_does_not_overshoot_sync`).
 
 ## Power network (`power.py`)
 
@@ -94,14 +98,47 @@ The transformer temperatures follow the IEC 60076-7 exponential model (top oil, 
 | Item | Value | Source |
 |---|---|---|
 | 11 kV fault level | 500 MVA, X/R 10 | MSEDCL 5/10 MVA transformer specification 2019 (fault level); X/R project choice |
-| TR-1, 2000 kVA 11/0.433 kV Dyn11 | uk 6.25 %, P0 1687 W, Pk 12413 W | IS 1180-1:2014 A4 level 2 totals, [BIS summary](https://www.bis.gov.in/wp-content/uploads/2022/04/Transformers-_compressed.pdf) |
-| TR-2, 1600 kVA | uk 6.25 %, P0 1527 W, Pk 9773 W | same |
+| TR-1, 630 kVA 11/0.433 kV Dyn11 (fab bay, utilities) | uk 4.5 %, level 2 totals 1745 W at 50 %, 4850 W at 100 % | IS 1180-1:2014 A4 level 2 table, [BIS summary](https://www.bis.gov.in/wp-content/uploads/2022/04/Transformers-_compressed.pdf), page 3 |
+| TR-2, 315 kVA (assembly bay, office) | uk 4.5 %, 955 W at 50 %, 2750 W at 100 % | same |
+| Any other IS 1180 rating, 250 to 2500 kVA | `catalog.is1180_level2(kva)` | same table |
 | Temperature rises | top oil 40 K, winding 45 K | IS 1180 |
 | Thermal model constants | oil 180 min, winding 4 min, x 0.8, y 1.6, H 1.1 | IEC 60076-7 values as cited by arXiv 1906.01570 |
 | LV feeder cable | 3.5C 300 mm² Al XLPE: 0.129 + j0.0703 Ω/km, 452 A | [Polycab LT catalogue](https://cms.polycab.com/media/cxibmmjk/final_lt-cable-catalog_v9_ord-10054.pdf) |
 
 Project choices: the no-load current (1 %, IS 1180 allows 2 %), the average oil rise (0.8 of the
 top-oil rise), the 11 kV X/R, the cable lengths, the ambient air of the yard (35 °C).
+
+Transformer sizes (2026-10-15). The first full-plant run loaded the old 2000 and 1600 kVA units at
+6 to 16 %, and the site exported power when the hot test fed back. The site is now one shop with
+its building services (`building.py`), and a 24 h load study of the whole shop sized the
+transformers (with the APFC panels below): TR-1 mean 373 kVA, 15 min maximum demand 396 kVA, 1 s
+peak 511 kVA; TR-2 mean 122 kVA, maximum demand 159 kVA, peak 288 kVA. The rule is the conventional one: the smallest
+IS 1180 standard rating with the 15 min maximum demand at most 80 % of the rating and no overload,
+not even for a second. Distribution transformers have their best efficiency near 50 % load (BIS:
+designed for maximum efficiency at lower loads; US DOE buyer's guide: optimised at 50 % load
+factor). Result: TR-1 630 kVA (mean 59 %; 500 kVA would peak at 102 %), TR-2 315 kVA
+(mean 39 %; 250 kVA would peak at 115 %). The tests in `test_part_power.py` still use 2000 and
+1600 kVA units: they check the network model, not the shop.
+
+A factory does not export power: no export permit, and a reverse-power relay (ANSI 32) at the
+incomer would trip. `UtilitiesPlant.check()` flags any export. hot-1's regenerative dyno has an
+export limiter: it feeds back at most what keeps 20 kW of import at the incomer, and its braking
+resistor takes the rest (the usual fallback at a site without an export permit). The 20 kW margin
+is a project choice.
+
+Power factor correction (2026-10-15). Without it the site ran at a median power factor of 0.84
+(0.55 at the lowest). Indian tariffs penalise that: KSEB HT industry from 0.95 down (doubled under
+0.90), MERC under 0.90, both with an incentive above 0.95. So each LV main has an APFC panel
+(`power.Apfc`): LV-1 6 × 25 kVAr, LV-2 4 × 25 kVAr at 440 V, sized by Q_c = P (tan phi1 - tan phi2)
+from the shop's own load. The controller targets 0.98 lagging, switches one step per 30 s, never
+runs a main far leading, and keeps a removed step out for 180 s (IEC 60831-1: discharge to 75 V
+within 3 min). The billing power factor (kWh / kVAh, the MSEDCL method) is then above 0.95. The
+instantaneous power factor still dips while hot-1 feeds back, as on a real site: the real power
+at the incomer falls and the reactive power of the transformers and motors stays.
+
+A drive that feeds power back still draws reactive power: `KwLoad` now gives Q = |P| tan(phi).
+Before the fix, Q = P tan(phi) made the regenerating dyno a capacitor. hot-1's drive has an active
+front end at a power factor of 0.99 (project choice).
 
 Verification (2026-10-08, `test_part_power.py`):
 
@@ -237,8 +274,13 @@ low-gas-pressure switch that locks out until a reset, as EN 746-2 and NFPA 86 re
 ## Utilities plant (`plant.py`)
 
 The supply, compressor-1, chiller-1 and cool-1 wired together (ideas.md 13.1, phase 1 item 6):
-incomer-1 → MV bus → TR-1 (2000 kVA) → psu-a, psu-b; TR-2 (1600 kVA) → psu-c. compressor-1, chiller-1
-and the loop pump are on psu-b. press-1 is on psu-a, its oil cooler a loop branch that its
+incomer-1 → MV bus → TR-1 (630 kVA) → psu-a, psu-b; TR-2 (315 kVA) → psu-c, psu-d. compressor-1,
+chiller-1, the loop pump and the fab bay services are on psu-b (two cable runs). The cranes and the
+fume extractors are on psu-a with the fab line. The assembly bay services and the office block are
+on psu-d. The plant has a time of day (`t_day0_h`, default 08:00) for the office schedule, a seed
+for every random draw, and material batches (`material_spread`, default on): press-1 plate and
+press-2 blank change every 40 bends or 200 blanks, inside S355J2 (UTS 470 to 630 MPa) and EN 10029
+class A (-0.5 / +1.2 mm for 8 to 15 mm plate). press-1 is on psu-a, its oil cooler a loop branch that its
 thermostatic valve opens and closes. Each tick: the network solves with the last loads, the machines
 step on their bus voltage and their branch water, the loop takes their heat. Placeholders until
 the machines exist: one heat branch for the line machines, and the loop pump drive (90 %
@@ -256,7 +298,7 @@ Verification (2026-10-08, `test_plant_utilities.py`, 6 checks):
 | Power balance at the incomer | exact (1e-6) |
 | Design flows | pump 60 m³/h at 25 m, compressor branch 0.88 kg/s |
 | F7 through the plant | compressor-1 stays loaded at 8.5 bar(e), more power and more heat into cool-1 |
-| IEC 61000-4-11 class 3 dips | the chiller rides through all five |
+| IEC 61000-4-11 class 3 dips | the chiller rides through the short and shallow dips. The 80 % dip for 5 s is a near miss that depends on the bus: with the APFC panel psu-b sits at 428 V and the dip leaves 343 V (it rides through); without the panel 424 V leaves 340 V less 0.5 V (its ANSI 27 stage stops it, then it restarts). The test checks the physics: a stop exactly when the bus is under 340 V for more than 2 s. |
 | F11, a 70 % sag for 4 s | the chiller trips on undervoltage, waits 180 s off and 600 s start to start, the loop warms more than 1 K, then recovers to 27 °C |
 | press-1 on psu-a | its bend current dips psu-a; psu-c on TR-2 moves less than 0.2 of that; the oil stays at 35 to 60 °C |
 
@@ -347,6 +389,14 @@ Project choices (no maker table found): 25 t of steel plus 6 t of car per batch,
 150 m² of load surface, the lining loss (0.65 W/m² K), the chamber heat capacity, the convection
 coefficient and the emissivity, the coupling between zones, the PID gains, the 15 kW blower.
 
+Zone layout (2026-10-15). The first full-plant run showed four identical zones, which no real
+furnace has. Each zone now has its own wall area from the 3.5 × 3.5 × 8.5 m chamber: the side
+walls and the roof split evenly, and the end zones also carry an end wall (zone 1 the back wall,
+zone 4 the door). A boom is heavier at its ends (the foot pin boss, the arm and cylinder bosses), so
+zones 1 and 4 carry 30 % of the load mass each on 24 % of its surface (project choices). The end
+zones lag in a heat-up. At the hold the zone controllers bring each zone to the setpoint, inside
+the ±8 °C of API stress-relief furnace qualification (API annex M, as quoted on Scribd).
+
 Verification (2026-10-08, `test_machine_furnace.py`, 7 checks): the steel heat capacity and the
 available-heat points; the program inside the AWS heating and cooling rates, the hold inside 595 to
 650 °C for at least 1 h with the zones within 85 K; the energy balance (gas heat = flue + lining +
@@ -401,7 +451,13 @@ it brings the flywheel back before the next stroke. Brake stopping-time monitor 
 
 Project choices: breakdown torque 2.9 x, rotor inertia 0.10 kg m², 140 kg, flywheel 350 rpm, 40 spm,
 crank and slide inertia 4 kg m², the 30-degree working angle, the blank (400 mm cut in 10 mm S355,
-shear 400 MPa, c 0.5), brake stop 180 ms and monitor limit 220 ms. A design N motor holds its speed
+shear 400 MPa, c 0.5), brake stop 180 ms and monitor limit 220 ms.
+
+Brake (2026-10-15). The stopping time was a fixed 180 ms. It now comes from the brake physics:
+stopping time = valve and brake response (50 ms) + J w / T_brake. The brake torque gives 180 ms at
+the rated flywheel speed. The friction scatters from stroke to stroke (1 sigma 2 %), and the
+flywheel speed at the stop changes with the last stroke, so the stopping time moves as a real brake
+monitor shows it. The response time and the scatter are project choices. A design N motor holds its speed
 and draws about 4 x rated current at each stroke; the high-slip motor stays near 2 x.
 
 Verification (2026-10-08, `test_machine_press2.py`, 5 checks): a normal stroke slows the flywheel
@@ -419,6 +475,20 @@ In the plant: press-2 runs on psu-a with its clutch air from the plant header, a
 | tight-1 | snug + angle tightening, final torque scatter from the tool capability, controller mean/peak power, reset under 0.7 pu | Desoutter EAD280-260 (6 sigma under 8 %), CVI3 (1 kVA mean, 5 kW peak, 17 W standby) | 180 N m head bolts, 6 s per bolt pair, the 0.7 pu reset |
 | washer-1 | 80 °C tank heat balance with heater, parts, losses; HP and LP spray pumps; dryer; a heater control fault holds the tank hotter (F13) | MecWash block line at an Indian truck maker (80 °C, 11 kW HP and 18.5 kW LP pumps, 8 min per block); StingRay 8473 (120 kW heater) | 2000 l tank, 15 kW dryer, 450 kg block, 400 W/K loss, the part leaves 15 K under the tank |
 | leak-1 | pressure decay = leak (P_atm Q t / V) + the part cooling during the test (ideal gas, dP/P = dT/T, 0.34 % per K); low air means no fill | InterTech (12 l water jacket, 40 s); Cincinnati Test Systems (1.4 bar, 12 scc/min reject); ATEQ F620 (supply 1 to 2 bar over test) | 15 s settle, 25 s test, 500 Pa reject, part cooling rate |
+
+Per-part realism (2026-10-15). The first full-plant run showed values that never moved: the washer
+tank at exactly 80.000 °C, every engine with the same cold-test torque, every part perfectly tight.
+
+- washer-1: an on/off thermostat with a 2 K band (on at 78 °C, off at 80 °C: project choice), so
+  the tank and the part-out temperature cycle as a real heater does.
+- leak-1: each part has its own small leak, log-normal with a median of 1 scc/min and a geometric
+  spread of 2, and 0.5 % of the parts are porosity leakers at 15 to 60 scc/min. No published
+  production reject rate was found, so these are project choices. `leak_sccm` stays as the fault
+  (a leak in every part, for example a worn fixture seal).
+- cold-1: each engine has its own friction, 1 sigma 3 % (project choice: no published production
+  spread found). It stays well inside the ±20 % reject band.
+- leak-1, cold-1 and hot-1 now have `tags()`: the last result, the verdict, the count and the
+  rejects. The plant tags include every assembly station.
 
 Verification (2026-10-08, `test_machine_assembly.py`, 4 checks): the leak decay from the formula; a
 tight part 30 K warm fails (the F13 false reject) and a tight part at room temperature passes; low
@@ -446,3 +516,29 @@ every block failed, as real lines know, which is why they cool the block first).
 raises TR-2's load by more than 250 kW at once; a washer that runs 15 K hot (F13) turns tight blocks
 into leak-test rejects. Checks that study the utilities or the fabrication line alone build the plant
 with `with_assembly=False`, so psu-c and the loop carry no assembly load.
+
+## Building services (`building.py`)
+
+Every real factory has loads besides its machines. Without them the site load was too low for its
+transformers, and the site exported power (ideas.md 17.5). The site is one shop with two bays and an
+office block (operator, 2026-10-15). Sizes are project choices: fab bay 30 × 120 m with 12 m to the
+eaves, assembly bay 24 × 80 m, 8 m high, office block 800 m².
+
+| Load | Model | Source |
+|---|---|---|
+| Lighting | power density × floor area. Shop 8.8 W/m², always on (three shifts). Office 6.9 W/m², office hours, 10 % outside them. | 2021 IECC building area method (energycodes.gov LPD update, Washington state code table). ECBC 2017 values not found. |
+| Roof ventilation | 8 air changes per hour in the fab bay, 6 in the assembly bay. Fans of the HTTI-100-4T class (7.5 kW, 56,700 m³/h) at 80 % of their free-air flow: 8 fans and 2 fans. | OHS (8 to 10 in a welding area), general ventilation 6 to 8; Sodeca HTTI table |
+| Make-up air | evaporative air washers supply the extracted air: fan power Q dp / eta (145 Pa, eta 0.6) and a 0.37 kW pump per 51,000 m³/h unit. On at 30 °C and above. | L&T-SuFin air washer listing; efficiency and switch point project choices |
+| Fume extraction | one 4 kW, 4,000 m³/h central extractor per robotic welding cell, while the cell runs | IperJet DF6 |
+| EOT cranes | two 15 t cranes: hoist 32.5 kW electrical at the rated load, scaled by the lifted mass; long travel 11 kW and cross travel 5.5 kW at half load. A lift of 1 to 4 t every 6 min. | 15 t crane motor calculation; BHEL crane specification; cycle project choices |
+| Office | plug loads 8.07 W/m² in office hours (30 % outside); air conditioning: 175 W/m² design cooling × part load over the ISEER outdoor range of 24 to 43 °C, divided by an EER of 3.5; 10 kW of cooling always on for the control room and the server room | ASHRAE AEDG medium office; Indian planning range 150 to 200 W/m²; EER project choice (no VRF value found) |
+
+Power factors (project choices): LED lighting 0.95, fan motors 0.85, inverter air conditioning
+0.95, plug loads 0.90, crane drives 0.95. Faults (parameters only): roof fans out of service, air
+washer pad fouling, a clogged fume filter, hoist drag, an air conditioner losing EER.
+
+Verification (`test_plant_site.py`): the fan counts and powers from the formulas, the office load
+by day and by night, the crane lifts, the air washer thermostat, no export at night at the hot
+test's rated stage (also on a 25 °C night, when the air washers stay off and the export limiter
+must act), the transformer loading of the shop, the furnace zones, the washer band, the press-2
+brake times, the material batches, and the leak and cold tests per part.

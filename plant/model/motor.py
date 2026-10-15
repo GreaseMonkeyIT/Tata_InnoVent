@@ -483,7 +483,24 @@ class InductionMotor:
             if abs(w1 - w0) > dw_max and h > 1e-4:
                 h *= 0.5                                       # too big a move: halve and retry
                 continue
-            if not energized and w0 * w1 < 0:                  # a coasting shaft stops, it does not reverse
+            if energized and dtm < 0.0:
+                # On the stable slope, solve the implicit step to convergence (Newton). One
+                # linearization at w0 is not enough: the torque curve is not straight, so a step
+                # after a load drop can overshoot synchronous speed and the motor seems to
+                # generate (2026-10-15, press-1 at dt 0.1 s: -10.7 kW).
+                for _ in range(8):
+                    tm1 = self._torque(c, w1, v_ll, f_hz)[0]
+                    g = self.j * (w1 - w0) / h - (tm1 - load_torque(w1) - fric(w1))
+                    dtm1 = (self._torque(c, w1 + dw, v_ll, f_hz)[0] - tm1) / dw
+                    dl1 = (load_torque(w1 + 1e-3) - load_torque(w1)) / 1e-3
+                    dg = self.j / h - dtm1 + dl1
+                    if dg <= 0.0:
+                        break
+                    corr = g / dg
+                    w1 -= corr
+                    if abs(corr) < 1e-7 * max(1.0, abs(w1)):
+                        break
+            if not energized and w0 * w1 < 0:                 # a coasting shaft stops, it does not reverse
                 w1 = 0.0
             if not energized and abs(w1) < 1e-6 and abs(load_torque(0.0)) <= self.friction_nm + 1e-9:
                 w1 = 0.0

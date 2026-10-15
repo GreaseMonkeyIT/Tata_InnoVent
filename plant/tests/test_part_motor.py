@@ -277,3 +277,25 @@ def test_star_delta_start_with_large_step_stays_stable():
         assert m.check() == []
     assert 1480.0 < m.rpm < 1500.0
     assert m.amps == pytest.approx(running(0.6).amps, rel=0.05)
+
+
+def test_load_drop_with_a_large_step_does_not_overshoot_sync():
+    """Regression (2026-10-15, the first full-plant run): after a sudden load drop with a 0.1 s
+    step, one linearization of the torque curve overshot synchronous speed, so a motor with a
+    positive load torque seemed to generate (press-1: -10.7 kW at 0.1 s, -1.3 kW at 0.02 s). The
+    implicit step is now solved to convergence: the input stays positive and the speed after the
+    drop does not depend on the step size."""
+    sync = 2.0 * math.pi * R.f_hz / (R.poles / 2.0)
+    ends = []
+    for dt in (0.1, 0.02, 0.005):
+        m = M.InductionMotor("m", R)
+        m.w = W_N
+        heavy = lambda w: 1.0 * T_N * min(1.0, max(w, 0.0) / (0.05 * W_N))
+        light = lambda w: 0.05 * T_N * min(1.0, max(w, 0.0) / (0.05 * W_N))
+        for _ in range(int(2.0 / dt)):
+            m.step(dt, R.v_ll, R.f_hz, heavy)
+        for _ in range(int(2.0 / dt)):
+            m.step(dt, R.v_ll, R.f_hz, light)
+            assert m.w < sync and m.p_in > 0.0
+        ends.append(m.w)
+    assert max(ends) - min(ends) < 1e-3 * sync
