@@ -7,8 +7,13 @@ The engine reads it with one rule for every node and has no list of its own (req
 ideas.md 12.1).
 
 Each node: {"feeds": [tags of the media it takes from], "commands": [PLC tags: states, phases,
-outputs], "measures": [its own instrument tags]}. Counters and per-part records (holes, parts,
-last_*) are not time series and stay out (per-part records: ideas.md 17.2, week 2).
+outputs], "measures": [its own instrument tags], "asset": the machine it belongs to,
+"loop_outputs": the outputs of that machine's own PLC control loops}. Counters and per-part records
+(holes, parts, last_*) are not time series and stay out (per-part records: ideas.md 17.2, week 2).
+
+Since 2026-10-18 a machine can have more than one node: "<asset>:loop" for its PLC control loops
+(the measured variable in, the controller output out, `loops`) and "compressor-1:air" for the air
+header. A node's name before the colon is its asset.
 """
 
 
@@ -40,7 +45,8 @@ def wiring(p):
             ["pierce-1.current_a", "pierce-1.pressure_bar"])
         add("press-2", ["psu-a.voltage_v"] + air, ["press-2.state"],
             ["press-2.current_a", "press-2.flywheel_rpm"])
-        add("plasma-1", air, ["plasma-1.state"], ["plasma-1.power_kw", "plasma-1.arc_v"])
+        # the CNC counts the arc starts on the consumables since their change (fab_stations.py)
+        add("plasma-1", air, ["plasma-1.state", "plasma-1.electrode_starts"], ["plasma-1.power_kw", "plasma-1.arc_v"])
         for k in (1, 2):
             add(f"weld-{k}", [], [f"weld-{k}.state"], [f"weld-{k}.power_kw", f"weld-{k}.weld_a"])
         add("blast-1", [], ["blast-1.abrasive_kg_min"], ["blast-1.power_kw", "blast-1.filter_dp_pa", "blast-1.air_m3h"])
@@ -63,7 +69,44 @@ def wiring(p):
         add("gas-1", ["ced-1.tank_gas_m3h", "ced-1.oven_gas_m3h"], [], ["gas-1.header_kpa"])
     add("tr-1", ["tr-1.load_pct"] + outdoor, [], ["tr-1.oil_c"])
     add("tr-2", ["tr-2.load_pct"] + outdoor, [], ["tr-2.oil_c"])
+    # the air header (P&ID): its transmitters are the controller's transducer at the receiver and the
+    # pressure gauges at the users. The compressor's delivery (its load state) and the modelled users
+    # explain them. It belongs to the air system, so to compressor-1 (2026-10-18).
+    hdr = ["compressor-1.pressure_barg"] + (["plasma-1.air_bar", "press-2.clutch_air_bar"] if p.fab else []) \
+        + (["leak-1.air_bar"] if p.asm else [])
+    add("compressor-1:air", [], ["compressor-1.state"] + (["plasma-1.state"] if p.fab else []), hdr)
+    # the PLC control loops (PLC program): one controller node per loop, the measured variable in and
+    # the controller output out
+    for lp in loops(p):
+        add(f"{lp['asset']}:loop", lp["measured"], [], lp["output"])
+    own = {}
+    for lp in loops(p):
+        own.setdefault(lp["asset"], []).extend(lp["output"])
+        # the machine's node takes its own loop outputs as inputs (a valve, a burner, a heater acts on
+        # what the machine measures); add the ones the lists above do not have
+        doc = w[lp["asset"]]
+        doc["feeds"] += [t for t in lp["output"] if t not in doc["feeds"] + doc["commands"]]
+    for name, doc in w.items():
+        doc["asset"] = name.split(":")[0]
+        doc["loop_outputs"] = list(own.get(doc["asset"], []))
     return w
+
+
+def loops(p):
+    """The PLC control loops of plant `p`: [{"asset", "measured": [tags], "output": [tags]}]. Each
+    one is in the plant model: the controller acts on the measured tags and sets the output."""
+    out = [{"asset": "compressor-1", "measured": ["compressor-1.pressure_barg"], "output": ["compressor-1.state"]}]
+    if not p.chiller:
+        out.append({"asset": "cool-1", "measured": ["cool-1-tower.basin_c"], "output": ["cool-1-tower.fan_on"]})
+    if p.press is not None:
+        out.append({"asset": "press-1", "measured": ["press-1.oil_c"], "output": ["press-1.cooler_valve"]})
+    if p.fab:
+        out.append({"asset": "lmp-1", "measured": ["lmp-1.oil_c"], "output": ["lmp-1.cooler_valve"]})
+        out.append({"asset": "ced-1", "measured": ["ced-1.degrease_c", "ced-1.phosphate_c", "ced-1.oven_c"],
+                    "output": ["ced-1.tank_gas_m3h", "ced-1.oven_gas_m3h"]})
+    if p.asm:
+        out.append({"asset": "washer-1", "measured": ["washer-1.tank_c"], "output": ["washer-1.heater_on"]})
+    return out
 
 
 def instrument_ranges(p):

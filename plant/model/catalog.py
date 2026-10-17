@@ -269,9 +269,15 @@ from .fab_stations import PaintRating, PlasmaRating, ScannerRating, ShotBlastRat
 # air shield at 7.5 bar (instruction manual 809480; xpr300 product page); 25 mm mild steel at
 # 1950 mm/min with O2 plasma; Plymovent DraftMax downdraft table fan 2.2 kW, 2500 m3/h. Low-air
 # fault at 6.5 bar (project choice: the plant header cycles 6.9 to 7.5 bar).
+# Consumable life: 1,368 cuts of 20 s on 20 mm mild steel at 300 A (Hypertherm, "Reduce plasma
+# cutting operating costs with XPR300",
+# https://www.hypertherm.com/resources/more-resources/articles/more-profitable-with-xpr300/). One cut
+# is one start. Read both ways: a change at 1,368 starts or at 1,368 x 20 s of arc time, the first to
+# come (project choice, for cuts longer than the test cut). The change takes 300 s (project choice).
 XPR300 = PlasmaRating(i_arc=300.0, u_arc=210.0, eff=0.9175, pf=0.98, idle_w=40.1, air_bar_min=6.5,
-                      cut_mm_min=1950.0, fan_kw=2.2,
-                      source="Hypertherm XPR300 manual 809480 and product page; Plymovent DraftMax")
+                      cut_mm_min=1950.0, fan_kw=2.2, life_starts=1368, life_arc_s=1368 * 20.0, change_s=300.0,
+                      source="Hypertherm XPR300 manual 809480, product page and XPR300 operating-cost "
+                             "article; Plymovent DraftMax")
 # Fronius TPS 500i: 360 A at 100 % duty, PF 0.99 (Fronius TPS i flyer); efficiency 90 % (ESAB Aristo
 # 500ix datasheet, a comparable inverter); idle power 50 W (project choice: Kemppi X8 open-circuit
 # 44 to 53 W, a snippet only). The robot welds at 300 A (project choice).

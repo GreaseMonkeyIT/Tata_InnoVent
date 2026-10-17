@@ -483,6 +483,20 @@ belt slip lowers the flywheel speed; a thicker blank deepens the slowdown with t
 In the plant: press-2 runs on psu-a with its clutch air from the plant header, and a large air leak
 (F6) stops both press-2 and the plasma.
 
+## Plasma consumables (`fab_stations.py`, 2026-10-17)
+
+The electrode of plasma-1 (Hypertherm XPR300) wears with each start, and the arc voltage rises
+0.01 V per start (project choice). The consumables are changed before the next plate when they
+reach their life: 1,368 starts, or 1,368 x 20 s of arc time, whichever comes first. Hypertherm gives
+1,368 cuts of 20 s on 20 mm mild steel at 300 A ("Reduce plasma cutting operating costs with
+XPR300"). One cut is one start. The arc-time limit (for cuts longer than the test cut) and the
+300 s change time are project choices. The state is `change` during the change. The CNC counts the
+starts since the change (tag `electrode_starts`), and the plasma-1 node reads it as a PLC input.
+
+The consumables are of any age when a plant run starts (`age`, drawn per seed from its own random
+stream). Before this, every run started with new consumables and the arc voltage rose all day,
+which no node input could explain.
+
 ## Engine assembly line, part 1 (`assembly.py`)
 
 | Station | Model | Sources | Project choices |

@@ -52,7 +52,8 @@ def test_cached_run_equals_fresh_run(tmp_path, monkeypatch):
         for r in (rows1, rows2):
             assert r[t].dtype == rows0[t].dtype
             assert np.array_equal(r[t], rows0[t], equal_nan=r[t].dtype.kind == "f")
-    assert len(rows0["compressor-1.current_a"]) == 180
+    # the lead (the end of the warm-up, here all of its 120 s) comes before the 180 scored samples
+    assert info0["lead"] == 120 and len(rows0["compressor-1.current_a"]) == 120 + 180
 
 
 def _campaign_seeds(split, normal=8, faults=16, fault_runs=10):
@@ -235,6 +236,76 @@ def test_node_reads_text_codes_as_text():
     assert np.array_equal(a.matrices(txt)[0], b.matrices(cod)[0])
     assert a.bins(txt).tolist() == b.bins(cod).tolist()
     assert cod["m.state"][:2].names == ("idle", "off", "run") and cod["m.state"][1] == "idle"
+
+
+def test_lead_warms_the_filters_and_is_dropped():
+    """RunsModel drops the lead rows of each run after the filters ran through them: the rows left
+    equal the features of the whole run from the lead on."""
+    rng = np.random.default_rng(8)
+    U1, U2 = rng.normal(size=(500, 2)), rng.normal(size=(300, 2))
+    m = N.RunsModel(["a", "b"], ["y"], taus=(5.0, 60.0))
+    plain = N.RunsModel(["a", "b"], ["y"], taus=(5.0, 60.0))
+    m.bounds, m.leads = [500, 300], [100, 40]
+    X = m.features(np.vstack([U1, U2]), 1.0)
+    assert np.array_equal(X, np.vstack([plain.features(U1, 1.0)[100:], plain.features(U2, 1.0)[40:]]))
+    assert N.lead_of(N.Run({"x": [1]}, 7)) == 7 and N.lead_of({"x": [1]}) == 0
+
+
+def test_view_keeps_the_lead(tmp_path, monkeypatch):
+    monkeypatch.setattr(N, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(N, "WARMUP_S", 300.0)
+    monkeypatch.setattr(N, "LEAD_S", 200.0)
+    monkeypatch.setattr(N, "_VERSION", [])
+    w, path, info = N.view(40002, 0.02, None)
+    r = N.load_view(path, ["press-1.oil_c"])
+    assert info["lead"] == 200 and r.lead == 200 and len(r["press-1.oil_c"]) == 200 + 72
+
+
+def test_documents_list_the_loops_and_the_air_header():
+    """Every tag of a PLC loop and of the air header is a plant tag, every loop output is a command
+    of its asset's node, and every node knows its asset and that asset's loop outputs."""
+    from model.wiring import loops, wiring
+    p = N.new_plant(N.SEED_BASE["train"])
+    p.step(0.1)
+    tags = set(p.tags())
+    w = wiring(p)
+    for lp in loops(p):
+        assert set(lp["measured"] + lp["output"]) <= tags
+        assert set(lp["output"]) <= set(w[lp["asset"]]["commands"]) | set(w[lp["asset"]]["feeds"])
+        assert w[f"{lp['asset']}:loop"]["measures"] == lp["output"]
+    assert set(w["compressor-1:air"]["measures"]) <= tags and "compressor-1.pressure_barg" in w["compressor-1:air"]["measures"]
+    for name, doc in w.items():
+        assert doc["asset"] == name.split(":")[0]
+    assert w["compressor-1"]["loop_outputs"] == ["compressor-1.state"] == w["compressor-1:air"]["loop_outputs"]
+
+
+def test_text_output_and_own_loop_outputs_left_out_of_coverage():
+    """A controller's text state as an output becomes one output per category; an input that is a
+    loop output of the node's own asset does not count for coverage (inputs and their filters)."""
+    doc = {"feeds": ["a.p"], "commands": ["a.state"], "measures": ["a.x"], "asset": "a",
+           "loop_outputs": ["a.state"]}
+    r = {"a.p": np.array([1.0, 2.0, 3.0]), "a.state": np.array(["on", "off", "on"]), "a.x": np.array([0.1, 0.2, 0.3])}
+    nd = N.Node("a", doc)
+    names = nd.design([(0, r)])
+    assert names == ["a.p", "a.state=off", "a.state=on"] and nd.out_names == ["a.x"]
+    assert nd.coverage_columns(names, 2) == [True, False, False, True, True, False, False, False, False]
+    loop = N.Node("a:loop", {"feeds": ["a.p"], "commands": [], "measures": ["a.state"], "asset": "a",
+                             "loop_outputs": ["a.state"]})
+    loop.design([(0, r)])
+    assert loop.out_names == ["a.state=off", "a.state=on"]
+    assert loop.matrices(r)[1].tolist() == [[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]]
+
+
+def test_score_by_asset():
+    """A machine alarms when the first of its nodes does; the root is scored on the machine."""
+    z = np.zeros(10, bool)
+    al = {"c": z.copy(), "c:air": z.copy(), "t": z.copy()}
+    al["c:air"][6] = True
+    al["t"][7] = True
+    rec = N.score_fault(al, {"onset_s": 5.0, "root": "c", "control": False},
+                        {"c": "c", "c:air": "c", "t": "t"})
+    assert rec["detected"] and rec["delay_s"] == 1.0 and rec["first"] == ["c"] and rec["top1"]
+    assert rec["alarmed"] == ["c", "t"]
 
 
 def test_node_matrices_from_arrays_equal_lists():

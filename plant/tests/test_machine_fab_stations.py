@@ -38,6 +38,27 @@ def test_plasma_power_air_and_wear():
     assert q.state == "gas_fault"
 
 
+def test_plasma_consumables_change_at_their_life():
+    """Consumables near their life (1,368 starts, Hypertherm) are changed before the next plate:
+    the state passes through "change", the start counter and the wear go back to 0, and the arc
+    voltage falls back to its rated value. `age` sets the starts the plant begins with."""
+    r = C.XPR300
+    assert r.life_starts == 1368 and r.life_arc_s == 1368 * 20.0
+    p = F.PlasmaCutter("plasma-1", r, cut_m_per_plate=12.0, pierces_per_plate=24, load_s=5.0, age=1.0)
+    assert p.starts == 1368 and p.wear_v == pytest.approx(13.68)
+    seen, arc = set(), []
+    for _ in range(int(1500 / 0.5)):
+        p.step(0.5)
+        seen.add(p.state)
+        if p.state == "cut":
+            arc.append(p.u_arc)
+    assert "change" in seen and p.changes == 1
+    assert arc[0] == pytest.approx(210.0 + 0.01)                     # the first start on new consumables
+    assert p.tags()["electrode_starts"] == p.starts < 1368
+    young = F.PlasmaCutter("plasma-1", r, age=0.25)
+    assert young.starts == 342 and young.tags()["electrode_starts"] == 342.0
+
+
 def test_welding_load_line_and_tip_wear():
     def spread(wear):
         w = F.WeldingCell("weld-1", C.TPS500I, change_s=1.0)

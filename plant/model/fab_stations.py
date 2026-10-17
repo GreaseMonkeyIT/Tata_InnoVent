@@ -7,7 +7,9 @@ these are drives and power electronics, project choice for the level of detail).
 
   PlasmaCutter: arc power = I_arc x U_arc while cutting, input = arc / efficiency. It needs plant
     air at its inlet pressure (plasma O2 from bottles, the shield is plant air). Worn consumables
-    (an eroded electrode) raise the arc voltage per pierce (project choice for the rate).
+    (an eroded electrode) raise the arc voltage per pierce (project choice for the rate). The
+    consumables are changed at their life (catalog.XPR300: Hypertherm's 1,368 starts), and the CNC
+    counts the starts since the change.
   WeldingCell: MAG arc with the conventional load line of IEC 60974-1, U2 = 14 + 0.05 I2 (V, A);
     input = arc / efficiency; seams and robot moves alternate; a worn contact tip makes the arc
     current unstable (more ripple). The torch cooler is a standalone air-cooled unit (the usual
@@ -41,29 +43,49 @@ class PlasmaRating:
     air_bar_min: float
     cut_mm_min: float          # cutting speed for the plate
     fan_kw: float
+    life_starts: int = 0       # consumable life in arc starts (0: no limit)
+    life_arc_s: float = 0.0    # consumable life in arc-on time, s (0: no limit)
+    change_s: float = 0.0      # time to change the consumables
     source: str = ""
 
 
 class PlasmaCutter:
-    def __init__(self, name, r, cut_m_per_plate=24.0, pierces_per_plate=12, load_s=300.0):
+    """`age` (0 new .. 1 at its life) sets the consumables at the start: a plant that has run for a
+    while has consumables of any age (the plant draws it per seed). The consumables are changed
+    before the next plate once they reach their life in starts or in arc time; the CNC counts the
+    starts since the change (`electrode_starts`)."""
+
+    def __init__(self, name, r, cut_m_per_plate=24.0, pierces_per_plate=12, load_s=300.0, age=0.0):
         self.name, self.r = name, r
         self.cut_m, self.pierces, self.load_s = cut_m_per_plate, pierces_per_plate, load_s
         self.state, self.t_state = "load", 0.0
         self.seg_left = 0.0
         self.n_pierce = 0
-        self.wear_v = 0.0               # extra arc voltage from electrode wear
         self.wear_v_per_pierce = 0.01   # project choice (V per pierce)
+        self.starts = int(age * r.life_starts) if r.life_starts else 0   # arc starts on these consumables
+        self.arc_s = age * r.life_arc_s                                      # arc-on time on them, s
+        self.wear_v = self.starts * self.wear_v_per_pierce                  # extra arc voltage from electrode wear
+        self.changes = 0
         self.air_bar = 7.5
         self.plates = 0
         self.p_el = 0.0
         self.u_arc = 0.0
         self.gated, self.go = False, False   # gated: the line starts each plate set (plant flow)
 
+    def worn(self):
+        r = self.r
+        return (r.life_starts and self.starts >= r.life_starts) or (r.life_arc_s and self.arc_s >= r.life_arc_s)
+
     def step(self, dt):
         r = self.r
         self.t_state += dt
         seg_m = self.cut_m / self.pierces
-        if self.state == "load" and (self.go if self.gated else self.t_state >= self.load_s):
+        if self.state == "load" and self.worn():
+            self.state, self.t_state = "change", 0.0
+        elif self.state == "change" and self.t_state >= r.change_s:
+            self.starts, self.arc_s, self.wear_v, self.changes = 0, 0.0, 0.0, self.changes + 1
+            self.state, self.t_state = "load", 0.0
+        elif self.state == "load" and (self.go if self.gated else self.t_state >= self.load_s):
             self.go = False
             self.state, self.t_state, self.n_pierce = "traverse", 0.0, 0
         elif self.state == "traverse" and self.t_state >= 4.0:
@@ -72,9 +94,11 @@ class PlasmaCutter:
             else:
                 self.state, self.t_state, self.seg_left = "cut", 0.0, seg_m
                 self.n_pierce += 1
+                self.starts += 1
                 self.wear_v += self.wear_v_per_pierce
         elif self.state == "cut":
             self.seg_left -= r.cut_mm_min / 60000.0 * dt
+            self.arc_s += dt
             if self.air_bar < r.air_bar_min:
                 self.state = "gas_fault"
             elif self.seg_left <= 0:
@@ -93,7 +117,7 @@ class PlasmaCutter:
     def tags(self):
         return {"arc_a": self.r.i_arc if self.state == "cut" else 0.0, "arc_v": self.u_arc,
                 "power_kw": self.p_el / 1000.0, "air_bar": self.air_bar, "plates": self.plates,
-                "state": self.state}
+                "electrode_starts": float(self.starts), "state": self.state}
 
 
 # --------------------------------------------------------------------------------- welding --

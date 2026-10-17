@@ -224,7 +224,10 @@ class UtilitiesPlant:
             self.press2 = MechanicalPress("press-2", C.AIDA_NC1_2000, C.YH2_160L_4, seed=seed)
             self.press2.motor.w = self.press2.w_m_n
             self.conv = Conveyor("conveyor-1", C.ROLLER_CONVEYOR)
-            self.plasma = FS.PlasmaCutter("plasma-1", C.XPR300, cut_m_per_plate=12.0, pierces_per_plate=24)
+            # the consumables have run for a while when the plant starts: any age, drawn per seed
+            # (its own stream, so the other random draws of the plant stay the same)
+            self.plasma = FS.PlasmaCutter("plasma-1", C.XPR300, cut_m_per_plate=12.0, pierces_per_plate=24,
+                                          age=random.Random(f"consumables:{seed}").random())
             self.welders = [FS.WeldingCell(f"weld-{k}", C.TPS500I, seams=4, seed=k, change_s=240.0 + 37.0 * k)
                             for k in (1, 2)]
             self.scanner = FS.QaScanner("qa-scanner-1", C.SCANNER)

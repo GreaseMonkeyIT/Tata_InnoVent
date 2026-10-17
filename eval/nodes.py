@@ -10,6 +10,9 @@ and phase input per machine, written by hand). Here nothing is per machine:
   - One model size and one filter set for every node (twin/node_model.py defaults).
   - The residual spread is taken per command state when the node has a categorical command, else
     one spread per output: the same rule for all.
+  - A machine can have several nodes ("<asset>:loop" per PLC control loop, "compressor-1:air"),
+    a text output gives one output per category, and an input that is an output of the asset's own
+    control loops does not count for coverage (LOG-117). Faults are scored per machine.
   - Detection (--rule, default `cusumk` since LOG-115): a two-sided CUSUM on each residual, with a
     k per output from the slow bias of the calibration days and a limit per node from the same days.
     The options: `gate`, today's engine gate (the 35th percentile of |z| in the last 120 s above
@@ -78,7 +81,14 @@ DEFAULT_RULE = "cusumk"     # since 2026-10-17 (LOG-115): it held on the validat
 # slow thermal states (an oil tank or a water tank behind a thermostat that cycles over about 30 min)
 TAUS = (5.0, 30.0, 120.0, 600.0, 1800.0, 7200.0)
 SAMPLE_S, DT = 1.0, 0.1
-WARMUP_S = 1800.0
+# The plant warm-up before a run is scored (2026-10-17, LOG-116): 3 x the slowest time constant of
+# the plant, the top oil of the transformers (180 min, power.py, IEC 60076-7), so that about 5 % of
+# the gap from the start state is left. It was 30 min, and the oil still heated through the run.
+WARMUP_S = 3 * 180.0 * 60.0
+# The end of the warm-up is recorded as a lead: it runs through the model's filters so that they
+# start from history, as in a plant that runs all the time, and it is not fitted, calibrated or
+# scored. Its length is the longest filter time constant (TAUS).
+LEAD_S = 7200.0
 SEED_BASE = {"train": 30_000, "tuning": 40_000, "validation": 60_000, "test": 940_000}
 
 # The days of the year of the splits (2026-10-16). Before this, a hash of the seed picked the day,
@@ -172,7 +182,7 @@ def plant_version():
             h.update(fh.read())
     for fn in (simulate, new_plant, split_of, split_days, day_of_year):    # the plant a seed gets
         h.update(inspect.getsource(fn).encode())
-    h.update(repr((DT, SAMPLE_S, WARMUP_S, SEED_BASE, BLOCK_D, MONTHS)).encode())
+    h.update(repr((DT, SAMPLE_S, WARMUP_S, LEAD_S, SEED_BASE, BLOCK_D, MONTHS)).encode())
     _VERSION.append(h.hexdigest()[:16])
     return _VERSION[0]
 
@@ -236,6 +246,8 @@ def simulate(seed, hours, fault=None):
                      "root": FR.FAULTS[fid].node, "control": FR.FAULTS[fid].control})
     applied = cleared = False
     m = 0                                       # samples taken
+    lead = 0                                    # of them before the warm-up ends
+    rec_from = WARMUP_S - min(LEAD_S, WARMUP_S)
     for k in range(n):
         if on_at is not None and not applied and p.t >= on_at:
             FR.inject(p, fault[0], mag)
@@ -244,13 +256,15 @@ def simulate(seed, hours, fault=None):
             FR.clear(p, fault[0])
             cleared = True
         p.step(DT)
-        if p.t >= WARMUP_S and k % every == 0:
+        if p.t >= rec_from and k % every == 0:
             tags = p.tags()
             for t in tags.keys() - raw.keys():  # a tag that appears late: absent before
                 raw[t] = [None] * m
             for t, col in raw.items():
                 col.append(tags.get(t))
             m += 1
+            lead += p.t < WARMUP_S
+    info["lead"] = lead
     return raw, info
 
 
@@ -407,30 +421,58 @@ def view(seed, hours, fault=None):
 
 
 def load_view(path, tags=None):
-    """{tag: column} of a saved view, only `tags` when given. Numbers as float64 arrays, text
-    states as Text."""
+    """A Run {tag: column} of a saved view, only `tags` when given, with its lead. Numbers as
+    float64 arrays, text states as Text."""
     with np.load(path) as z:
-        kinds = json.loads(str(z["meta"]))["kinds"]
+        meta = json.loads(str(z["meta"]))
+        kinds = meta["kinds"]
         out = {}
         for t in (tags if tags is not None else kinds):
             k = kinds[t]
             a = z[f"a{k[1]}"]
             out[t] = Text(a, k[2]) if k[0] == "t" else a
-    return out
+    return Run(out, meta["info"].get("lead", 0))
 
 
 class RunsModel(NodeModel):
-    """NodeModel over several runs: the filter bank restarts at each run (a run is a separate day)."""
+    """NodeModel over several runs: the filter bank restarts at each run (a run is a separate day).
+    `leads[i]` samples at the start of run i only warm the filters: their rows are dropped from the
+    features, so the outputs passed with them start after the lead."""
     bounds = None
+    leads = None
+    cov_cols = None     # the feature columns that count for coverage (None: all)
+
+    def _covered_x(self, X, margin):
+        if self.cov_cols is None:
+            return super()._covered_x(X, margin)
+        c = np.asarray(self.cov_cols, bool)
+        if not c.any():
+            return np.ones(len(X), bool)
+        span = self.norm["xhi"][c] - self.norm["xlo"][c]
+        lo, hi = self.norm["xlo"][c] - margin * span, self.norm["xhi"][c] + margin * span
+        return np.all((X[:, c] >= lo) & (X[:, c] <= hi), axis=1)
 
     def features(self, U, dt):
         if not self.bounds:
             return super().features(U, dt)
         out, i = [], 0
-        for n in self.bounds:
-            out.append(super().features(U[i:i + n], dt))
+        for n, lead in zip(self.bounds, self.leads or [0] * len(self.bounds)):
+            out.append(super().features(U[i:i + n], dt)[lead:])
             i += n
         return np.vstack(out)
+
+
+class Run(dict):
+    """The tags of one run, {tag: column}, and `lead`: the samples at its start that only warm the
+    model's filters (the end of the plant warm-up). They are not fitted, calibrated or scored."""
+
+    def __init__(self, cols, lead=0):
+        super().__init__(cols)
+        self.lead = int(lead)
+
+
+def lead_of(r):
+    return getattr(r, "lead", 0)
 
 
 class Node:
@@ -441,6 +483,8 @@ class Node:
         self.h = None                   # the CUSUM limit, from the calibration days
         self.k = None                   # the CUSUM reference value (per output for cusumk)
         self.cats = {}                  # categorical command -> sorted categories seen in training
+        self.out_cats = {}              # categorical output (a controller's state) -> its categories
+        self.out_names = list(doc["measures"])
         self.model = None
         self.sd = {}
         self.sd_all = None
@@ -459,7 +503,24 @@ class Node:
             else:
                 self.num_in.append(t)
         names = list(self.num_in) + [f"{t}={c}" for t, cs in self.cats.items() for c in cs]
+        # a categorical output (a controller's state): one output per category, 1 where it holds
+        self.out_names = []
+        for t in self.doc["measures"]:
+            if any(is_text(r[t]) for _, r in runs):
+                self.out_cats[t] = sorted(set().union(*(text_cats(r[t]) for _, r in runs)))
+                self.out_names += [f"{t}={c}" for c in self.out_cats[t]]
+            else:
+                self.out_names.append(t)
         return names
+
+    def coverage_columns(self, names, n_tau):
+        """The feature columns that count for coverage. An input that is an output of the asset's own
+        PLC control loops does not count: when a fault drives the machine's own controller where it
+        never went, that is a symptom, not a condition the model has not seen (LOG-117). The features
+        are the inputs, then each input's filters (twin/node_model.py, input-major)."""
+        own = set(self.doc.get("loop_outputs", []))
+        keep = [n.split("=", 1)[0] not in own for n in names]
+        return keep + [k for k in keep for _ in range(n_tau)]
 
     def matrices(self, r):
         cols = [np.asarray(r[t], float) for t in self.num_in]
@@ -467,8 +528,13 @@ class Node:
             for c in cs:
                 cols.append(text_eq(r[t], c).astype(float))
         U = np.column_stack(cols) if cols else np.zeros((len(r[self.doc["measures"][0]]), 0))
-        Y = np.column_stack([np.asarray(r[t], float) for t in self.doc["measures"]])
-        return U, Y
+        ys = []
+        for t in self.doc["measures"]:
+            if t in self.out_cats:
+                ys += [text_eq(r[t], c).astype(float) for c in self.out_cats[t]]
+            else:
+                ys.append(np.asarray(r[t], float))
+        return U, np.column_stack(ys)
 
     def bins(self, r):
         if self.state_cmd is None:
@@ -484,17 +550,19 @@ class Node:
         has not seen (in-sample residuals are small by construction and make every new day alarm)."""
         names = self.design(runs + calib)
         Us, Ys = zip(*(self.matrices(r) for _, r in runs))
-        self.model = RunsModel(names, self.doc["measures"], taus=TAUS)
-        self.model.bounds = [len(u) for u in Us]
-        self.model.fit(np.vstack(Us), np.vstack(Ys), SAMPLE_S, epochs=150, patience=15)
-        self.model.bounds = None
+        leads = [lead_of(r) for _, r in runs]
+        self.model = RunsModel(names, self.out_names, taus=TAUS)
+        self.model.cov_cols = self.coverage_columns(names, len(TAUS))
+        self.model.bounds, self.model.leads = [len(u) for u in Us], leads
+        self.model.fit(np.vstack(Us), np.vstack([y[n:] for y, n in zip(Ys, leads)]), SAMPLE_S,
+                       epochs=150, patience=15)
+        self.model.bounds = self.model.leads = None
         res, bins, ys, covs = [], [], [], []
         for _, r in calib:
-            U, Y = self.matrices(r)
-            rr, cv = self.model.residuals_covered(U, Y, SAMPLE_S)
+            rr, cv, Y, b = self._residuals(r)
             covs.append(cv)
             res.append(rr)
-            bins.append(self.bins(r))
+            bins.append(b)
             ys.append(Y)
         res, bins, ys, cov = np.vstack(res), np.concatenate(bins), np.vstack(ys), np.concatenate(covs)
         self.calib_covered = float(cov.mean())
@@ -517,11 +585,21 @@ class Node:
             self.h = cusum_limit([cusum(z, cv, self.k).max(initial=0.0) for z, cv in zs])
         return self
 
-    def z(self, r):
-        """The standardized residuals of a run (T x outputs) and the covered mask (T)."""
+    def _residuals(self, r):
+        """Residuals and coverage of one run after its lead (the filters run through the lead), with
+        the outputs and the state bins of the same samples."""
         U, Y = self.matrices(r)
-        res, cov = self.model.residuals_covered(U, Y, SAMPLE_S)
-        b = self.bins(r)
+        n = lead_of(r)
+        self.model.bounds, self.model.leads = [len(U)], [n]
+        try:
+            res, cov = self.model.residuals_covered(U, Y[n:], SAMPLE_S)
+        finally:
+            self.model.bounds = self.model.leads = None
+        return res, cov, Y[n:], self.bins(r)[n:]
+
+    def z(self, r):
+        """The standardized residuals of a run after its lead (T x outputs) and the covered mask (T)."""
+        res, cov, _, b = self._residuals(r)
         sd = np.stack([self.sd.get(int(g), self.sd_all) for g in b])
         return res / sd, cov
 
@@ -656,12 +734,18 @@ def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE):
             "wall_s": time.time() - t1}
 
 
-def score_fault(al, info):
-    """One fault trial: which node alarmed first after the onset, was the true root among the
-    alarms, how long it took, and the alarms before the onset (false). al: node -> alarm per sample."""
+def score_fault(al, info, asset=None):
+    """One fault trial: which asset alarmed first after the onset, was the true root among the
+    alarms, how long it took, and the alarms before the onset (false). al: node -> alarm per sample;
+    asset: node -> the machine it belongs to (a machine's first alarm is the first of its nodes)."""
     io = int(info["onset_s"] / SAMPLE_S)
-    firsts = {n: first_alarm(a, io) for n, a in al.items()}
-    hit = {n: i for n, i in firsts.items() if i is not None}
+    asset = asset or {}
+    hit = {}
+    for n, a in al.items():
+        i = first_alarm(a, io)
+        m = asset.get(n, n)
+        if i is not None and (m not in hit or i < hit[m]):
+            hit[m] = i
     pre = sum(episodes(a[:io]) for a in al.values())
     rec = dict(info, pre_alarms=pre, alarmed=sorted(hit, key=hit.get))
     root = info["root"]
@@ -763,9 +847,10 @@ def main(argv=None):
             if info.get("root"):
                 io = int(info["onset_s"] / SAMPLE_S)
                 doc = w[info["root"]]
-                rows = load_view(path, doc["commands"])
-                info = dict(info, active_s=first_activity(rows, doc, io) * SAMPLE_S)
-            report["faults"].setdefault(sp, []).append(score_fault(al, info))
+                rows = load_view(path, doc["commands"])          # the lead comes first in the rows
+                info = dict(info, active_s=(first_activity(rows, doc, io + rows.lead) - rows.lead) * SAMPLE_S)
+            report["faults"].setdefault(sp, []).append(
+                score_fault(al, info, {n: d.get("asset", n) for n, d in w.items()}))
     report["meta"]["wall_s"] = round(time.time() - t0)
     md = report_md(report, a)
     out = os.path.join(a.out, datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-nodes")

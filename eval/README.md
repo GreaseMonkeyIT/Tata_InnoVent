@@ -135,6 +135,13 @@ every month. Run k of a split goes to the month `MONTHS[k % 12]`: 4 training day
 April, July and October, and 12 training days cover all 12 months. The seed still sets the start
 hour, the noise and the material flow. A run can be at most 24 h long, warm-up included.
 
+Warm-up and lead (since LOG-116): the plant runs 9 h before a run is scored. That is 3 x its
+slowest time constant, the transformer top oil (180 min), so about 5 % of the gap from the start
+state is left. It was 30 min, and the oil still heated through the scored hours. The last 2 h of the
+warm-up (the longest filter time constant) are recorded as the run's lead. The lead runs through the
+model's filters, so they start from history, as in a plant that runs all the time. The lead is not
+fitted, calibrated or scored. The onset times of the faults count from the end of the warm-up.
+
 Training days (`fit_and_calibration`, since 2026-10-17): the training runs come in rounds of 12,
 one day per month. Every third round sets the residual spreads, and the other rounds are the days
 the models fit on. The default `--train 36` gives 24 fit days (2 per month) and 12 spread days
@@ -169,6 +176,23 @@ paths. Each node worker loads only its own tags, and a scored run only while it 
 The values are the ones `record()` gives, so a report does not change. The key holds a hash of the
 plant code, `wiring.py`, `instruments.py` and the encoding, so a change to any of them makes new
 views.
+
+Loop nodes and the air header (since LOG-117): the documents (`plant/model/wiring.py`) list the
+PLC control loops of the plant (`loops`): compressor-1 load and unload on the header pressure, the
+cooler valves of press-1 and lmp-1 on their oil temperature, the tower fan on the basin
+temperature, the washer-1 heater on its tank temperature, and the ced-1 burners on the tank and oven
+temperatures. Each loop gives a node `<asset>:loop`, with the measured variable in and the controller
+output out. A text output (the compressor's state) becomes one output per category. A machine's own
+node takes its loop outputs as inputs. The air header is a node too (`compressor-1:air`): the
+compressor's state and the modelled users in, the transducer at the receiver and the gauges at the
+users out.
+
+Coverage rule: an input that is an output of the asset's own control loops does not count for
+coverage. When a fault drives a machine's own controller where it never went (compressor-1 loaded
+for hours under F6 or F7), that is a symptom. Before, the node said "don't know" there.
+
+Faults are scored per machine: a machine alarms when the first of its nodes alarms, and the root
+must be that machine.
 
 Each fault trial also reports the delay from the root's first activity: the first second after the
 onset at which a state command of the root (a phase, a state) changes. A fault in an idle press acts
