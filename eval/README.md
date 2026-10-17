@@ -135,7 +135,44 @@ every month. Run k of a split goes to the month `MONTHS[k % 12]`: 4 training day
 April, July and October, and 12 training days cover all 12 months. The seed still sets the start
 hour, the noise and the material flow. A run can be at most 24 h long, warm-up included.
 
-    python -m eval.nodes --hours 6 --train 4 --runs 8 --splits tuning,validation
+Training days (`fit_and_calibration`, since 2026-10-17): the training runs come in rounds of 12,
+one day per month. Every third round sets the residual spreads, and the other rounds are the days
+the models fit on. The default `--train 36` gives 24 fit days (2 per month) and 12 spread days
+(1 per month), so both cover the year. With fewer than 36 runs, the last quarter sets the spreads,
+and its months are then missing from the fit.
+
+    python -m eval.nodes --hours 6 --train 36 --runs 8 --splits tuning,validation
+
+Alarm rules (`--rule`, since 2026-10-17). The default is `cusumk` (LOG-115: it held on the
+validation split). The other rules stay as options. All work on the standardized residuals z (the
+residual divided by its spread for the PLC state):
+
+- `gate`: the rule of today's engine. A node alarms when at least 79 of the last 120
+  samples have |z| above 3.5 (the 35th percentile of the window above 3.5). The window forgets. A
+  machine that works in short cycles (a press bend of 8 s in about 41 s) never fills it.
+- `cusum`: a two-sided CUSUM on each output, S+ = max(0, S+ + z - 0.5) and S- = max(0, S- - z - 0.5).
+  The node alarms when a sum passes its limit h, and the alarm ends when the sums fall back to 0.
+  Samples outside the training range add nothing. Each node takes h from its calibration days: the
+  split-conformal quantile of the per-day maxima at alpha 0.1 (with 12 days, the largest), never below
+  the textbook 5. With 12 calibration days the limit can only hold a node to about one false alarm
+  day in 13.
+- `cusumk` (the default): CUSUM with a k per output from the slow bias of the calibration days: the
+  0.99 quantile of |mean z| over 30 min windows, never below 0.5. Then h as for `cusum`.
+- `both`: the gate or plain CUSUM (the combined Shewhart-CUSUM scheme).
+
+LOG-115 has the scores of the four rules on the days of campaign 8.
+
+The engine view (since 2026-10-17): `view()` saves each run once as the engine sees it, after the
+documents and the instruments, in `eval/cache/view/` (`VISR_VIEW_DIR` moves it). Text states are
+stored as integer codes with their names (`Text`). The main process of a campaign holds only the
+paths. Each node worker loads only its own tags, and a scored run only while it scores that run.
+The values are the ones `record()` gives, so a report does not change. The key holds a hash of the
+plant code, `wiring.py`, `instruments.py` and the encoding, so a change to any of them makes new
+views.
+
+Each fault trial also reports the delay from the root's first activity: the first second after the
+onset at which a state command of the root (a phase, a state) changes. A fault in an idle press acts
+only when the press moves.
 
 First job: false alarms per node in normal running. Fault trials follow when the magnitude rule of
 the fault registry (`plant/model/faults.py`) is decided.

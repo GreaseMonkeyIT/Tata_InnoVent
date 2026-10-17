@@ -10,8 +10,11 @@ and phase input per machine, written by hand). Here nothing is per machine:
   - One model size and one filter set for every node (twin/node_model.py defaults).
   - The residual spread is taken per command state when the node has a categorical command, else
     one spread per output: the same rule for all.
-  - Detection: today's engine gate on the residuals (|z| above 3.5 for the 35th percentile of the
-    last 120 s), as in eval/machines.py.
+  - Detection (--rule, default `cusumk` since LOG-115): a two-sided CUSUM on each residual, with a
+    k per output from the slow bias of the calibration days and a limit per node from the same days.
+    The options: `gate`, today's engine gate (the 35th percentile of |z| in the last 120 s above
+    3.5, so 79 of the 120 samples), as in eval/machines.py; `cusum` (k = 0.5); `both` (the gate or
+    `cusum`).
 
 Data: whole-plant runs with the site weather and the material flow (plant/verify_plant.py checks
 that plant). Training runs, tuning runs, validation runs and test runs use separate seed ranges
@@ -23,7 +26,7 @@ First job (this file, 2026-10-15): false alarms per node in normal running acros
 the tuning and the validation splits. Fault trials come when the fault magnitude rule is decided
 (ideas.md 16.2, faults.py).
 
-    python -m eval.nodes --hours 6 --train 4 --runs 8 --workers 4
+    python -m eval.nodes --hours 6 --train 36 --runs 8 --workers 4
 """
 import argparse
 import concurrent.futures as cf
@@ -53,6 +56,24 @@ from twin.node_model import NodeModel                     # noqa: E402
 from eval.metrics import wilson                           # noqa: E402
 
 K_DEV, Q_GATE, WIN_S = 3.5, 0.35, 120.0
+# The CUSUM rule (2026-10-17, --rule cusum). A two-sided CUSUM on each standardized residual. The
+# reference value k = 0.5 is the textbook value for a shift of one standard deviation (Montgomery,
+# Introduction to Statistical Quality Control). The textbook limits (h = 4 or 5) assume independent
+# samples, and residuals at 1 s are not independent. So each node takes its limit h from its own
+# calibration days: the split-conformal quantile of the per-day maxima at CUSUM_ALPHA (with 12 days,
+# the largest maximum), never below the textbook h = 5.
+CUSUM_K, CUSUM_ALPHA, CUSUM_H_MIN = 0.5, 0.1, 5.0
+# Two variants (2026-10-17), because the limits of plain CUSUM came out large (up to 30,707): on
+# normal days most residuals have a slow bias, which the sums collect for hours.
+#   cusumk: k per output from that bias. k = the CUSUM_BIAS_Q quantile of |mean z| over windows of
+#           CUSUM_BIAS_S on the calibration days, never below CUSUM_K. A shift smaller than the
+#           normal bias then cannot build up. The window (the slow thermal time constant of TAUS)
+#           and the quantile are project choices.
+#   both:   the gate or plain CUSUM, the combined Shewhart-CUSUM scheme (Lucas, 1982): the gate for
+#           a large sudden shift, CUSUM for a small slow one.
+CUSUM_BIAS_S, CUSUM_BIAS_Q = 1800.0, 0.99
+RULES = ("gate", "cusum", "cusumk", "both")
+DEFAULT_RULE = "cusumk"     # since 2026-10-17 (LOG-115): it held on the validation split
 # One filter set for every node: the node model's defaults (5 s to 30 min) and a 2 h constant for the
 # slow thermal states (an oil tank or a water tank behind a thermostat that cycles over about 30 min)
 TAUS = (5.0, 30.0, 120.0, 600.0, 1800.0, 7200.0)
@@ -96,6 +117,20 @@ def day_of_year(seed):
     k = seed - SEED_BASE[split]
     days = split_days(split, MONTHS[k % 12])
     return days[int((((k // 12) * 0.6180339887498949) % 1.0) * len(days))]
+
+
+def fit_and_calibration(train):
+    """Split the training runs [(seed, run)] into the days the models fit on and the days that set
+    the residual spreads. The training runs come in rounds of 12, one day per month (MONTHS). Every
+    third round is for the spreads: with 36 runs, 24 days fit (2 per month) and 12 days set the
+    spreads (1 per month), so both cover the year. With fewer than 3 rounds, the last quarter of
+    the runs sets the spreads, as before 2026-10-17 (those months are then missing from the fit)."""
+    rnd = {sd: (sd - SEED_BASE["train"]) // 12 for sd, _ in train}
+    calib = [x for x in train if rnd[x[0]] % 3 == 2]
+    if not calib:
+        n = max(1, len(train) // 4)
+        return train[:-n], train[-n:]
+    return [x for x in train if rnd[x[0]] % 3 != 2], calib
 
 
 INSTRUMENTS = os.environ.get("VISR_INSTRUMENTS", "1") != "0"   # read through virtual instruments
@@ -260,6 +295,130 @@ def _array(vals):
     return np.asarray(vals, dtype=object)
 
 
+# --------------------------------------------------------------------- the engine view --
+# The engine view of a run (2026-10-17): the tags of record(), after the documents and the
+# instruments, saved once per run in VIEW_DIR. A campaign then holds only the paths, and each node
+# worker loads only its own tags, one run at a time when it scores (a campaign of 372 runs held
+# 4.2 GB in the main process and a copy of every node's tags in each worker). The values are the
+# ones record() gives, so a report is the same.
+
+class Text:
+    """A text state column as integer codes: `codes[i]` indexes `names`, -1 for no value. 2 bytes
+    per sample instead of 4 per character. Node reads it through is_text, text_cats and text_eq."""
+    __slots__ = ("codes", "names")
+
+    def __init__(self, codes, names):
+        self.codes, self.names = np.asarray(codes, np.int16), tuple(names)
+
+    @classmethod
+    def encode(cls, vals):
+        vals = np.asarray(vals)
+        names = sorted({str(v) for v in vals.tolist() if isinstance(v, str)})
+        index = {n: i for i, n in enumerate(names)}
+        return cls([index.get(v, -1) if isinstance(v, str) else -1 for v in vals.tolist()], names)
+
+    def decode(self):
+        out = np.asarray([self.names[c] if c >= 0 else None for c in self.codes.tolist()], dtype=object)
+        return out.astype(str) if (self.codes >= 0).all() else out
+
+    def __len__(self):
+        return len(self.codes)
+
+    def __getitem__(self, k):
+        if isinstance(k, slice):
+            return Text(self.codes[k], self.names)
+        c = int(self.codes[k])
+        return self.names[c] if c >= 0 else None
+
+
+def is_text(v):
+    if isinstance(v, Text):
+        return True
+    return any(isinstance(x, str) for x in v[:2000])
+
+
+def text_cats(v):
+    """The text values that occur in a column."""
+    if isinstance(v, Text):
+        return {v.names[i] for i in np.unique(v.codes).tolist() if i >= 0}
+    return set(np.asarray(v).tolist())
+
+
+def text_eq(v, c):
+    """A boolean array: where the column has the value c."""
+    if isinstance(v, Text):
+        return v.codes == v.names.index(c) if c in v.names else np.zeros(len(v), bool)
+    return np.asarray(v) == c
+
+
+def _view_dir():
+    return os.environ.get("VISR_VIEW_DIR", os.path.join(CACHE_DIR, "view"))
+
+
+def view_version():
+    """A hash of what decides the engine view beyond the plant tags: the documents, the
+    instruments, the encoding and the instrument settings."""
+    import hashlib
+    import inspect
+    h = hashlib.sha256(plant_version().encode())
+    mdir = os.path.join(ROOT, "plant", "model")
+    for f in sorted(APPLIED_AT_LOAD):
+        with open(os.path.join(mdir, f), "rb") as fh:
+            h.update(fh.read())
+    for fn in (record, _array, Text.encode, save_view):
+        h.update(inspect.getsource(fn).encode())
+    h.update(repr((FACTORY_SEED, INSTRUMENTS)).encode())
+    return h.hexdigest()[:16]
+
+
+def save_view(path, key, w, rows, info):
+    arrs, kinds = {}, {}
+    for i, (t, v) in enumerate(rows.items()):
+        if v.dtype.kind in "USO":
+            tx = Text.encode(v)
+            arrs[f"a{i}"], kinds[t] = tx.codes, ("t", i, list(tx.names))
+        else:
+            arrs[f"a{i}"], kinds[t] = v, ("a", i)
+    meta = json.dumps({"key": key, "info": info, "wiring": w, "kinds": kinds})
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp.npz"
+    np.savez_compressed(tmp, meta=np.asarray(meta), **arrs)
+    os.replace(tmp, path)
+
+
+def _view_meta(path):
+    with np.load(path) as z:
+        return json.loads(str(z["meta"]))
+
+
+def view(seed, hours, fault=None):
+    """The engine view of a run on disk: (wiring, path, info). Made from record() once, then reused
+    while its key matches."""
+    import hashlib
+    key = repr((seed, float(hours), tuple(fault) if fault else None, view_version()))
+    path = os.path.join(_view_dir(), f"{seed}-{hashlib.sha256(key.encode()).hexdigest()[:20]}.npz")
+    if os.path.exists(path):
+        meta = _view_meta(path)
+        if meta["key"] == key:
+            return meta["wiring"], path, meta["info"]
+    w, rows, info = record(seed, hours, fault)
+    save_view(path, key, w, rows, info)
+    return w, path, info
+
+
+def load_view(path, tags=None):
+    """{tag: column} of a saved view, only `tags` when given. Numbers as float64 arrays, text
+    states as Text."""
+    with np.load(path) as z:
+        kinds = json.loads(str(z["meta"]))["kinds"]
+        out = {}
+        for t in (tags if tags is not None else kinds):
+            k = kinds[t]
+            a = z[f"a{k[1]}"]
+            out[t] = Text(a, k[2]) if k[0] == "t" else a
+    return out
+
+
 class RunsModel(NodeModel):
     """NodeModel over several runs: the filter bank restarts at each run (a run is a separate day)."""
     bounds = None
@@ -275,25 +434,25 @@ class RunsModel(NodeModel):
 
 
 class Node:
-    def __init__(self, name, doc):
-        self.name, self.doc = name, doc
+    def __init__(self, name, doc, rule=DEFAULT_RULE):
+        if rule not in RULES:
+            raise ValueError(f"unknown alarm rule {rule!r}")
+        self.name, self.doc, self.rule = name, doc, rule
+        self.h = None                   # the CUSUM limit, from the calibration days
+        self.k = None                   # the CUSUM reference value (per output for cusumk)
         self.cats = {}                  # categorical command -> sorted categories seen in training
         self.model = None
         self.sd = {}
         self.sd_all = None
         self.state_cmd = None
 
-    def _is_cat(self, values):
-        return any(isinstance(v, str) for v in values[:2000])
-
     def design(self, runs):
         """Input names from the documents: numeric feeds and commands as they are, categorical
         commands one-hot over the categories of the training runs."""
         self.num_in = []
         for t in self.doc["feeds"] + self.doc["commands"]:
-            vals = [v for _, r in runs for v in r[t][:2000]]
-            if self._is_cat(vals):
-                cats = sorted({v for _, r in runs for v in r[t]})
+            if any(is_text(r[t]) for _, r in runs):
+                cats = sorted(set().union(*(text_cats(r[t]) for _, r in runs)))
                 self.cats[t] = cats
                 if self.state_cmd is None:
                     self.state_cmd = t
@@ -305,9 +464,8 @@ class Node:
     def matrices(self, r):
         cols = [np.asarray(r[t], float) for t in self.num_in]
         for t, cs in self.cats.items():
-            v = np.asarray(r[t])
             for c in cs:
-                cols.append((v == c).astype(float))
+                cols.append(text_eq(r[t], c).astype(float))
         U = np.column_stack(cols) if cols else np.zeros((len(r[self.doc["measures"][0]]), 0))
         Y = np.column_stack([np.asarray(r[t], float) for t in self.doc["measures"]])
         return U, Y
@@ -315,10 +473,10 @@ class Node:
     def bins(self, r):
         if self.state_cmd is None:
             return np.zeros(len(r[self.doc["measures"][0]]), int)
-        v = np.asarray(r[self.state_cmd])
+        v = r[self.state_cmd]
         out = np.full(len(v), -1)
         for i, c in enumerate(self.cats[self.state_cmd]):
-            out[v == c] = i
+            out[text_eq(v, c)] = i
         return out
 
     def train(self, runs, calib):
@@ -352,17 +510,31 @@ class Node:
         self.r2 = [float(1.0 - res[:, j].var() / max(ys[:, j].var(), 1e-12)) for j in range(ys.shape[1])]
         if not np.all(np.isfinite(self.sd_all)):
             raise ValueError(f"{self.name}: no finite residual spread from the calibration days")
+        if self.rule != "gate":
+            # k and the limit from the same calibration days, with the spreads just set
+            zs = [self.z(r) for _, r in calib]
+            self.k = slow_bias_k(zs) if self.rule == "cusumk" else CUSUM_K
+            self.h = cusum_limit([cusum(z, cv, self.k).max(initial=0.0) for z, cv in zs])
         return self
 
-    def alarms(self, r, with_cover=False):
-        """Gate alarms per sample. Outside the training range (with a 10 % margin) the node does not
-        know: no alarm there; `with_cover` also returns the covered mask."""
+    def z(self, r):
+        """The standardized residuals of a run (T x outputs) and the covered mask (T)."""
         U, Y = self.matrices(r)
         res, cov = self.model.residuals_covered(U, Y, SAMPLE_S)
         b = self.bins(r)
         sd = np.stack([self.sd.get(int(g), self.sd_all) for g in b])
-        z = res / sd
-        out = gate(np.abs(z))
+        return res / sd, cov
+
+    def alarms(self, r, with_cover=False):
+        """Alarms per sample, by the node's rule. Outside the training range (with a 10 % margin) the
+        node does not know: no alarm there; `with_cover` also returns the covered mask."""
+        z, cov = self.z(r)
+        if self.rule == "gate":
+            out = gate(np.abs(z))
+        else:
+            out = cusum_alarm(cusum(z, cov, self.k), self.h)
+            if self.rule == "both":
+                out |= gate(np.abs(z))
         out &= cov
         return (out, cov) if with_cover else out
 
@@ -384,6 +556,76 @@ def gate(a, w=None):
     return out
 
 
+def cusum(z, cov, k=CUSUM_K):
+    """The largest two-sided CUSUM statistic over the outputs, per sample (T). For each output:
+    S+ = max(0, S+ + z - k) and S- = max(0, S- - z - k), from 0 at the start of the run. A sample
+    outside the training range, or with no finite residual, adds nothing: the sums hold. Computed as
+    the cumulative sum less its running minimum (the Lindley form of the same recursion)."""
+    cov = np.asarray(cov, bool)
+    z = np.asarray(z, float).reshape(len(cov), -1)
+    if z.shape[1] == 0:
+        return np.zeros(len(cov))
+    ok = cov[:, None] & np.isfinite(z)
+    x = np.concatenate([np.where(ok, z - k, 0.0), np.where(ok, -z - k, 0.0)], axis=1)
+    c = np.cumsum(x, axis=0)
+    s = c - np.minimum.accumulate(np.minimum(c, 0.0), axis=0)
+    return s.max(axis=1)
+
+
+def slow_bias_k(zs, window_s=CUSUM_BIAS_S, q=CUSUM_BIAS_Q, k_min=CUSUM_K):
+    """k per output from the slow bias of the calibration days: the q quantile of |mean z| over
+    windows of window_s (sliding, one per sample, the covered and finite samples only, a window
+    counts when at least half of it is), never below k_min. zs: [(z T x n, covered T)]."""
+    w = int(window_s / SAMPLE_S)
+    means = []
+    for z, cov in zs:
+        z = np.asarray(z, float).reshape(len(cov), -1)
+        ok = np.asarray(cov, bool)[:, None] & np.isfinite(z)
+        if len(z) < w:
+            continue
+        s = np.cumsum(np.vstack([np.zeros((1, z.shape[1])), np.where(ok, z, 0.0)]), axis=0)
+        c = np.cumsum(np.vstack([np.zeros((1, z.shape[1])), ok.astype(float)]), axis=0)
+        ws, wc = s[w:] - s[:-w], c[w:] - c[:-w]
+        m = np.where(wc >= w / 2, np.abs(ws) / np.maximum(wc, 1.0), np.nan)
+        means.append(m)
+    if not means:
+        return k_min
+    m = np.vstack(means)
+    k = np.array([np.nanquantile(m[:, j], q) if np.isfinite(m[:, j]).any() else k_min for j in range(m.shape[1])])
+    return np.maximum(k, k_min)
+
+
+def cusum_alarm(s, h):
+    """The alarm per sample: on when the statistic passes h, off again when it falls back to 0."""
+    idx = np.arange(len(s))
+    last_on = np.maximum.accumulate(np.where(s > h, idx, -1)) if len(s) else idx
+    last_off = np.maximum.accumulate(np.where(s <= 0.0, idx, -1)) if len(s) else idx
+    return last_on > last_off
+
+
+def cusum_limit(day_maxima, alpha=CUSUM_ALPHA, h_min=CUSUM_H_MIN):
+    """The split-conformal limit: the ceil((n + 1)(1 - alpha))-th smallest of the n calibration-day
+    maxima (the largest when that index passes n), never below h_min."""
+    m = sorted(float(v) for v in day_maxima)
+    if not m:
+        return h_min
+    i = min(len(m), int(np.ceil((len(m) + 1) * (1.0 - alpha))))
+    return max(h_min, m[i - 1])
+
+
+def first_activity(rows, doc, start):
+    """The first sample at or after `start` at which one of the node's state commands (a text tag
+    from the documents, such as a phase) differs from its value at `start`: when the machine next
+    changes what it does. `start` if the node has no state command or never changes."""
+    for t in doc["commands"]:
+        v = rows[t]
+        if is_text(v) and start < len(v):
+            c = v.codes if isinstance(v, Text) else np.asarray(v)
+            idx = np.flatnonzero(c[start:] != c[start])
+            return start + int(idx[0]) if len(idx) else start
+    return start
+
+
 def episodes(alarm):
     n, prev = 0, False
     for a in alarm:
@@ -398,14 +640,19 @@ def first_alarm(alarm, start):
     return int(idx[0]) + start if len(idx) else None
 
 
-def node_job(name, doc, fit, calib, scored):
+def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE):
     """One node in a worker process: train it, then its alarms and coverage on every scored run
-    ({key: run} -> {key: (alarm, covered)}), and what the report needs of the model."""
+    ({key: view path} -> {key: (alarm, covered)}), and what the report needs of the model. fit and
+    calib: [(seed, view path)]. The node loads only its own tags, and a scored run only while it
+    scores that run."""
     t1 = time.time()
-    nd = Node(name, doc).train(fit, calib)
+    tags = doc["feeds"] + doc["commands"] + doc["measures"]
+    nd = Node(name, doc, rule).train([(sd, load_view(p, tags)) for sd, p in fit],
+                                     [(sd, load_view(p, tags)) for sd, p in calib])
     return {"inputs": nd.model.inputs, "outputs": nd.model.outputs, "weights": nd.model.n_weights(),
-            "r2": nd.r2, "calib_covered": nd.calib_covered,
-            "alarms": {k: nd.alarms(r, with_cover=True) for k, r in scored.items()},
+            "r2": nd.r2, "calib_covered": nd.calib_covered, "h": nd.h,
+            "k": None if nd.k is None else np.atleast_1d(nd.k).astype(float).tolist(),
+            "alarms": {k: nd.alarms(load_view(p, tags), with_cover=True) for k, p in scored.items()},
             "wall_s": time.time() - t1}
 
 
@@ -423,6 +670,10 @@ def score_fault(al, info):
         return rec
     rec["detected"] = root in hit
     rec["delay_s"] = (hit[root] - io) * SAMPLE_S if root in hit else None
+    # from the first time the root machine changed what it does after the onset (a fault in a press
+    # that stands idle does not act until the press moves); negative: it alarmed before that
+    ia = int(info.get("active_s", info["onset_s"]) / SAMPLE_S)
+    rec["delay_active_s"] = (hit[root] - ia) * SAMPLE_S if root in hit else None
     t0 = min(hit.values()) if hit else None
     rec["first"] = sorted(n for n, i in hit.items() if i == t0) if hit else []
     rec["top1"] = rec["first"] == [root]
@@ -432,12 +683,16 @@ def score_fault(al, info):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hours", type=float, default=6.0)
-    ap.add_argument("--train", type=int, default=4, help="training runs (days)")
+    ap.add_argument("--train", type=int, default=36,
+                    help="training runs (days); 36 = 24 to fit (2 per month) and 12 for the spreads (1 per month)")
     ap.add_argument("--runs", type=int, default=8, help="normal runs per scored split")
     ap.add_argument("--faults", default="", help="fault ids, for example F1,F2,F6 (registry, faults.py)")
     ap.add_argument("--fault-runs", type=int, default=10, help="runs per fault per split")
     ap.add_argument("--splits", default="tuning,validation")
     ap.add_argument("--freeze", action="store_true")
+    ap.add_argument("--rule", choices=RULES, default=DEFAULT_RULE,
+                    help="the alarm rule on the residuals: gate (the 120 s window), cusum, cusumk (k per "
+                         "output from the calibration bias, the default) or both (the gate or cusum)")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--out", default=os.path.join(ROOT, "eval", "results"))
     a = ap.parse_args(argv)
@@ -460,39 +715,36 @@ def main(argv=None):
     data = {}
     w = None
     with cf.ProcessPoolExecutor(max_workers=a.workers) as ex:
-        futs = {ex.submit(record, sd, a.hours, fl): (sp, sd, fl) for sp, sd, fl in jobs}
+        futs = {ex.submit(view, sd, a.hours, fl): (sp, sd, fl) for sp, sd, fl in jobs}
         for f in cf.as_completed(futs):
             sp, sd, fl = futs[f]
-            w, rows, info = f.result()
-            data.setdefault((sp, "fault" if fl else "normal"), []).append((sd, rows, info))
+            w, path, info = f.result()
+            data.setdefault((sp, "fault" if fl else "normal"), []).append((sd, path, info))
             label = fl[0] if fl else "normal"
             print(f"run {sp} {sd} {label} done ({time.time() - t0:.0f} s)", flush=True)
     for k in data:
         data[k].sort(key=lambda x: x[0])
-    train = [(sd, r) for sd, r, _ in data[("train", "normal")]]
-    n_cal = max(1, len(train) // 4)            # a quarter of the training days, held out for the spreads
-    fit, calib = train[:-n_cal], train[-n_cal:]
-    scored = {(sp, kind, sd): r for (sp, kind), runs in data.items() if sp != "train" for sd, r, _ in runs}
+    train = [(sd, p) for sd, p, _ in data[("train", "normal")]]
+    fit, calib = fit_and_calibration(train)
+    scored = {(sp, kind, sd): p for (sp, kind), runs in data.items() if sp != "train" for sd, p, _ in runs}
     # every node trains and scores in its own process, on its own tags only (the nodes are independent:
-    # the same computation as one after another, so the same report)
+    # the same computation as one after another, so the same report); the workers read the views
     fitted = {}
     with cf.ProcessPoolExecutor(max_workers=min(a.workers, len(w))) as ex:
         futs = {}
         for name, doc in w.items():
-            tags = doc["feeds"] + doc["commands"] + doc["measures"]
-            sub = lambda runs: [(sd, {t: r[t] for t in tags}) for sd, r in runs]      # noqa: E731
-            futs[ex.submit(node_job, name, doc, sub(fit), sub(calib),
-                           {k: {t: r[t] for t in tags} for k, r in scored.items()})] = name
+            futs[ex.submit(node_job, name, doc, fit, calib, scored, a.rule)] = name
         for f in cf.as_completed(futs):
             fitted[futs[f]] = f.result()
             print(f"trained and scored {futs[f]}: {fitted[futs[f]]['weights']} weights, "
                   f"{fitted[futs[f]]['wall_s']:.0f} s", flush=True)
     report = {"meta": {"hours": a.hours, "train_seeds": [sd for sd, _ in train], "splits": splits, "faults": fids,
+                       "rule": a.rule, "calib_seeds": [sd for sd, _ in calib],
                        "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")},
               "nodes": {}, "faults": {}}
     for name in w:
         fn = fitted[name]
-        row = {k: fn[k] for k in ("inputs", "outputs", "weights", "r2", "calib_covered")}
+        row = {k: fn[k] for k in ("inputs", "outputs", "weights", "r2", "calib_covered", "h", "k")}
         for sp in splits:
             eps, covs = [], []
             for sd, _, _ in data.get((sp, "normal"), []):
@@ -506,8 +758,13 @@ def main(argv=None):
                        "covered": float(np.mean(covs)) if covs else None}
         report["nodes"][name] = row
     for sp in splits:
-        for sd, _, info in data.get((sp, "fault"), []):
+        for sd, path, info in data.get((sp, "fault"), []):
             al = {name: fitted[name]["alarms"][(sp, "fault", sd)][0] for name in w}
+            if info.get("root"):
+                io = int(info["onset_s"] / SAMPLE_S)
+                doc = w[info["root"]]
+                rows = load_view(path, doc["commands"])
+                info = dict(info, active_s=first_activity(rows, doc, io) * SAMPLE_S)
             report["faults"].setdefault(sp, []).append(score_fault(al, info))
     report["meta"]["wall_s"] = round(time.time() - t0)
     md = report_md(report, a)
@@ -526,7 +783,7 @@ def report_md(report, a):
     splits = m["splits"]
     L = [f"# Node score ({m['date']})", "",
          f"One method for every node (eval/nodes.py). Training: {len(m['train_seeds'])} runs of {a.hours} h. "
-         f"Scored splits: {', '.join(splits)}, other days of the year.", "",
+         f"Scored splits: {', '.join(splits)}, other days of the year. Alarm rule: {m.get('rule', 'gate')}.", "",
          "## Normal running (every alarm is false)", "",
          "| Node | Inputs | Weights | R2 held-out (per output) | " + " | ".join(f"{s}: runs with an alarm (95 % CI), per hour, time covered" for s in splits) + " |",
          "|---|---|---|---|" + "---|" * len(splits)]
@@ -542,8 +799,9 @@ def report_md(report, a):
         L.append(f"| {name} | {len(row['inputs'])} | {row['weights']} | {r2} | " + " | ".join(cells) + " |")
     if report["faults"]:
         L += ["", "## Faults (severity uniform in 0.05 to 1 of the range rule, fault_ranges.py)", "",
-              "| Split | Fault | Root | Detected on the root (95 % CI) | Root alarmed first | Delay median (s) | Nodes alarmed, median | Alarms before onset |",
-              "|---|---|---|---|---|---|---|---|"]
+              "| Split | Fault | Root | Detected on the root (95 % CI) | Root alarmed first | Delay median (s) "
+              "| From the root's first activity, median (s) | Nodes alarmed, median | Alarms before onset |",
+              "|---|---|---|---|---|---|---|---|---|"]
         for sp in splits:
             recs = report["faults"].get(sp, [])
             for fid in sorted({r["fid"] for r in recs}, key=lambda x: int(x[1:])):
@@ -555,15 +813,17 @@ def report_md(report, a):
                     k = sum(1 for r in rs if r["false_nodes"])
                     lo, hi = wilson(k, n)
                     L.append(f"| {sp} | {fid} (control) | none | false alarms in {k} / {n} runs "
-                             f"({100 * lo:.0f} to {100 * hi:.0f} %) | - | - | {nal} | {pre} |")
+                             f"({100 * lo:.0f} to {100 * hi:.0f} %) | - | - | - | {nal} | {pre} |")
                     continue
                 k = sum(r["detected"] for r in rs)
                 t1 = sum(r["top1"] for r in rs)
                 lo, hi = wilson(k, n)
                 d = sorted(r["delay_s"] for r in rs if r["detected"])
                 dm = f"{d[len(d) // 2]:.0f}" if d else "-"
+                da = sorted(r["delay_active_s"] for r in rs if r["detected"] and r.get("delay_active_s") is not None)
+                dam = f"{da[len(da) // 2]:.0f}" if da else "-"
                 L.append(f"| {sp} | {fid} | {rs[0]['root']} | {k} / {n} ({100 * lo:.0f} to {100 * hi:.0f} %) | "
-                         f"{t1} / {n} | {dm} | {nal} | {pre} |")
+                         f"{t1} / {n} | {dm} | {dam} | {nal} | {pre} |")
     return "\n".join(L) + "\n"
 
 

@@ -91,6 +91,24 @@ def test_training_days_cover_the_months():
     assert twelve == set(range(1, 13))
 
 
+def test_fit_and_calibration_days_each_cover_the_year():
+    """36 training days: 24 fit days, 2 in every month, and 12 calibration days, 1 in every month,
+    all on different days. Fewer than 3 rounds: the last quarter calibrates, as before."""
+    import collections
+    import datetime
+
+    def month(d):
+        return (datetime.date(2025, 1, 1) + datetime.timedelta(days=d)).month
+    train = [(N.SEED_BASE["train"] + i, None) for i in range(36)]
+    fit, calib = N.fit_and_calibration(train)
+    fm = collections.Counter(month(N.day_of_year(sd)) for sd, _ in fit)
+    cm = collections.Counter(month(N.day_of_year(sd)) for sd, _ in calib)
+    assert fm == {m: 2 for m in range(1, 13)} and cm == {m: 1 for m in range(1, 13)}
+    assert len({N.day_of_year(sd) for sd, _ in train}) == 36
+    fit12, cal12 = N.fit_and_calibration(train[:12])
+    assert [sd for sd, _ in cal12] == [sd for sd, _ in train[9:12]]
+
+
 def test_plant_starts_on_the_day_of_its_split():
     """The plant of a run reads the weather of its split's day, not the seed's hashed day."""
     from model import weather as WX
@@ -99,6 +117,124 @@ def test_plant_starts_on_the_day_of_its_split():
     sd = N.SEED_BASE["validation"] + 3
     p = N.new_plant(sd)
     assert p.wx.h0 == N.day_of_year(sd) * 24.0 + (sd * 7.37) % 24.0
+
+
+def _cusum_loop(z, cov, k):
+    """The CUSUM recursion, one sample at a time (the reference for the vectorized form)."""
+    up, dn, out = np.zeros(z.shape[1]), np.zeros(z.shape[1]), []
+    for t in range(len(z)):
+        for j in range(z.shape[1]):
+            if cov[t] and np.isfinite(z[t, j]):
+                up[j] = max(0.0, up[j] + z[t, j] - k)
+                dn[j] = max(0.0, dn[j] - z[t, j] - k)
+        out.append(max(up.max(), dn.max()))
+    return np.array(out)
+
+
+def test_cusum_equals_the_recursion():
+    """The cumulative-sum form equals the recursion, with samples outside the training range and
+    NaN residuals holding the sums."""
+    rng = np.random.default_rng(3)
+    z = rng.normal(0.0, 1.0, (2000, 3)) + np.where(np.arange(2000) > 1200, 1.5, 0.0)[:, None] * [1, 0, -1]
+    z[rng.random(z.shape) < 0.01] = np.nan
+    cov = rng.random(2000) > 0.1
+    assert np.allclose(N.cusum(z, cov, 0.5), _cusum_loop(z, cov, 0.5), atol=1e-9)
+    assert N.cusum(np.zeros((5, 0)), np.ones(5, bool)).tolist() == [0.0] * 5
+
+
+def test_cusum_alarm_holds_until_the_sum_is_back_at_zero():
+    s = np.array([0.0, 2.0, 6.0, 4.0, 1.0, 0.0, 3.0, 7.0])
+    assert N.cusum_alarm(s, 5.0).tolist() == [False, False, True, True, True, False, False, True]
+
+
+def test_cusum_carries_evidence_across_idle_seconds():
+    """A press that bends 8 s in every 41 s: the window gate never sees 79 of 120 s high, and the
+    CUSUM passes its limit within two cycles."""
+    z = np.zeros((600, 1))
+    for c in range(0, 600, 41):
+        z[c:c + 8] = 10.0
+    cov = np.ones(600, bool)
+    assert not N.gate(np.abs(z)).any()
+    first = int(np.flatnonzero(N.cusum_alarm(N.cusum(z, cov), 50.0))[0])
+    assert first < 41 + 8
+
+
+def test_cusum_with_a_k_per_output_equals_the_recursion():
+    rng = np.random.default_rng(5)
+    z = rng.normal(0.0, 1.0, (1500, 2))
+    cov = np.ones(1500, bool)
+    k = np.array([0.5, 2.0])
+    up, dn, ref = np.zeros(2), np.zeros(2), []
+    for t in range(1500):
+        up = np.maximum(0.0, up + z[t] - k)
+        dn = np.maximum(0.0, dn - z[t] - k)
+        ref.append(max(up.max(), dn.max()))
+    assert np.allclose(N.cusum(z, cov, k), ref, atol=1e-9)
+
+
+def test_slow_bias_k():
+    """An output with a slow bias of 2 gets k near 2, one with no bias keeps the textbook 0.5."""
+    rng = np.random.default_rng(6)
+    t = np.arange(7200)
+    z = np.column_stack([rng.normal(0.0, 1.0, 7200), rng.normal(0.0, 1.0, 7200) + 2.0 * np.sin(t / 7200 * np.pi)])
+    k = N.slow_bias_k([(z, np.ones(7200, bool))])
+    assert k[0] == 0.5 and 1.8 < k[1] < 2.1
+    assert N.slow_bias_k([(z[:100], np.ones(100, bool))]) == 0.5        # too short: the textbook k
+
+
+def test_cusum_limit_is_the_conformal_quantile():
+    m = list(range(1, 13))                                           # 12 calibration days
+    assert N.cusum_limit(m, 0.1, 0.0) == 12.0                         # ceil(13 x 0.9) = 12: the largest
+    assert N.cusum_limit(list(range(1, 41)), 0.1, 0.0) == 37.0        # ceil(41 x 0.9) = 37
+    assert N.cusum_limit([0.5, 1.0], 0.1, 5.0) == 5.0                 # never below the textbook h
+    assert N.cusum_limit([], 0.1, 5.0) == 5.0
+
+
+def test_first_activity_of_the_root():
+    doc = {"feeds": [], "commands": ["p.phase", "p.valve"], "measures": ["p.x"]}
+    rows = {"p.phase": np.asarray(["idle"] * 5 + ["bend"] * 3), "p.valve": np.zeros(8)}
+    assert N.first_activity(rows, doc, 2) == 5
+    assert N.first_activity(rows, {"feeds": [], "commands": ["p.valve"], "measures": []}, 2) == 2
+
+
+def test_saved_view_equals_record(tmp_path, monkeypatch):
+    """The engine view on disk gives back what record() gives: the same numbers bit for bit, the
+    same text states (as codes), the same documents and labels. A second call reuses the file."""
+    monkeypatch.setattr(N, "CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(N, "WARMUP_S", 120.0)
+    monkeypatch.setattr(N, "_VERSION", [])
+    fault = ("F1", 0.5, 60.0)
+    w0, rows0, info0 = N.record(40001, 0.05, fault)
+    w1, path, info1 = N.view(40001, 0.05, fault)
+    w2, path2, info2 = N.view(40001, 0.05, fault)
+    assert path == path2 and w0 == w1 == w2 and info0 == info1 == info2
+    back = N.load_view(path)
+    assert set(back) == set(rows0)
+    texts = 0
+    for t, v in rows0.items():
+        if v.dtype.kind in "US":
+            texts += 1
+            assert isinstance(back[t], N.Text) and back[t].decode().tolist() == v.tolist()
+        else:
+            assert back[t].dtype == v.dtype and np.array_equal(back[t], v, equal_nan=True)
+    assert texts > 0
+    some = N.load_view(path, ["press-1.phase", "press-1.oil_c"])
+    assert list(some) == ["press-1.phase", "press-1.oil_c"]
+
+
+def test_node_reads_text_codes_as_text():
+    """Node.design, matrices and bins give the same numbers from Text codes as from text arrays."""
+    doc = {"feeds": ["f.v"], "commands": ["m.state"], "measures": ["m.x"]}
+    txt = {"f.v": np.array([1.0, 2.0, 3.0, 4.0]), "m.state": np.array(["run", "idle", "run", "off"]),
+           "m.x": np.array([0.5, 0.6, 0.7, 0.8])}
+    cod = dict(txt, **{"m.state": N.Text.encode(txt["m.state"])})
+    a, b = N.Node("m", doc), N.Node("m", doc)
+    a.design([(0, txt)])
+    b.design([(0, cod)])
+    assert a.cats == b.cats and a.num_in == b.num_in
+    assert np.array_equal(a.matrices(txt)[0], b.matrices(cod)[0])
+    assert a.bins(txt).tolist() == b.bins(cod).tolist()
+    assert cod["m.state"][:2].names == ("idle", "off", "run") and cod["m.state"][1] == "idle"
 
 
 def test_node_matrices_from_arrays_equal_lists():

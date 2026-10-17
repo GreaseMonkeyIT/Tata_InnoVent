@@ -2674,3 +2674,48 @@ Then the model stays loaded and no caller waits for a reload.
   - Tests: `eval/tests/test_nodes.py`, 3 new: no day or block in two splits for the seeds of a campaign of the size of campaign 6, the training days cover the months, the plant starts on its split's day. plant, twin and eval: 237 pass.
   - Campaign 7 (forge, the settings of campaign 6 on the new days, `eval/results/20261016T120837Z-nodes`, 2,806 s): machine faults detected, tuning 44 / 130 (campaign 6: 59), validation 44 / 130 (56); the root first, tuning 24 (44), validation 30 (46). False alarm episodes in normal runs, tuning 133 (105), validation 120 (81). F3 tuning 1 / 10 (0). F4, F9 and F11 still 0. hot-1 better (8 / 8 runs with an alarm -> 2 / 8 and 4 / 8). Worse: weld-2 (0 / 8 -> 8 / 8 in both splits), tr-1 (2 / 8 -> 5 / 8 in both), tr-2 (R² 0.57 -> -1.72), washer-1 (R² -1.12 -> -5.94).
   - Cause found: the day rule and the calibration split do not fit together. The fit days are the first 9 training days (January, July, April, October, February, August, May, November, March). The calibration days are the last 3 (September, June, December), months that the fit days do not have. So the share of calibration time inside the training range fell, for example cool-1 62 % -> 9 % and compressor-1 93 % -> 62 %, and the spreads come from days the models do not know. Campaign 7 thus mixes two effects: the honest loss of the shared days, and this flaw. It does not tell them apart. Fix proposed to the operator: fit and calibration days that each cover the year, not "the last quarter of the training days".
+  - 2026-10-17, the fix (operator's go): `fit_and_calibration` in `eval/nodes.py`. The training runs come in rounds of 12 (one day per month), and every third round sets the spreads. `--train 36` (the new default) gives 24 fit days (2 per month) and 12 spread days (1 per month). With fewer than 3 rounds, the last quarter sets the spreads, as before. Test: `test_fit_and_calibration_days_each_cover_the_year`. plant, twin and eval: 238 pass. Docs: `eval/README.md`.
+  - Campaign 8 (forge, the settings of campaign 7 with `--train 36`, `eval/results/20261017T141424Z-nodes`, 408 s, most days from the cache). This is the baseline on separate days. Campaign 6 / 7 / 8:
+    - Machine faults detected: tuning 59 / 44 / 48, validation 56 / 44 / 49 (of 130). The root first: tuning 44 / 24 / 40, validation 46 / 30 / 41.
+    - False alarm episodes in normal runs (16 runs of 6 h per split): tuning 105 / 133 / 14, validation 81 / 120 / 62. Alarms before the onset in fault runs, mean per run: 7.0 / 8.0 / 3.4.
+    - Calibration time inside the training range: cool-1 62 / 9 / 89 %, tr-1 59 / 41 / 88 %, tr-2 66 / 51 / 89 %. R² tr-2 0.57 / -1.72 / 0.97, washer-1 tank -1.12 / -5.94 / 0.97, cool-1 basin 0.69 / 0.85 / 1.00.
+    - The weld-2 alarms of campaign 7 are gone (0 / 8). The cause was the calibration months.
+    - Still weak: F3, F4, F9 and F11 are never found. F6 is found in 0 / 10 tuning and 1 / 10 validation runs (campaign 6: 7 and 4). The controls F14 to F16 still give false alarms in 5 to 10 of 10 runs. New: blast-1 alarms in 4 / 8 normal runs per split (its filter and air outputs now fit, R² 0.74). Validation has 4 x the false episodes of tuning.
+
+**LOG-115 · 2026-10-17 · A CUSUM alarm rule next to the gate, and an engine view on disk.**
+
+**Why:** the gate needs 79 of the last 120 samples with |z| above 3.5 (the 35th percentile of the window above 3.5). A machine that works in short cycles never fills that window: a press-1 bend cycle gives at most 39 active seconds in any 120 s. In the F1 day of tuning seed 41000, press-1 stood idle for 1,001 s after the onset and alarmed 158 s after its first bend. Also, a campaign of 372 runs held 4.2 GB in the main process and a copy of every node's tags in each worker: 12.1 GB of RAM and 9.7 GB of swap in use on forge.
+
+**What changed (`eval/nodes.py`):**
+  - `--rule gate|cusum` (default gate). `cusum`: a two-sided CUSUM on each standardized residual, k = 0.5 (the textbook value for a 1 sigma shift, Montgomery). The node alarms when a sum passes h, and the alarm ends when the sums are back at 0. Samples outside the training range add nothing. h per node from its calibration days: the split-conformal quantile of the per-day maxima at alpha 0.1 (with 12 days, the largest), never below 5. One rule for every node.
+  - Each fault trial also gives `delay_active_s`: the delay from the first change of the root's state command (phase, state) after the onset.
+  - The engine view: `view()` saves each run after the documents and the instruments in `eval/cache/view/` (gitignored, under the cache in both `.stignore` files), text states as int16 codes (`Text`). The main process holds only paths. Each node worker loads only its own tags, and a scored run only while it scores it. The key hashes the plant code, `wiring.py`, `instruments.py` and the encoding.
+  - Tests: 7 new in `eval/tests/test_nodes.py` (CUSUM = the recursion, alarm hysteresis, evidence across idle seconds, the conformal limit, first activity, the view = record(), Text codes in Node). plant, twin and eval: 245 pass.
+  - Docs: `eval/README.md` (alarm rules, engine view), the `eval/nodes.py` docstring.
+
+**Results (forge, the cached days of campaign 8, 36 training days):**
+  - The gate after the CUSUM change: the campaign 8 report, identical (`20261017T143350Z-nodes`).
+  - The engine view: two gate runs, the first writing the views and the second reading them, both strictly identical to that report (`20261017T145124Z`, `20261017T145355Z`). Peak RSS of the main process 358 MB (4.2 GB before), of all processes 9.0 GB (12.1 GB and 9.7 GB of swap measured during the CUSUM run before). Most of the rest is each worker's training matrices. Wall time 253 s writing the views, 151 s reading them (campaign 8: 408 s). The views take 466 MB for 372 runs.
+  - CUSUM against the gate (`20261017T143800Z-nodes`), tuning / validation:
+    - Machine faults detected: 73 / 70 (gate 48 / 49). The root first: 38 / 32 (gate 40 / 41).
+    - False alarm episodes in normal runs: 4 / 13 (gate 14 / 62). Alarms before the onset, mean per fault run: 0.7 (gate 3.4).
+    - Now found: F3 10 / 10 in both splits, F6 9 / 10 and 10 / 10, F9 8 / 10 and 6 / 10. Lost: F2 (1 and 3 -> 0), F5 (2 and 1 -> 0).
+    - Slower on strong faults, validation median from the root's first activity: F1 739 s (gate 176 s), F7 703 s (296 s), F13 374 s (gate alarmed 148 s before activity). Faster: F8 50 s (99 s), F12 14 s (78 s).
+    - The limits h are large: 11 (gas-1) to 30,707 (tr-1). So on normal days the residuals of most nodes have a slow bias that the sums collect for hours. A large h makes strong faults wait.
+    - The controls F14 to F16 still give false alarms in 6 to 8 of 10 runs.
+  - Not decided: which rule the engine keeps. Options: a k per node from the size of its calibration bias (one rule), or the gate and CUSUM together (the gate for strong faults, CUSUM for slow ones).
+  - 2026-10-17, two variants against the large limits (operator: "test both"). `cusumk`: k per output = the 0.99 quantile of |mean z| over 30 min windows of the calibration days, never below 0.5 (the window and the quantile are project choices). `both`: the gate or plain CUSUM (the combined Shewhart-CUSUM scheme, Lucas 1982). Tests: 2 new, 247 pass. Plain CUSUM gives the same report as before on the small check campaign.
+  - Four rules on the views of campaign 8 (forge; `cusumk` `20261017T150648Z-nodes`, `both` `20261017T150925Z-nodes`), tuning / validation:
+
+    | Measure | gate | cusum | cusumk | both |
+    |---|---|---|---|---|
+    | Machine faults detected (of 130) | 48 / 49 | 73 / 70 | 73 / 70 | 76 / 75 |
+    | The root first | 40 / 41 | 38 / 32 | 56 / 41 | 35 / 33 |
+    | False alarm episodes, normal runs | 14 / 62 | 4 / 13 | 2 / 10 | 17 / 71 |
+    | Control runs with a false alarm (of 30) | 22 / 23 | 21 / 22 | 14 / 14 | 27 / 28 |
+    | Alarms before the onset, per fault run | 3.4 / 3.4 | 0.7 / 0.8 | 0.7 / 0.7 | 3.2 / 3.4 |
+
+  - `cusumk` holds on validation: more faults (70 against 49), fewer false alarms (10 against 62), the root first as often as the gate (41). Per fault (both splits, 20 runs): F7 found 17, root first 11, 308 s from activity (gate 17, 15, 304 s). F13 root first 16 (plain CUSUM 10). F1 is still slow: 678 s from activity (gate 146 s). F2 and F5 are still lost (the gate finds F2 4 / 20, F5 3 / 20). F4 and F11: never found by any rule.
+  - The `cusumk` limits are still large, 11 (gas-1) to 7,906 (washer-1): k takes the bias, but not all of the slow normal error. `both` finds the most faults but has the most false alarms and names the root first least often.
+  - Memory of these runs: peak RSS 9.0 GB in all, main process 373 MB.
+  - The default rule is now `cusumk` (operator, 2026-10-17: `DEFAULT_RULE` in `eval/nodes.py`). `gate`, `cusum` and `both` stay as options (`--rule`). The scores of the earlier campaigns (6 to 8) are with the gate. Docs: `eval/README.md`, the `eval/nodes.py` docstring.
