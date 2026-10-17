@@ -204,9 +204,41 @@ class EotCrane(_Load):
         self._cycle = -1
         self.lifts = 0
         self.hoist_drag = 0.0         # fault: hoist gearbox or brake drag (share of rated input)
+        # gated (plant flow): a lift when the line asks for one (`request(t)`), queued; ungated:
+        # one lift per period
+        self.gated, self.queue, self.lift_t_left = False, [], -1.0
+
+    def request(self, lift_t):
+        self.queue.append(lift_t)
+
+    @property
+    def busy(self):
+        return self.lift_t_left >= 0.0 or bool(self.queue)
 
     def step(self, dt, t_day_h):
         self.t += dt
+        if self.gated:
+            if self.lift_t_left < 0.0 and self.queue:
+                self.lift_t = min(self.r.swl_t, self.queue.pop(0))
+                self.lift_t_left = 0.0
+                self.lifts += 1
+            if self.lift_t_left < 0.0:
+                self.phase, self.p_el = "idle", 0.0
+                return
+            self.lift_t_left += dt
+            ph = self.lift_t_left
+            if ph >= sum(d for _, d in self.PHASES):
+                self.lift_t_left = -1.0
+                self.phase, self.p_el = "idle", 0.0
+                return
+            self.phase = "idle"
+            for name, d in self.PHASES:
+                if ph < d:
+                    self.phase = name
+                    break
+                ph -= d
+            self._power()
+            return
         x = self.t - self.offset_s
         if x < 0.0:
             self.phase, self.p_el = "idle", 0.0
@@ -216,13 +248,16 @@ class EotCrane(_Load):
             self._cycle = k
             self.lift_t = self.rng.uniform(1.0, 4.0)
             self.lifts += 1
-        r = self.r
         self.phase = "idle"
         for name, d in self.PHASES:
             if ph < d:
                 self.phase = name
                 break
             ph -= d
+        self._power()
+
+    def _power(self):
+        r = self.r
         share = (self.lift_t + r.hook_t) / (r.swl_t + r.hook_t)
         if self.phase == "hoist":
             p = r.hoist_kw_el_rated * (share + self.hoist_drag)

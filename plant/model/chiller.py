@@ -25,8 +25,14 @@ Protection: a class 10 overload relay on the compressor current and ANSI 27 unde
 Faults (parameters only): condenser fouling (dirty coils, F9) raises the effective condensing air
 temperature by `fouling_k`, which costs capacity and power as a hotter day does.
 """
+import bisect
 import math
 from dataclasses import dataclass, field
+
+from ._jit import JIT, njit
+
+if JIT:
+    import numpy as np
 
 from .protection import Overload, Undervoltage
 
@@ -40,15 +46,51 @@ def interp1(xs, ys, x):
     elif x >= xs[-1]:
         i = len(xs) - 2
     else:
-        i = max(j for j in range(len(xs) - 1) if xs[j] <= x)
+        i = bisect.bisect_right(xs, x) - 1      # the last j with xs[j] <= x (the axes ascend)
     t = (x - xs[i]) / (xs[i + 1] - xs[i])
     return ys[i] + t * (ys[i + 1] - ys[i])
 
 
 def bilinear(lwt_axis, amb_axis, table, lwt, amb):
     """table[i][j] at lwt_axis[i], amb_axis[j]."""
+    if JIT and type(table) is tuple:            # a rating's frozen table: compiled, the same value
+        key = (id(lwt_axis), id(amb_axis), id(table))
+        got = _TABLES.get(key)
+        if got is None or got[0] is not table:
+            import numpy as np
+            got = _TABLES[key] = (table, lwt_axis, amb_axis, np.array(lwt_axis, float), np.array(amb_axis, float),
+                                  np.array(table, float))
+        return _bilinear_k(got[3], got[4], got[5], lwt, amb)
     col = [interp1(amb_axis, row, amb) for row in table]
     return interp1(lwt_axis, col, lwt)
+
+
+_TABLES = {}
+
+
+@njit
+def _interp1_k(xs, ys, x):
+    n = xs.shape[0]
+    if x <= xs[0]:
+        i = 0
+    elif x >= xs[n - 1]:
+        i = n - 2
+    else:
+        i = 0
+        for j in range(n - 1):
+            if xs[j] <= x:
+                i = j
+    t = (x - xs[i]) / (xs[i + 1] - xs[i])
+    return ys[i] + t * (ys[i + 1] - ys[i])
+
+
+@njit
+def _bilinear_k(lwt_axis, amb_axis, table, lwt, amb):
+    """bilinear() compiled (plant/model/_jit.py): the same operations in the same order."""
+    col = np.empty(table.shape[0])
+    for r in range(table.shape[0]):
+        col[r] = _interp1_k(amb_axis, table[r], amb)
+    return _interp1_k(lwt_axis, col, lwt)
 
 
 @dataclass(frozen=True)

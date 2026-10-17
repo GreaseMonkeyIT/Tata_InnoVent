@@ -16,8 +16,12 @@ one against the truth that the simulator knows, and reports every rate with its 
 
 ## Run
 
-From the repository root, with the Python that has numpy (see the test runner note in the plant
-README):
+From the repository root, with the project venv `.venv` (laptop: Python 3.11.9 from pyenv-win, made
+with uv from `correlation/requirements.txt` plus pytest, numba and pymodbus 3.6.9; forge:
+`~/visr-venv`, Python 3.14). The venv is in `.gitignore` and `.stignore`, so each machine has its own:
+
+    uv venv --python <pyenv 3.11.9 python.exe> .venv
+    uv pip install --python .venv/Scripts/python.exe -r correlation/requirements.txt pytest numba pymodbus==3.6.9
 
 ```
 python -m eval.harness --runs 30 --calm 10
@@ -107,3 +111,77 @@ On forge the campaigns run outside the cluster at low priority, from the synced 
 `~/VISR_Overhaul`, with a user venv `~/visr-venv` (numpy, pytest):
 
     screen -dmS visr-eval bash -c "cd ~/VISR_Overhaul && nice -n 10 ~/visr-venv/bin/python -m eval.machines --machine press-1 --runs 30 > /var/tmp/visr-eval-press.log 2>&1"
+
+## Node score, one method for every node (`nodes.py`, 2026-10-15)
+
+`machines.py` is superseded: its benches had a hand-written input list, model size, filter set and
+phase input per machine, and scored faults that are not on the agreed list. `nodes.py` builds every
+node from the plant's documents (`plant/model/wiring.py`: a node's feeds, PLC commands and
+measures) with one rule: the same model size and filters for all, categorical commands one-hot,
+the residual spread per command state. The data are whole-plant runs with the site weather and the
+material flow, on separate days of the year per split:
+
+| Split | Seeds | Use |
+|---|---|---|
+| train | from 30,000 | the models learn here |
+| tuning | from 40,000 | development |
+| validation | from 60,000 | a change stays only if it holds here too |
+| test | from 940,000 | only at the freeze (`--freeze`) |
+
+Days of the year (`day_of_year`, since LOG-114): the year is cut into blocks of 7 days, and the
+blocks go to train, tuning, validation and test in turn. No run starts on the last day of a block,
+so a run that crosses midnight stays in its own block. Each split has 78 days, with 6 to 9 days in
+every month. Run k of a split goes to the month `MONTHS[k % 12]`: 4 training days fall in January,
+April, July and October, and 12 training days cover all 12 months. The seed still sets the start
+hour, the noise and the material flow. A run can be at most 24 h long, warm-up included.
+
+    python -m eval.nodes --hours 6 --train 4 --runs 8 --splits tuning,validation
+
+First job: false alarms per node in normal running. Fault trials follow when the magnitude rule of
+the fault registry (`plant/model/faults.py`) is decided.
+
+Details of the method (2026-10-16):
+
+- Training: 12 days, 9 to fit and 3 held out for the residual spreads and the R² (in-sample
+  residuals are small by construction and make every new day alarm). Spreads from the covered
+  samples when at least 600 are covered, else from all; a node with no finite spread stops the run.
+- "Don't know": no alarm where a node's inputs leave their training range (10 % margin); the report
+  gives the share of time covered.
+- One filter set for every node: 5 s, 30 s, 2 min, 10 min, 30 min and 2 h.
+- The data are read through the virtual instruments (`plant/model/instruments.py`), with the ranges
+  of the metered quantities from the plant's documents (`wiring.instrument_ranges`). Set
+  `VISR_INSTRUMENTS=0` for exact signals.
+- The gate is today's (35th percentile of |z| over 120 s above 3.5), computed as a rolling count: at
+  least 79 of 120 samples above 3.5. That is exact except one sample short of it, where the count
+  rule gives no alarm (5 of 290 alarm samples in a check on 5,000 random samples, never an extra one).
+- Fault trials: `--faults F1,F2,...` with the magnitude rule of `plant/model/fault_ranges.py`. Per
+  fault: detection on the true root node, the root alarming first (top-1), the delay, the number of
+  nodes alarmed, and the alarms before the onset.
+
+### Speed (2026-10-16)
+
+These changes make an engine iteration faster. They do not change the method.
+
+- **Simulated-day cache.** The tags of a run depend only on the plant code, the weather file, the
+  seed, the length and the fault. `record()` saves every tag of a run, before the instruments, to
+  `eval/cache/<seed>-<key>.npz`. A later campaign loads the run when the key matches. The key holds
+  a hash of the files in `plant/model/` (except `wiring.py` and `instruments.py`), the weather file
+  and the source of `simulate()`. A change to the plant makes new keys, so a stale day never loads.
+  The documents (`wiring.py`) and the instruments are applied at load time, in the same order as
+  before, so their noise is the same. A 2.7 h day takes about 2.7 MB. `VISR_CACHE=0` turns the
+  cache off and `VISR_CACHE_DIR` moves it. The folder is in `.gitignore` and in `.stignore`, so
+  each machine keeps its own cache.
+- **Nodes in parallel.** Each node trains and then scores every run in its own process, with its
+  own tags only. The nodes are independent, so the report is the same as in one process.
+- **Memory.** A run's columns are numpy arrays, 8 bytes per value. As lists of Python floats they
+  took about 32 bytes per value: campaign 6 (348 runs of 6 h) grew to 12 GB on forge.
+- **Filter bank.** `FilterBank.run` uses block matrix products, not a loop over the samples
+  (`twin/node_model.py`). It equals the loop to 1e-14 of the signal (test: 1e-9).
+- **Proof.** A small campaign (`--hours 2.2 --train 2 --runs 1 --faults F1,F6 --fault-runs 1`) ran
+  with the code before these changes, then fresh, from the cache, and from the cache with the nodes
+  in parallel. The three new reports are identical. Against the old code, every alarm, episode and
+  fault result is identical. The R² values differ in the 11th digit, from the rounding of the
+  filter bank. Wall time: 111 s (old), 103 s (fresh), 20 s (cache), 7 s (cache and parallel nodes).
+- **forge.** A 32-run campaign (`--hours 6 --train 12 --runs 4 --faults F1,F6,F9 --fault-runs 2
+  --workers 14`): 289 s fresh, 50 s from the cache, identical reports. A 6.5 h run takes 86 s (143 s
+  in campaign 6, before the plant speed paths of `plant/model/README.md`). About 7 MB per cached day.

@@ -273,6 +273,17 @@ low-gas-pressure switch that locks out until a reset, as EN 746-2 and NFPA 86 re
 
 ## Utilities plant (`plant.py`)
 
+Since 2026-10-15 the plant is the whole site: the utilities, the truck frame line (below), the
+engine assembly line and the building. The frame line replaced the excavator boom line on the
+operator's word: furnace-1 and cnc-1 left the plant, and their models stay in this folder as parts.
+TR-1 is 800 kVA and the APFC panels are 400 and 200 kVAr: the same rules as before, applied to a
+new load study (`plant/load_study.py`, see "Plant verification"). The machine heat branch on cool-1
+has no placeholder load any more (`machine_heat_w` defaults to 0 and stays as a stress-test knob).
+`weather="site"` drives the plant from the site weather and `flow=True` (default) runs the material
+flow. The tests run with `weather="fixed"` (35 °C, the 1 % wet bulb), as before.
+
+The text below is the phase 1 description (2026-10-08).
+
 The supply, compressor-1, chiller-1 and cool-1 wired together (ideas.md 13.1, phase 1 item 6):
 incomer-1 → MV bus → TR-1 (630 kVA) → psu-a, psu-b; TR-2 (315 kVA) → psu-c, psu-d. compressor-1,
 chiller-1, the loop pump and the fab bay services are on psu-b (two cable runs). The cranes and the
@@ -369,6 +380,8 @@ range; a wet bulb of 29.5 °C or fouled fill warms the loop).
 
 ## furnace-1 (`furnace.py`)
 
+Not in the plant since 2026-10-15: a truck frame is not stress-relieved. The model stays as a part.
+
 A gas-fired car-bottom stress-relieving furnace on the plant gas header: four zones along the car,
 each with a 375 kW burner (gas.py), a PID on the firing, a chamber node and a share of the load. The
 load takes heat by convection and radiation; steel heat capacity from EN 1993-1-2; the lining
@@ -406,6 +419,9 @@ high leaves a cold spot (smaller than 20 K: the neighbouring zones heat it). One
 about 500 m³ of gas for 25 t) simulates in under a second.
 
 ## cnc-1 (`cnc.py`)
+
+Not in the plant since 2026-10-15: the frame line pierces its holes (pierce-1) and does not bore
+them. The model stays as a part.
 
 A horizontal boring mill machining the four pin bores of a boom (rough, semi-finish and finish
 passes). Cutting power by the Sandvik boring formula Pc = vc ap fn kc / 60,000 with the Kienzle
@@ -542,3 +558,171 @@ by day and by night, the crane lifts, the air washer thermostat, no export at ni
 test's rated stage (also on a 25 °C night, when the air washers stay off and the export limiter
 must act), the transformer loading of the shop, the furnace zones, the washer band, the press-2
 brake times, the material batches, and the leak and cold tests per part.
+
+## Truck frame line (`frame_line.py`, `press_brake.py` as lmp-1)
+
+The product (operator, 2026-10-15): a riveted heavy-truck ladder frame, as a frame factory such as
+Tata Motors Jamshedpur makes it (its plant profile lists a 5,000 t press, CNC punching and CED
+painting). The order of work is the one of the frame maker Press Kogyo: the side member plate is
+pierced, formed into a U channel on a 5,000 t press, and painted as parts (medium and heavy
+trucks). Then the side and cross members are joined into a ladder, mainly with rivets and bolts.
+
+| Station | Model | Main numbers | Source |
+|---|---|---|---|
+| Side member | S500MC, 8 mm, 9.0 m, 300 × 90 mm channel, 271 kg, 8.64 m² | UTS 550 to 700 MPa; a frame comes to about 840 kg | EN 10149-2 (Salzgitter sheet); Press Kogyo frame sizes (heavy cargo 840 to 940 kg) |
+| pierce-1 | CNC hydraulic punch, 450 kN head, ABB 22 kW unit | F = π d t τ, τ = 0.8 UTS: 214 kN for a 17 mm hole; 1.2 s a hit; 250 to 400 holes a member | Peddinghaus Forax 450 listing; Cole-Tuve line cycle; Hörmann Automotive (up to 800 holes, the bottleneck) |
+| lmp-1 | 5,000 t hydraulic press, 2 × ABB 160 kW | 6.5 mm/s working, 360 mm/s approach, 640 l/min at 300 bar; U forming 1,300 t | Schuler SHP 50000 listings; ABB catalogue 9AKK106128 |
+| ced-1 | degrease, phosphate, CED, cure oven; chiller-1 on the bath | bath 30 °C, 300 V, 135 s, 20 mg/C, 20 µm; phosphate 50 °C for 120 s; oven 200 °C for 20 min | CED patents; SciELO phosphating study |
+| rivet-1 | hydraulic riveting, two tools | 120 fasteners a frame, 150 kN, 4 s a swage | Hydac riveting systems (up to 500 kN for truck frames); Huck-Fit metric sizes |
+
+Project choices (no maker data found): the punch's stroke, life and wear force, the press's system
+pressure, slide mass and tank, the CED tank sizes, burners, losses, film thickness and density,
+the degrease temperature, the rinse and hoist times, the oven setpoint, the fastener count and
+force. Each is marked in `catalog.py`.
+
+The return area of lmp-1 comes from its return force (slide and guide friction at half the system
+pressure), so the return runs at about 125 mm/s. The listing's 234 mm/s needs a prefill or
+accumulator circuit that the model does not have.
+
+Verification (2026-10-15, `test_machine_frame_line.py`, 9 checks): the 160 kW motor fit meets its
+catalogue current and power factor; the punch force from the shear formula and its wear gain; a
+punch change at the punch's life; F4 (a three times faster wear) gives three times the wear and a
+higher force; the U forming force and pressure inside the 5,000 t press; the CED charge per load
+(95 % of film mass / yield in three time constants), the bath within 2 K of its setpoint, the tanks
+at their setpoints; two riveting tools finish a frame in 120 / 2 × 4 s; the wet bulb against the
+psychrometric chart; the handling times with their stated mean and CV.
+
+## Site weather (`weather.py`)
+
+Hourly dry bulb, humidity and pressure for Jamshedpur (22.80 N, 86.18 E) from NASA POWER (MERRA-2,
+public domain), 2025. The wet bulb comes from the ASHRAE psychrometric equations (Fundamentals 2017,
+ch. 1), solved by bisection. `day_of_year` sets the day of the year of a plant run. Without it, the
+seed picks the day, so the seeds cover the seasons. `eval/nodes.py` gives each split its own days
+(`eval/README.md`). 2025: dry bulb 5.8 to 43.5 °C (mean daily range 11.2 K), wet bulb 5.0 to 27.8 °C, 1 %
+above 27.1 °C (the ISHRAE 1 % design value is 28.1 °C; the reanalysis grid smooths the peaks).
+
+The file is not in the repository (`data/` is gitignored). Fetch it into
+`data/weather/nasa_power_jamshedpur_2025_hourly.csv`:
+
+```
+curl -o data/weather/nasa_power_jamshedpur_2025_hourly.csv "https://power.larc.nasa.gov/api/temporal/hourly/point?parameters=T2M,RH2M,PS,WS2M&community=RE&longitude=86.18&latitude=22.80&start=20250101&end=20251231&format=CSV&time-standard=LST"
+```
+
+Without the file, `weather="site"` falls back to the fixed design condition and says so.
+
+## Material flow (`flow.py`)
+
+Each station starts when its part arrives from upstream and an operator has handled it. Before
+this, each station ran its own fixed clock, and the plant showed 19 tags with an exact machine
+period (verification pass 1). The rules are the same for every station:
+
+- Operator handling is log-normal with the station's mean and one coefficient of variation for all
+  manual work, 0.3 (project choice inside the "low variability" class of Hopp and Spearman, Factory
+  Physics, CV under 0.75). Machine programs stay exact: robot seams, test schedules, wash cycles,
+  the CED deposition.
+- A new frame or engine enters when the work in process is under a cap (CONWIP), so the slowest
+  station sets the pace. The frame line's bottleneck is pierce-1 (2 members × 250 to 400 holes ×
+  1.2 s), the engine line's is hot-1.
+- Each heavy transfer asks one of the bay's cranes for a lift.
+
+The work contents per frame (bends, strokes, welded cross members, cut length, blast speed, scan
+time) are project choices that keep each station below the bottleneck. They are in `flow.py` and
+`plant.py`.
+
+## Fault registry (`faults.py`)
+
+F1 to F16 of ideas.md 11.10 as one table: each fault names the parameter it changes, its unit, its
+healthy value and its true root. The registry adds no fault and no physics. 2026-10-15 (the frame
+line, the operator's word): F4 is punch wear on pierce-1 (a slow drift on a cyclic machine, as cnc-1
+tool wear was), and F10 reaches the CED tank burners and cure oven.
+
+### Fault magnitudes (`fault_ranges.py`)
+
+One rule for every fault: a trial draws a severity s, uniform in (0, 1], and the magnitude is
+healthy + s × (end − healthy). The end is never a hand-picked number:
+
+| Fault | End (s = 1) | How the end is found | Check (2026-10-16) |
+|---|---|---|---|
+| F1 | extra friction 0.29 of the rated force | press-1 reaches its relief valve on the hardest batch plate | at the end the bend reaches 295 bar (the relief); at s = 0.5, 254 bar |
+| F2 | 21 × healthy leakage | press-1's pump flow is all leakage at that bend (a stall) | |
+| F4 | 50 × healthy wear rate | a punch wears out within one member of 400 holes | |
+| F5 | tip wear 1 | the weld cell model's own scale | |
+| F6 | 2.5 × healthy leak | compressor-1 cannot hold the load pressure | past the end the receiver falls to 6.52 bar(e); at s = 0.5 it holds 6.90 |
+| F7 | reading 0 bar(e) | any reading under the 6.9 bar(e) load pressure keeps it loaded | |
+| F8 | pump wear 0.80 | compressor-1's water leaves at 50 °C (Atlas Copco maximum) | at the end it leaves at 49.1 °C |
+| F9 | 18 % of the fill capability | Brentwood's measured loss of a fouled film pack | |
+| F10 | supply 57.5 kPa | the header falls to the burners' low-gas switch | past the end the header is 4.7 kPa and the burners lock out; at s = 0.5 it holds 29.9 kPa |
+| F11 | a level of 0.8, 0.7, 0.4 or 0 pu | IEC 61000-4-34 levels, with the IEC 61000-4-11 class 3 durations | |
+| F13 | +15 K | a water tank under about 95 °C | |
+| F14 | rigging in a fifth of the time | project choice (for review) | |
+| F15 | UTS 720 MPa | a plate of the next grade, S460, on a line set for S355J2 | |
+| F16 | +40 % friction | project choice (for review): twice the ±20 % cold test band | |
+
+F3 and F12 are on or off.
+
+## Plant verification (`plant/verify_plant.py`, `plant/load_study.py`)
+
+`verify_plant.py` runs the whole site with the site weather and the flow for 24 h per seed and
+checks, once a second: every machine's `check()`, the load-flow mismatch, the loop energy balance,
+every numeric tag (finite, LV buses inside ±10 %, transformers at most 100 %, no export), tags that
+never change (a fake constant) and tags with an exact machine period (listed for review).
+
+`load_study.py` sizes the transformers and the APFC panels by the rules in `catalog.py` (see
+TR_FAB, APFC_LV1).
+
+Results (4 seeds × 24 h, the site weather and the flow):
+
+| Pass | Finding | Fix |
+|---|---|---|
+| 1 (boom line, fixed weather) | 19 tags on an exact machine period; HVAC and tower flat all day | material flow, site weather |
+| 2 (frame line) | none of the old faults; the healthy line rejected about half its engines at leak-1 on cool days (median decay 43 Pa, limit 42 Pa) | part cooling station by a design rule (130 s) |
+| 3 | physics checks clean, load flow 1e-6, loop energy 0.004 to 0.018 %, no exact period, leak decay median 17 Pa (95 %: 26 Pa), one reject: a 191 Pa porosity leaker | - |
+
+Flat in every run after pass 3: counters with no fault to count (resets, rejects, the jam flag),
+constant-power equipment (bay lights, roof fans, the scanner), and chiller-1's leaving water, which
+the model holds exactly at its setpoint while the unit has spare capacity (a model limit).
+
+## Virtual instruments, version 0 (`instruments.py`, 2026-10-16)
+
+The engine reads instruments, never the sim state (ideas.md 17.2). Each tag's instrument follows from
+the quantity it measures: a Pt100 class A up to 150 °C (IEC 60751), a type K class 1 thermocouple
+above (IEC 60584-1), a power metering device of class 0.5 for current, voltage and power (IEC
+61557-12, read as ±0.5 % of reading: to confirm against the standard's table), a pressure
+transmitter of ±0.075 % of span (Delval PTI40), a magnetic flowmeter of ±0.5 % of reading. Each
+device has a calibration bias inside its class, drawn once per factory (the runs are days of the
+same plant), noise of a fifth of its accuracy and a resolution of 0.01 of the unit (0.1 °C). PLC
+states and commands stay exact. Project choices: the noise share, the resolution, the transmitter
+spans. Not yet in v0: refresh rates, deadbands, quality flags, drift and stuck failures, clocks.
+Verification (`test_part_instruments.py`, 7 checks): the accuracy of each class, the bias the same on
+every day of one factory and different between factories, inside the class, noise of a fifth of the
+accuracy, digital values unchanged.
+
+## Speed paths and the equivalence gate (2026-10-16)
+
+The plant is the ground truth of every score, so a change made only for speed must give the same
+values. These changes give the same values bit for bit:
+
+| Part | Speed path | Why the values stay the same |
+|---|---|---|
+| Cooling tower (`cooling_tower.py`) | The bisection skips the steps whose outcome a bracket around the root already decides. The bracket comes from a secant solve that starts at the last tick's answer. | A bisection's answer depends only on the outcome of each comparison. The bracket ends are "clearly" true and false: Merkel minus the target beyond 1e-10, about 60 × the largest rounding noise measured near the root. |
+| Cooling tower, compiled | The plain 60-step bisection with Merkel written out (`_bisect_k`). | The same operations in the same order. |
+| Motor (`motor.py`) | The circuit solve (`_solve_core_k`) and the net torque of the inner loops (`_net_torque_k`) are compiled. The inner loops no longer build an operating point. | The same operations in the same order. |
+| Network (`power.py`) | The backward/forward sweeps are compiled (`_sweep_k`). The walk order and the transformer magnetizing var are kept between ticks. | The kernel copies the complex `sum()` of the Python that runs it: Python 3.14 adds with Neumaier compensation, Python 3.11 adds in order. |
+| Chiller (`chiller.py`) | The table interpolation is compiled (`_bilinear_k`). The index search uses `bisect`. | The same operations in the same order. |
+
+`_jit.py` compiles a kernel with numba when numba is installed. Set `VISR_NUMBA=0` for the pure
+Python path. Numba gives the same values as CPython for `exp`, `sqrt`, `pow` and float and complex
+arithmetic (1e6 random values on the laptop and on forge). The exception is `x ** 2` with a constant
+exponent: numba computes `x * x`, and CPython calls the C `pow`, which differs in the last bit for
+about 0.07 % of values. The kernels therefore read the exponent 2.0 at run time.
+
+A consequence of the `sum()` rule: the laptop (Python 3.11) and forge (Python 3.14) give values that
+differ in the last bits for the same seed. Each machine has its own day cache (`eval/README.md`).
+
+**Gate (`plant/equivalence.py`).** The tool runs the same days with a reference copy of `model/` and
+with the working tree, and compares every tag every second. The default tolerance is zero. A change
+that is not exact gives `--atol` and `--rtol`, and must also pass `verify_plant.py`.
+
+    python plant/equivalence.py --ref <folder with the reference model/> --hours 3 --seeds 40000,60001 --faults ,F9,F1
+
+Tests: `plant/tests/test_speed_paths.py` compares each speed path with the plain code.

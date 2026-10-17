@@ -72,3 +72,5 @@ mechatronics_lab_manual.pdf
 # concept-run outputs (plots, models): regenerate with twin/experiments/*.py
 /twin/experiments/out/
 eval/results/
+plant/verify_results/
+/eval/cache/

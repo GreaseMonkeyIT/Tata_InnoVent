@@ -36,8 +36,8 @@ window and capture scripts (`video/layout.ps1`, `video/record.ps1`) are built (L
 4. **Rehearse twice.** Run the full take twice without recording. If a beat fails twice, stop and fix
    it. Do not record around a flake. Let the verdict go calm after each rehearsal.
 5. **Warm the narrator model** 10 min before the take. On forge:
-   `curl -s http://127.0.0.1:11434/api/generate -d '{"model":"gemma4:e4b-it-qat","prompt":"ready","keep_alive":"60m"}'`.
-   A cold model takes more than 15 s on the 4 GB GPU.
+   `curl -s http://127.0.0.1:11434/api/generate -d '{"model":"gemma4-text:e4b","prompt":"ready","keep_alive":-1}'`.
+   A cold model takes several seconds to load. With `keep_alive` -1 it then stays loaded.
 6. **Screen hygiene.** Windows Focus Assist on. Browser bookmarks bar hidden. Open the console and
    Grafana in app or kiosk windows, so no address bar shows the node address. Browser zoom 100 %.
    Type the dashboard password before the capture starts, or cut it in the edit.

@@ -51,9 +51,45 @@ class FilterBank:
         return self.state.ravel()
 
     def run(self, U, dt):
-        """Filter a whole input series U (T x n_in). Returns T x (n_in * n_tau)."""
-        self.reset(U[0])
-        return np.stack([self.step(u, dt) for u in U])
+        """Filter a whole input series U (T x n_in). Returns T x (n_in * n_tau), columns input-major
+        (input 0 at every tau, then input 1, ...), as `step` gives them.
+
+        The same recurrence as `step` from a state reset to U[0]: y[k] = a y[k-1] + (1 - a) u[k] with
+        a = exp(-dt / tau) and y[-1] = u[0]. Computed with matrix products instead of a Python loop
+        over the samples (`_scan`). The result equals the sample loop to rounding, about 1e-14 of the
+        signal (twin/tests/test_node_model.py). Numpy only (no scipy in forge's venv)."""
+        U = np.asarray(U, dtype=float)
+        T, n = U.shape
+        a = np.exp(-dt / self.taus)
+        y = _scan(a, (1.0 - a)[:, None, None] * U[None], np.repeat(U[:1], len(a), axis=0))
+        self.state = y[:, -1, :].T.copy()                                 # n_in x n_tau, as after `step`
+        return y.transpose(1, 2, 0).reshape(T, n * len(a))
+
+
+SCAN_BLOCK = 32
+
+
+def _scan(a, X, y0, B=SCAN_BLOCK):
+    """y[k] = a y[k-1] + X[k] along axis 1, from y[-1] = y0. a: (n_tau,), X: (n_tau, T, n), y0:
+    (n_tau, n). In blocks of B samples: inside a block the response from a zero start is a lower
+    triangular matrix of powers of a. The states at the block ends follow the same recurrence with
+    a^B, solved by the same function (so the work grows as T B, not T^2). Every weight is a power of
+    a <= 1, so nothing grows."""
+    nt, T, n = X.shape
+    i = np.arange(min(T, B))
+    d = i[:, None] - i[None, :]
+    M = np.where(d[None] >= 0, a[:, None, None] ** np.maximum(d, 0)[None], 0.0)    # n_tau x B x B
+    decay = a[:, None] ** (i + 1)[None]                                             # n_tau x B
+    if T <= B:
+        return M @ X + decay[:, :, None] * y0[:, None, :]
+    nb = -(-T // B)
+    Xp = np.concatenate([X, np.zeros((nt, nb * B - T, n))], axis=1).reshape(nt, nb, B, n)
+    Xb = Xp.transpose(0, 2, 1, 3).reshape(nt, B, nb * n)                             # one product per tau
+    loc = (M @ Xb).reshape(nt, B, nb, n).transpose(0, 2, 1, 3)                        # zero start
+    ends = _scan(a ** B, loc[:, :, -1, :], y0, B)                                     # state after each block
+    prev = np.concatenate([y0[:, None, :], ends[:, :-1]], axis=1)                     # state before each block
+    y = loc + decay[:, None, :, None] * prev[:, :, None, :]
+    return y.reshape(nt, nb * B, n)[:, :T]
 
 
 class NodeModel:
@@ -158,8 +194,10 @@ class NodeModel:
 
     # ------------------------------------------------------------------ prediction --
     def predict(self, U, dt):
-        X = (self.features(np.asarray(U, float), dt) - self.norm["xm"]) / self.norm["xs"]
-        return self._forward(X)[-1] * self.norm["ys"] + self.norm["ym"]
+        return self._predict_x(self.features(np.asarray(U, float), dt))
+
+    def _predict_x(self, X):
+        return self._forward((X - self.norm["xm"]) / self.norm["xs"])[-1] * self.norm["ys"] + self.norm["ym"]
 
     def residuals(self, U, Y, dt):
         return np.asarray(Y, float) - self.predict(U, dt)
@@ -167,10 +205,17 @@ class NodeModel:
     def covered(self, U, dt, margin=0.10):
         """Per sample: True when every feature lies inside its training range, widened by
         `margin` of that range on each side."""
-        X = self.features(np.asarray(U, float), dt)
+        return self._covered_x(self.features(np.asarray(U, float), dt), margin)
+
+    def _covered_x(self, X, margin):
         span = self.norm["xhi"] - self.norm["xlo"]
         lo, hi = self.norm["xlo"] - margin * span, self.norm["xhi"] + margin * span
         return np.all((X >= lo) & (X <= hi), axis=1)
+
+    def residuals_covered(self, U, Y, dt, margin=0.10):
+        """`residuals` and `covered` from one pass of the features (the same values)."""
+        X = self.features(np.asarray(U, float), dt)
+        return np.asarray(Y, float) - self._predict_x(X), self._covered_x(X, margin)
 
     # --------------------------------------------------------------------- storage --
     def save(self, path):

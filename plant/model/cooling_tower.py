@@ -22,6 +22,7 @@ Water loss: evaporation = 0.00085 x 1.8 x flow x range (BEE guidebook, chapter 7
 import math
 from dataclasses import dataclass
 
+from ._jit import JIT, njit
 from .heat import CP_WATER, HeatExchanger
 
 P_ATM_KPA = 101.325
@@ -41,19 +42,55 @@ def h_sat(t_c):
 
 def merkel(t_hot, t_cold, t_wb, l_over_g):
     """KaV/L by the 4-point Chebyshev rule; inf when the air would saturate past the water."""
+    return _merkel_h(t_hot, t_cold, h_sat(t_wb), l_over_g)
+
+
+def _merkel_h(t_hot, t_cold, h_in, l_over_g):
+    """merkel() with the inlet air enthalpy h_in given. h_sat is written out here with the same
+    operations in the same order (the same value, bit for bit), as this is the plant's hottest
+    function: the tower solve calls it about 25 times a tick."""
     rng = t_hot - t_cold
     if rng <= 0:
         return 0.0
     cp = CP_WATER / 1000.0
-    h_in = h_sat(t_wb)
     s = 0.0
     for f in (0.1, 0.4, 0.6, 0.9):
         t = t_cold + f * rng
-        dh = h_sat(t) - (h_in + l_over_g * cp * (t - t_cold))
+        p = 0.61094 * math.exp(17.625 * t / (t + 243.04))
+        w = 0.622 * p / (P_ATM_KPA - p)
+        dh = (1.006 * t + w * (2501.0 + 1.86 * t)) - (h_in + l_over_g * cp * (t - t_cold))
         if dh <= 0:
-            return float("inf")
+            return math.inf
         s += 1.0 / dh
     return cp * rng / 4.0 * s
+
+
+_merkel_k = njit(_merkel_h)
+
+
+@njit
+def _bisect_k(t_hot, h_in, lg, target, lo, hi, steps):
+    """The plain bisection of CoolingTower.cold_water, compiled (plant/model/_jit.py)."""
+    for _ in range(steps):
+        mid = 0.5 * (lo + hi)
+        if _merkel_k(t_hot, mid, h_in, lg) > target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+# The tower solve below gives the same answer as a plain 60-step bisection, bit for bit, with fewer
+# evaluations (2026-10-16, speed only). A bisection's answer depends only on the outcome of each
+# comparison merkel(mid) > target. merkel falls as the cold water rises, so once the root is known
+# to lie between a and b, where the comparison is clearly true at a and clearly false at b, every
+# mid below a is true and every mid above b is false without evaluating it. Only the mids between
+# a and b are evaluated. "Clearly": merkel - target beyond BRACKET_MARGIN, about 60 x the largest
+# rounding noise of merkel near the root (1.6e-12 over 300 random towers, 2026-10-16). The root
+# comes from a secant solve started at the last tick's answer. When anything fails (no last answer,
+# an infinite merkel, no clear bracket) the plain bisection runs.
+BRACKET_MARGIN = 1e-10
+BISECTION_STEPS = 60
 
 
 @dataclass(frozen=True)
@@ -89,22 +126,76 @@ class CoolingTower:
         self.t_hot = self.t_cold = self.t_basin
         self.q_w = 0.0
         self.evap_m3h = 0.0
+        self._c_char = rating.c_char      # the rating is frozen: compute its characteristic once
+        self._h_wb = (None, 0.0)          # (wet bulb, h_sat of it)
+        self._last = None                 # the last solve's answer, the start of the next one
 
     def kav_l(self, lg):
-        return self.r.c_char * lg ** self.r.n_exp * (1.0 - self.fouling)
+        return self._c_char * lg ** self.r.n_exp * (1.0 - self.fouling)
 
     def cold_water(self, t_hot, m_kgs, air_kgs):
-        """Cold water leaving the fill for this hot water, water flow and air flow."""
+        """Cold water leaving the fill for this hot water, water flow and air flow: the root of
+        merkel(t_hot, t_cold) = KaV/L, as a 60-step bisection on [wet bulb + 1e-4, t_hot] finds it
+        (see BRACKET_MARGIN for how most of its evaluations are skipped)."""
         lg = m_kgs / air_kgs
         target = self.kav_l(lg)
+        if self._h_wb[0] != self.t_wb:
+            self._h_wb = (self.t_wb, h_sat(self.t_wb))
+        h_in = self._h_wb[1]
         lo, hi = self.t_wb + 1e-4, t_hot
-        for _ in range(60):
+        if JIT:                    # compiled: the plain bisection is fast enough
+            self._last = _bisect_k(t_hot, h_in, lg, target, lo, hi, BISECTION_STEPS)
+            return self._last
+        a, b = self._bracket(t_hot, h_in, lg, target, lo, hi)
+        memo = {}
+        for _ in range(BISECTION_STEPS):
             mid = 0.5 * (lo + hi)
-            if merkel(t_hot, mid, self.t_wb, lg) > target:
+            if mid <= a:
+                up = True
+            elif mid >= b:
+                up = False
+            else:
+                up = memo.get(mid)
+                if up is None:
+                    up = memo[mid] = _merkel_h(t_hot, mid, h_in, lg) > target
+            if up:
                 lo = mid           # needs less transfer: the water leaves warmer
             else:
                 hi = mid
-        return 0.5 * (lo + hi)
+        self._last = 0.5 * (lo + hi)
+        return self._last
+
+    def _bracket(self, t_hot, h_in, lg, target, lo, hi):
+        """(a, b) around the root with merkel - target > margin at a and < -margin at b; (-inf,
+        inf) when there is none (then every mid is evaluated: the plain bisection)."""
+        none = (-math.inf, math.inf)
+        x1 = self._last
+        if x1 is None or not lo < x1 < hi:
+            return none
+        f = lambda t: _merkel_h(t_hot, t, h_in, lg) - target        # noqa: E731
+        x0 = x1 + 1e-3 if x1 + 1e-3 < hi else 0.5 * (x1 + hi)
+        f0, f1 = f(x0), f(x1)
+        for _ in range(12):                                         # secant
+            if not (math.isfinite(f0) and math.isfinite(f1)) or f1 == f0:
+                return none
+            x2 = x1 - f1 * (x1 - x0) / (f1 - f0)
+            if not lo < x2 < hi:
+                return none
+            x0, f0, x1 = x1, f1, x2
+            f1 = f(x1)
+            if abs(x1 - x0) < 1e-12 * max(1.0, abs(x1)):
+                break
+        margin = BRACKET_MARGIN * max(1.0, abs(target))
+        slope = abs((f1 - f0) / (x1 - x0)) if x1 != x0 else 0.0
+        d = max(4.0 * margin / slope if slope > 0 else 1e-9, 1e-13 * max(1.0, abs(x1)))
+        for _ in range(5):
+            a, b = x1 - d, x1 + d
+            if lo < a and b < hi:
+                fa, fb = f(a), f(b)
+                if fa > margin and fb < -margin:
+                    return a, b
+            d *= 8.0
+        return none
 
     def step(self, dt, q_in_w, m_kgs):
         """The tower pump takes basin water through the plate exchanger (q_in_w added) to the fill."""

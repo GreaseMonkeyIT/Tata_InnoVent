@@ -41,18 +41,37 @@ class PalletConveyor:
         self.jam = False          # fault: a pallet stuck at a stop
         self.moved = 0
         self.p_el = 0.0
+        # gated (plant flow): a pallet moves when the next station is free (`move()`), the TS 5 is a
+        # free-flow (non-synchronous) transfer; ungated: one move per takt
+        self.gated, self.move_left = False, 0.0
+
+    @property
+    def move_s(self):
+        return 3.0 / (self.r.speed_m_min / 60.0)            # 3 m between stations (project choice)
+
+    def move(self):
+        if not self.jam:
+            self.move_left = self.move_s
 
     def step(self, dt):
         self.t += dt
-        move_s = 3.0 / (self.r.speed_m_min / 60.0)          # 3 m between stations (project choice)
+        move_s = self.move_s
         phase = self.t % self.takt_s
-        moving = phase < move_s and not self.jam
+        if self.gated:
+            moving = self.move_left > 0.0 and not self.jam
+            if moving:
+                self.move_left -= dt
+                if self.move_left <= 0.0:
+                    self.move_left = 0.0
+                    self.moved += 1
+        else:
+            moving = phase < move_s and not self.jam
         if self.jam:
             # the drives keep running against the friction clutches (the TS 5 roller clutch)
             self.p_el = 1000.0 * self.r.section_kw * self.r.sections * 0.9
         else:
             self.p_el = 1000.0 * self.r.section_kw * self.r.sections * (0.8 if moving else 0.3)
-        if not self.jam and phase < dt:
+        if not self.gated and not self.jam and phase < dt:
             self.moved += 1
 
     def tags(self):
@@ -84,6 +103,14 @@ class TighteningStation:
         self.resets = 0
         self.p_el = r.standby_w
         self.active = True
+        self.gated, self.cycles_left, self.engines = False, 0, 0   # gated: one engine at a time
+
+    def begin(self):
+        self.cycles_left = math.ceil(self.bolts / self.spindles)
+
+    @property
+    def busy(self):
+        return self.cycles_left > 0
 
     def step(self, dt, v_pu):
         r = self.r
@@ -93,7 +120,7 @@ class TighteningStation:
             self.t_bolt = 0.0
             self.p_el = 0.0
             return
-        if not self.active:
+        if not self.active or (self.gated and self.cycles_left <= 0):
             self.p_el = r.standby_w
             return
         self.t_bolt += dt
@@ -105,6 +132,10 @@ class TighteningStation:
                 sd = r.sigma_frac * (1.0 + 3.0 * self.socket_wear)
                 self.torques.append(r.target_nm * (1.0 + self.rng.gauss(0.0, sd)))
                 self.done += 1
+            if self.gated:
+                self.cycles_left -= 1
+                if self.cycles_left == 0:
+                    self.engines += 1
 
     def tags(self):
         last = self.torques[-1] if self.torques else 0.0
@@ -138,10 +169,23 @@ class PartsWasher:
         self.p_el = 0.0
         self.heating = False
         self.band_k = 2.0             # on/off thermostat: on 2 K under the setpoint, off at it (project choice)
+        # gated (plant flow): a wash cycle runs when a block is loaded (`begin()`); between blocks the
+        # pumps and the dryer stop and the tank holds its temperature
+        self.gated, self.cycle_t = False, -1.0
+
+    def begin(self):
+        if self.cycle_t < 0.0:
+            self.cycle_t = 0.0
+
+    @property
+    def busy(self):
+        return self.cycle_t >= 0.0
 
     def step(self, dt):
         r = self.r
         self.t += dt
+        if self.gated:
+            return self._step_gated(dt)
         sp = r.t_wash_c + self.offset_k
         if self.t_tank <= sp - self.band_k:
             self.heating = True
@@ -162,9 +206,37 @@ class PartsWasher:
             # the hot-air dryer brings the part a little under the wash temperature (project choice)
             self.t_part_out = self.t_tank - 15.0
 
+    def _step_gated(self, dt):
+        r = self.r
+        sp = r.t_wash_c + self.offset_k
+        if self.t_tank <= sp - self.band_k:
+            self.heating = True
+        elif self.t_tank >= sp:
+            self.heating = False
+        heater = r.heater_kw * 1000.0 if self.heating else 0.0
+        spraying = drying = False
+        if self.cycle_t >= 0.0:
+            self.cycle_t += dt
+            spraying = self.cycle_t < 0.75 * r.cycle_s
+            drying = not spraying
+            if self.cycle_t >= r.cycle_s:
+                self.cycle_t = -1.0
+                self.parts += 1
+                self.t_part_out = self.t_tank - 15.0
+        part_w = (r.part_kg * 460.0 * (self.t_tank - self.t_amb) / (0.75 * r.cycle_s)) if spraying else 0.0
+        c_tank = r.tank_l * 4186.0
+        self.t_tank += (heater - part_w - r.loss_w_k * (self.t_tank - self.t_amb)) / c_tank * dt
+        pumps = (r.hp_pump_kw + r.lp_pump_kw) * 1000.0 if spraying else 0.0
+        dryer = r.dryer_kw * 1000.0 if drying else 0.0
+        self.p_el = heater + pumps + dryer
+
     def tags(self):
+        if self.gated:
+            phase = "wait" if self.cycle_t < 0.0 else ("spray" if self.cycle_t < 0.75 * self.r.cycle_s else "dry")
+        else:
+            phase = "spray" if (self.t % self.r.cycle_s) < 0.75 * self.r.cycle_s else "dry"
         return {"tank_c": self.t_tank, "power_kw": self.p_el / 1000.0, "part_out_c": self.t_part_out,
-                "parts": self.parts}
+                "parts": self.parts, "heater_on": float(self.heating), "phase": phase}
 
 
 # ---------------------------------------------------------------------------------- leak test --
@@ -285,13 +357,31 @@ class ColdTest:
         self.last_torque_nm = 0.0
         self.last_ok = True
         self.rejects = 0
+        self.gated, self.test_t = False, -1.0      # gated: a test starts when an engine is loaded
+
+    def begin(self):
+        if self.test_t < 0.0:
+            self.test_t = 0.0
+
+    @property
+    def busy(self):
+        return self.test_t >= 0.0
 
     def reference_nm(self):
         return fmep_motored_bar(self.test_rpm) * 1e5 * self.e.displacement_l / 1000.0 / (4.0 * math.pi)
 
     def step(self, dt):
         self.t += dt
-        phase = self.t % (self.load_s + self.test_s)
+        if self.gated:
+            if self.test_t >= 0.0:
+                self.test_t += dt
+                phase = self.load_s + self.test_t
+                if self.test_t >= self.test_s:
+                    self.test_t, phase = -1.0, 0.0
+            else:
+                phase = 0.0
+        else:
+            phase = self.t % (self.load_s + self.test_s)
         if phase >= self.load_s:
             if not self._testing:                       # a new engine on the stand
                 self._testing = True
@@ -336,6 +426,16 @@ class HotTest:
         # dyno at a site without an export permit).
         self.regen_cap_w = float("inf")
         self.p_resistor = 0.0
+        self.gated, self.test_t = False, -1.0      # gated: the schedule starts when an engine is rigged
+
+    def begin(self):
+        if self.test_t < 0.0:
+            self.test_t = 0.0
+            self.engines += 1
+
+    @property
+    def busy(self):
+        return self.test_t >= 0.0
 
     def efficiency(self, load):
         """Brake efficiency against load: rated from the spec sheet, lower at part load (project
@@ -348,7 +448,16 @@ class HotTest:
     def step(self, dt):
         self.t += dt
         total = self.load_s + sum(d for d, _ in self.SCHEDULE)
-        ph = self.t % total
+        if self.gated:
+            if self.test_t >= 0.0:
+                self.test_t += dt
+                ph = self.load_s + self.test_t
+                if self.test_t >= total - self.load_s:
+                    self.test_t, ph = -1.0, 0.0
+            else:
+                ph = 0.0
+        else:
+            ph = self.t % total
         self.load = 0.0
         if ph >= self.load_s and not self.dyno_trip:
             x = ph - self.load_s
@@ -357,7 +466,7 @@ class HotTest:
                     self.load = l
                     break
                 x -= d
-        elif ph < dt:
+        elif ph < dt and not self.gated:
             self.engines += 1
         e = self.e
         self.p_brake = self.load * e.rated_kw * 1000.0
@@ -380,6 +489,9 @@ class HotTest:
         self.p_el = -fed + 5000.0                                     # 5 kW cell services (project)
 
     def tags(self):
-        return {"load_pct": 100.0 * self.load, "brake_kw": self.p_brake / 1000.0, "power_kw": self.p_el / 1000.0,
+        total = self.load_s + sum(d for d, _ in self.SCHEDULE)
+        running = (self.test_t >= 0.0) if self.gated else (self.t % total >= self.load_s)
+        return {"state": ("tripped" if self.dyno_trip else "test" if running else "rig"),
+                "load_pct": 100.0 * self.load, "brake_kw": self.p_brake / 1000.0, "power_kw": self.p_el / 1000.0,
                 "coolant_kw": self.q_coolant / 1000.0, "engines": self.engines, "dyno_trip": float(self.dyno_trip),
                 "resistor_kw": self.p_resistor / 1000.0}

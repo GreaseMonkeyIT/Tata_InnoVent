@@ -428,7 +428,11 @@ OFFICE = OfficeRating(area_m2=OFFICE_M2, cooling_w_m2=175.0, eer=3.5, plug_w_m2=
 # have their best efficiency near 50 % load (BIS: designed for maximum efficiency at lower loads;
 # US DOE: optimised at 50 % load factor). Result: TR-1 630 kVA (mean 59 %; 500 kVA would peak at
 # 102 %), TR-2 315 kVA (mean 39 %; 250 kVA would peak at 115 %). Billing power factor 0.958.
-TR_FAB = is1180_level2(630)
+# 2026-10-15, the truck frame line (plant/load_study.py, 4 seeds of 24 h with the site weather and
+# the material flow): TR-1 mean up to 398 kVA, 15 min maximum demand 454 kVA, 1 s peak 762 kVA (the
+# 2 x 160 kW U forming strokes of lmp-1) -> 800 kVA by the same rule; TR-2 mean 134, maximum demand
+# 186, peak 294 kVA -> 315 kVA, unchanged.
+TR_FAB = is1180_level2(800)
 TR_ASM = is1180_level2(315)
 
 # APFC panels on the LV mains (2026-10-15). Sized from the reactive power each main needs to reach
@@ -436,7 +440,96 @@ TR_ASM = is1180_level2(315)
 # with Q_c = P (tan phi1 - tan phi2), the usual sizing rule. Steps of 25 kVAr at 440 V, a 30 s step
 # delay, and a 0.98 target: project choices. Reconnection after 180 s (IEC 60831-1: discharge to
 # 75 V within 3 min).
-APFC_LV1 = ApfcRating(step_kvar=25.0, steps=6, v_rated_ll=440.0, target_pf=0.98, switch_s=30.0,
+# 2026-10-15, the truck frame line (plant/load_study.py --no-apfc, 4 seeds of 24 h): LV-1 needs a
+# median 306 kVAr, 321 at the 95th percentile (the two idling 160 kW press motors, the CED line, the
+# punch's hydraulic unit); LV-2 60 and 114 at the 95th
+# percentile; the largest need seen: LV-1 390, LV-2 176 kVAr. The same rule as above (cover the
+# largest need seen, in whole 25 kVAr steps): LV-1 16 steps (400 kVAr), LV-2 8 steps (200 kVAr).
+APFC_LV1 = ApfcRating(step_kvar=25.0, steps=16, v_rated_ll=440.0, target_pf=0.98, switch_s=30.0,
                       reconnect_s=180.0, source="sizing from the shop run; IEC 60831-1 discharge time")
-APFC_LV2 = ApfcRating(step_kvar=25.0, steps=4, v_rated_ll=440.0, target_pf=0.98, switch_s=30.0,
+APFC_LV2 = ApfcRating(step_kvar=25.0, steps=8, v_rated_ll=440.0, target_pf=0.98, switch_s=30.0,
                       reconnect_s=180.0, source="sizing from the shop run; IEC 60831-1 discharge time")
+
+# ---------------------------------------------------------------------- the truck frame line --
+# Product (operator, 2026-10-15): a riveted heavy-truck ladder frame. Process: Press Kogyo chassis
+# frame page (NC piercing of plate up to 10 mm and 12 m; U forming on a 5,000 t press with an offset
+# bender; medium and heavy frames painted as parts; assembly mainly with rivets and bolts; heavy
+# cargo frames 7.4 to 12.0 m, 840 to 940 kg). Tata Motors Jamshedpur plant profile (CII energy award
+# 2024): a 5,000 t press, CNC punching, CED painting, plant capacity 440 vehicles per day.
+from .press_brake import Plate   # noqa: E402
+from .frame_line import CedRating, PunchRating, RivetRating, SideMember   # noqa: E402
+
+# ABB M3BP 315 SMD 4, 160 kW, 4-pole, 400 V, 50 Hz, IE3 (ABB catalogue 9AKK106128 EN 03-2014, process
+# performance IE3 cast iron motors 280-355): 1488 r/min, 284 A, efficiency 95.8 % (75 %: 95.9 %,
+# 50 %: 95.5 %), PF 0.85, Is/In 6.9, 1026 N m, Tl/Tn 2.2, Tb/Tn 3.0, J 3.20 kg m2, 1000 kg. Not in
+# the catalogue: no-load current and starting times (the fit runs without them).
+ABB_160KW = MotorRating(
+    p_kw=160.0, v_ll=400.0, f_hz=50.0, poles=4, n_rpm=1488.0, i_a=284.0,
+    eta=0.958, pf=0.85, is_in=6.9, ts_tn=2.2, tmax_tn=3.0, j_kgm2=3.20,
+    eta_75=0.959, eta_50=0.955, rise_k=80.0, t_amb_c=40.0, mass_kg=1000.0,
+    source="ABB catalogue 9AKK106128 EN 03-2014, M3BP 315 SMD 4 (3GBP 312240)",
+)
+
+# Side member: S500MC (EN 10149-2, cold forming steel, longitudinal beams: UTS 550 to 700 MPa,
+# Salzgitter S500MC sheet; Tata Steel lists 2 to 12 mm). 8 mm and 9.0 m (project choices inside Press
+# Kogyo's 10 mm and 7.4 to 12 m; a Navistar side member is listed at 9.5 mm). A 300 x 90 mm channel
+# (project choice): 271 kg per member, so a frame of two members and its cross members comes to about
+# 840 kg, the Press Kogyo heavy cargo range. Holes 17 mm for 16 mm fasteners (Huck-Fit metric sizes
+# 12, 16, 20 mm). Holes per member vary with the order (Hörmann: up to 800 per member, batches of
+# one are common): 250 to 400 (project choice).
+SIDE_MEMBER = SideMember(uts_mpa=625.0, t_mm=8.0, length_m=9.0, web_mm=300.0, flange_mm=90.0, hole_mm=17.0,
+                         holes_min=250, holes_max=400,
+                         source="EN 10149-2 S500MC; Press Kogyo frame sizes; Hörmann hole counts")
+
+# The U forming of one side member on lmp-1: two bend lines over the 9 m length, V = 10 t as for
+# press-1, the punch travels the 90 mm flange height. Force 2 x 1.42 UTS t^2 L / V = 12.8 MN (1,300 t),
+# inside the 5,000 t rating.
+SIDE_MEMBER_U = Plate(uts_mpa=625.0, t_mm=8.0, length_m=9.0, v_mm=80.0, bends=2, travel_mm=90.0)
+
+# lmp-1, the long member press: a 5,000 t hydraulic press (Schuler SHP 50000 data from two used-press
+# listings: 2 x 160 kW main drive, 2 x 350 l/min pumps, fast approach 360 mm/s, working 6.5 mm/s,
+# return 234 mm/s, 900 mm stroke). System pressure 300 bar (project choice): ram area 1.64 m2, so the
+# working speed needs 640 l/min, the two pumps at a volumetric efficiency of 0.95 (derived; it matches
+# the listing). Return area: the slide (project choice 30 t) and the guide friction (2 % of the
+# rated force, as press-1) lifted at half the system pressure: 0.085 m2, a share of 0.052 (derived).
+# The return then runs at about 125 mm/s on the main pumps; the listing's 234 mm/s needs a prefill
+# or accumulator circuit that the model does not have. Project choices: tank 6,000 l, oil cooler
+# 40 kW on cool-1, oil trip 70 C as press-1.
+LMP_5000 = PressBrakeRating(
+    force_kn=5000.0 * 9.81, p_max_bar=300.0, v_approach=360.0, v_bend=6.5, v_return=234.0, stroke_mm=900.0,
+    tank_l=6000.0, ram_mass_kg=30000.0, annulus_frac=0.052, trip_oil_c=70.0, oil_cooler_kw=40.0,
+    water_kgs=1.2, source="Schuler SHP 50000 listings (surplusrecord, machinehub); Tata Jamshedpur 5,000 t press")
+
+# pierce-1: a CNC hydraulic punch for side members. A 450 kN head (Peddinghaus Forax 450 listing:
+# 450 kN). One hit in 1.2 s with the positioning (Cole-Tuve punching line: as little as 1.2 s for two
+# holes; one hole per hit here, project choice), 0.3 s of it the working stroke over 20 mm (project
+# choices). 300 bar, circulation 10 bar, pump efficiency 0.9, axes 3 kW while positioning, punch life
+# 20,000 hits with 15 % more force at its end, punch change 600 s (project choices; no maker data
+# found). Hydraulic unit on the ABB 22 kW motor.
+PUNCH_450 = PunchRating(force_kn=450.0, p_max_bar=300.0, stroke_mm=20.0, stroke_s=0.3, hit_s=1.2,
+                        p_circ_bar=10.0, eta_hm=0.90, axes_kw=3.0, life_hits=20000, wear_force_gain=0.15,
+                        change_s=600.0,
+                        source="Peddinghaus Forax 450 listing; Cole-Tuve line cycle; project choices")
+
+# ced-1: cathodic electrodeposition line for the frame parts. CED bath 30 C (patents: 15 to 40 C,
+# preferably 25 to 35 C), 300 V (typically 250 to 400 V), 135 s deposition at 32 C (example patent),
+# coulomb yield 20 mg/C (preferred 15 to 25 mg/C), 20 um film (project choice) at 1.2 g/cm3 (project
+# choice). Zinc phosphate at 50 C for 120 s (SciELO study: 40 and 50 C, 2 to 4 min); degrease 55 C
+# for 180 s (project choice: no cleaner sheet found). Cure: oven air 200 C, 20 min (patents: 150 to
+# 180 C metal for 12 to 30 min; air setpoint project choice). Project choices: tanks 40 m3 (members
+# of 9 m), heated tank loss 2 kW/K, tank burners 300 kW, bath 45 m3 circulated at 10 kg/s, pumps and
+# ultrafiltration 30 kW, rectifier efficiency 0.9, rinses 60 s, hoist move 45 s, oven burner 600 kW,
+# oven loss 1.5 kW/K, oven capacity 20 MJ/K, oven fans 30 kW.
+CED_LINE = CedRating(degrease_c=55.0, phosphate_c=50.0, tank_m3=40.0, tank_ua_w_k=2000.0, tank_burner_kw=300.0,
+                     tank_band_k=1.0, bath_c=30.0, bath_m3=45.0, bath_circ_kgs=10.0, pumps_kw=30.0, volts=300.0,
+                     deposition_s=135.0, ramp_s=30.0, film_um=20.0, film_density=1.2, yield_mg_c=20.0,
+                     rect_eta=0.90, stage_s=(180.0, 60.0, 120.0, 60.0, 60.0), transfer_s=45.0, oven_c=200.0,
+                     oven_kw=600.0, oven_ua_w_k=1500.0, oven_c_j_k=20e6, cure_s=1200.0, oven_fans_kw=30.0,
+                     source="CED patents; SciELO phosphating study; project choices")
+
+# rivet-1: the ladder assembly. 120 fasteners per frame, two tools and operators (project choices),
+# 16 mm Huck-Fit class swaged
+# at 150 kN (project choice, inside Hydac's 500 kN mobile riveting systems for truck frames), 1 sigma
+# of 2 % (project choice), 4 s swage, hydraulic unit 2 kW idle and 13 kW more per tool swaging (project choices).
+RIVET = RivetRating(fasteners=120, tools=2, install_kn=150.0, sigma_frac=0.02, swage_s=4.0, hpu_idle_kw=2.0,
+                    hpu_peak_kw=15.0, source="Hydac riveting systems; Huck-Fit sizes; project choices")

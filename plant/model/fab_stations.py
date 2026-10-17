@@ -57,12 +57,14 @@ class PlasmaCutter:
         self.plates = 0
         self.p_el = 0.0
         self.u_arc = 0.0
+        self.gated, self.go = False, False   # gated: the line starts each plate set (plant flow)
 
     def step(self, dt):
         r = self.r
         self.t_state += dt
         seg_m = self.cut_m / self.pierces
-        if self.state == "load" and self.t_state >= self.load_s:
+        if self.state == "load" and (self.go if self.gated else self.t_state >= self.load_s):
+            self.go = False
             self.state, self.t_state, self.n_pierce = "traverse", 0.0, 0
         elif self.state == "traverse" and self.t_state >= 4.0:
             if self.air_bar < r.air_bar_min:
@@ -114,10 +116,12 @@ class WeldingCell:
         self.tip_wear = 0.0          # fault: 0 healthy .. 1 badly worn (current ripple)
         self.parts = 0
         self.i = self.u = self.p_el = 0.0
+        self.gated, self.go = False, False   # gated: the line loads each part (plant flow)
 
     def step(self, dt):
         self.t_state += dt
-        if self.state == "change" and self.t_state >= self.change_s:
+        if self.state == "change" and (self.go if self.gated else self.t_state >= self.change_s):
+            self.go = False
             self.state, self.t_state, self.seam = "weld", 0.0, 0
         elif self.state == "weld" and self.t_state >= self.seam_s:
             self.seam += 1
@@ -168,14 +172,30 @@ class ShotBlast:
         self.dust_pa_per_s = 0.2         # filter loading rate while blasting (project choice)
         self.p_el = 0.0
         self.flow_m3h = r.collector_m3h
+        # gated: the turbines run idle with the abrasive valves shut between parts and blast only
+        # while a part passes (`begin(pass_s)`, plant flow); ungated: blasting all the time
+        self.gated, self.blast_left, self.parts = False, 0.0, 0
+
+    def begin(self, pass_s):
+        self.blast_left = pass_s
+
+    @property
+    def busy(self):
+        return self.blast_left > 0.0
 
     def step(self, dt):
         r = self.r
         if not self.running:
             self.p_el = 0.0
             return
-        p_t = sum(r.turbine_kw * (r.idle_frac + (1.0 - r.idle_frac) * f) for f in self.feed)
-        self.dp_filter += self.dust_pa_per_s * dt
+        blasting = (not self.gated) or self.blast_left > 0.0
+        if self.gated and self.blast_left > 0.0:
+            self.blast_left -= dt
+            if self.blast_left <= 0.0:
+                self.blast_left, self.parts = 0.0, self.parts + 1
+        p_t = sum(r.turbine_kw * (r.idle_frac + (1.0 - r.idle_frac) * (f if blasting else 0.0)) for f in self.feed)
+        if blasting:
+            self.dp_filter += self.dust_pa_per_s * dt
         floor = r.dp_clean_pa + self.clog * (r.dp_clean_trigger_pa - r.dp_clean_pa) * 2.0
         if self.dp_filter >= r.dp_clean_trigger_pa:
             self.dp_filter = max(floor, r.dp_clean_pa)              # a pulse cleaning cycle
@@ -189,8 +209,10 @@ class ShotBlast:
         return complex(self.p_el, _pf_q(self.p_el, self.r.pf))
 
     def tags(self):
+        on = (not self.gated) or self.blast_left > 0.0
         return {"power_kw": self.p_el / 1000.0, "filter_dp_pa": self.dp_filter,
-                "air_m3h": self.flow_m3h, "abrasive_kg_min": sum(self.feed) * self.r.abrasive_kg_min}
+                "air_m3h": self.flow_m3h, "abrasive_kg_min": sum(self.feed) * self.r.abrasive_kg_min if on else 0.0,
+                "parts": self.parts}
 
 
 # ------------------------------------------------------------------------------ paint booth --
@@ -219,10 +241,34 @@ class PaintBooth:
         self.t_oven, self.t_amb = t_amb, t_amb
         self.p_el = 0.0
         self.flow_share = 1.0
+        # gated (plant flow): the booth sprays only while a part is in it (`begin(spray_s, bake_s,
+        # part_kg)`); the part then bakes in the oven and takes its heat (steel 460 J/kg K, from the
+        # shop air to the setpoint, spread over the bake). Ungated: spraying all the time.
+        self.gated = False
+        self.spray_left = self.bake_left = 0.0
+        self.part_w = 0.0
+        self.parts = 0
+
+    def begin(self, spray_s, bake_s, part_kg):
+        self.spray_left, self.bake_left = spray_s, bake_s
+        self.part_w = part_kg * 460.0 * max(0.0, self.r.oven_setpoint_c - self.t_amb) / max(bake_s, 1.0)
+
+    @property
+    def busy(self):
+        return self.spray_left > 0.0 or self.bake_left > 0.0
 
     def step(self, dt):
         r = self.r
-        self.dp += self.spray_pa_per_h * dt / 3600.0
+        spraying = (not self.gated) or self.spray_left > 0.0
+        if self.gated:
+            if self.spray_left > 0.0:
+                self.spray_left -= dt
+            elif self.bake_left > 0.0:
+                self.bake_left -= dt
+                if self.bake_left <= 0.0:
+                    self.bake_left, self.part_w, self.parts = 0.0, 0.0, self.parts + 1
+        if spraying:
+            self.dp += self.spray_pa_per_h * dt / 3600.0
         if self.dp >= r.dp_change_pa:
             self.dp = r.dp_clean_pa                                 # the filters are changed
         extra = self.dp - r.dp_clean_pa
@@ -230,7 +276,8 @@ class PaintBooth:
         self.p_el = 1000.0 * r.exhaust_kw * self.flow_share * (r.fan_dp_pa + extra) / r.fan_dp_pa
         e = r.oven_setpoint_c - self.t_oven
         self.burner.firing = 0.0 if e < 0.5 else min(1.0, 0.1 + 0.2 * e)
-        q = self.burner.heat_w - r.oven_ua_w_k * (self.t_oven - self.t_amb)
+        baking = self.gated and self.spray_left <= 0.0 and self.bake_left > 0.0
+        q = self.burner.heat_w - r.oven_ua_w_k * (self.t_oven - self.t_amb) - (self.part_w if baking else 0.0)
         self.t_oven += q / r.oven_c_j_k * dt
 
     def s_va(self):
@@ -238,7 +285,7 @@ class PaintBooth:
 
     def tags(self):
         return {"exhaust_kw": self.p_el / 1000.0, "filter_dp_pa": self.dp, "air_share": self.flow_share,
-                "oven_c": self.t_oven, "oven_gas_m3h": self.burner.flow_m3h}
+                "oven_c": self.t_oven, "oven_gas_m3h": self.burner.flow_m3h, "parts": self.parts}
 
 
 # ------------------------------------------------------------------------------- qa-scanner --
@@ -261,6 +308,14 @@ class QaScanner:
         self.parts = 0
         self.resets = 0
         self.p_el = r.p_w
+        self.gated, self.inspect_left = False, 0.0   # gated: one inspection per part (plant flow)
+
+    def begin(self, inspect_s):
+        self.inspect_left = inspect_s
+
+    @property
+    def busy(self):
+        return self.inspect_left > 0.0
 
     def step(self, dt, v_pu):
         r = self.r
@@ -278,7 +333,12 @@ class QaScanner:
                 self.state, self.t_state = "run", 0.0
         else:
             self.p_el = r.p_w
-            if self.t_state >= self.inspect_s:
+            if self.gated:
+                if self.inspect_left > 0.0:
+                    self.inspect_left -= dt
+                    if self.inspect_left <= 0.0:
+                        self.inspect_left, self.parts = 0.0, self.parts + 1
+            elif self.t_state >= self.inspect_s:
                 self.parts += 1
                 self.t_state = 0.0
 

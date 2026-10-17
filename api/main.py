@@ -10,7 +10,7 @@ The integrity checks (integrity.py, SCENARIOS.md 5.2) compare what SCADA reports
 physics. They are invariant checks, not causal inference.
 
 Env: ENGINE_URL, AGGREGATOR_URL, PROM_URL, PLANT_URL, SCADA_URL, EWS_URL, ENGINE_SIGNAL,
-ENGINE_SIGNALS, TOPOLOGY_NAMESPACES, OLLAMA_HOST, OLLAMA_MODEL, RECLAIM_FRAC, RESIZE_FRAC,
+ENGINE_SIGNALS, TOPOLOGY_NAMESPACES, OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_KEEP_ALIVE, RECLAIM_FRAC, RESIZE_FRAC,
 VISR_OPERATOR_TOKEN, AUDIT_PATH, FLEET_NS, FLEET_ENROLL_KEY, SCADA_WRITE_TOKEN, VPLC_IMAGE, TASKS_DIR,
 DERATE_TARGET_PCT, RELIEF_CHECK_S, FLEET_BACKGROUND, INTEGRITY_BACKGROUND, RECONCILE_S.
 """
@@ -51,7 +51,11 @@ SIGNALS = [s.strip() for s in os.environ.get("ENGINE_SIGNALS", "psi_io,psi_cpu,p
 # The one LLM. Unset OLLAMA_HOST -> /api/narrative serves the deterministic template only, so the
 # verdict never depends on the model being reachable (the demo must survive a model outage).
 OLLAMA = os.environ.get("OLLAMA_HOST", "").rstrip("/")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e4b-it-qat")  # default matches deploy/api.yaml (QAT 6.1GB)
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4-text:e4b")  # default matches deploy/api.yaml (text-only e4b)
+# Every caller sends keep_alive, and the last call sets the unload time. -1 keeps the model loaded,
+# so the narrator and forgemon Ask never reload it. A duration such as "10m" is also valid.
+_KEEP = os.environ.get("OLLAMA_KEEP_ALIVE", "-1").strip()
+OLLAMA_KEEP_ALIVE = int(_KEEP) if _KEEP.lstrip("-").isdigit() else _KEEP
 # Right-sizing thresholds (PS-Q4): p95 usage vs requests/limits -> KAI scheduler verbs.
 RECLAIM_FRAC = float(os.environ.get("RECLAIM_FRAC", "0.5"))   # p95 < this * request -> over-provisioned -> reclaim
 RESIZE_FRAC = float(os.environ.get("RESIZE_FRAC", "0.85"))    # p95 > this * limit  -> at-risk -> resize up
@@ -441,7 +445,7 @@ def _ollama_json(prompt, timeout=90):
     if not OLLAMA:
         return None
     body = json.dumps({"model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "think": False,
-                       "format": "json", "keep_alive": "10m",
+                       "format": "json", "keep_alive": OLLAMA_KEEP_ALIVE,
                        "options": {"temperature": 0, "seed": 7}}).encode()
     req = urllib.request.Request(OLLAMA + "/api/generate", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
@@ -515,7 +519,7 @@ def _ollama_chat(messages, tools, timeout=60):
     if not OLLAMA:
         return None
     body = json.dumps({"model": OLLAMA_MODEL, "messages": messages, "tools": tools, "stream": False,
-                       "think": False, "keep_alive": "10m", "options": {"temperature": 0, "seed": 7}}).encode()
+                       "think": False, "keep_alive": OLLAMA_KEEP_ALIVE, "options": {"temperature": 0, "seed": 7}}).encode()
     req = urllib.request.Request(OLLAMA + "/api/chat", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
     try:

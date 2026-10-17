@@ -30,7 +30,7 @@ const INCIDENT = {
     incipient: [],
     meta: { pods: 16, active: 1, accepted_edges: 5, signal: "bus_voltage" },
   },
-  "/api/narrative": { text: "press-1 is the likely root of the rail-A voltage sag. cnc-1 and qa-scanner-1 share the rail. Recommend derating press-1.", source: "llm", model: "gemma4:e4b-it-qat" },
+  "/api/narrative": { text: "press-1 is the likely root of the rail-A voltage sag. cnc-1 and qa-scanner-1 share the rail. Recommend derating press-1.", source: "llm", model: "gemma4-text:e4b" },
   "/api/topology": { edges: [{ src: "tag-server", dst: "historian-db", port: 5432 }], source: "caretta" },
   "/api/pods": [
     { workload: "tag-server", namespace: "plant", signal: "psi_io", value: 0.94, anomalous: true },
@@ -353,7 +353,7 @@ function rec(o) {
     blind: false, ...o, phases }, recent: [] };
 }
 const narr = (sections, source = "llm") => ({ text: Object.values(sections).join(" "), sections, source,
-  model: source === "llm" ? "gemma4:e4b-it-qat" : null, tag: 3, status: "active" });
+  model: source === "llm" ? "gemma4-text:e4b" : null, tag: 3, status: "active" });
 const P1 = { asset: "press-1", ts: T0 - 40, reason: "press-1 draws 80 A, 86 % above its normal 43 A, and rail psu-a is at 382 V" };
 INCIDENT["/api/incident"] = rec({ origin: P1, driver: P1, chain: ["press-1"], victims: ["cnc-1", "qa-scanner-1"],
   phases: [[75, "open", "a forecast card opened"], [75, "card", "forecast: press-1 heads for the 80 °C trip in about 167 s"],

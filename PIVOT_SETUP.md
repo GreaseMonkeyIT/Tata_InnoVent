@@ -71,7 +71,13 @@ curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER
 # ollama + the narrator model (optional — /api/narrative falls back to a template without it)
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull gemma4:e4b-it-qat
+# the text-only copy that the api uses (no vision projector: 41 of 43 layers on a 4 GB GPU, not 15)
+bash ~/Tata_InnoVent/deploy/make-gemma4-text.sh
 ```
+
+The api sends `keep_alive: -1` (`OLLAMA_KEEP_ALIVE` in `deploy/api.yaml`), so the model stays loaded.
+Keep the Ollama service setting `OLLAMA_MAX_LOADED_MODELS=1`. Then every caller must use the same model
+name and options, or Ollama unloads one model to load the other.
 
 ## 1. Repo prep (fixes the "could not run ./deploy/skctl" problem)
 

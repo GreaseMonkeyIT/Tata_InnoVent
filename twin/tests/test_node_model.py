@@ -24,6 +24,51 @@ def test_filter_bank_step_response():
     assert y[0] == pytest.approx(1.0 - np.exp(-1.0), rel=1e-9)
 
 
+def _run_by_steps(U, dt, taus):
+    """The reference: the sample loop that `run` replaced (reset to U[0], then `step` per sample)."""
+    fb = FilterBank(U.shape[1], taus)
+    fb.reset(U[0])
+    return np.stack([fb.step(u, dt) for u in U]), fb.state
+
+
+@pytest.mark.parametrize("T,n", [(1, 1), (2, 3), (7, 1), (100, 2), (2000, 5), (21601, 12)])
+def test_filter_bank_run_equals_sample_loop(T, n):
+    """The blocked `run` equals the sample loop to 1e-9 of each input's scale, on random series of
+    several lengths and widths with offsets, scales up to 1e5 and steps."""
+    rng = np.random.default_rng(T + n)
+    U = rng.normal(size=(T, n)) * rng.choice([1.0, 1e3, 1e5], n) + rng.normal(size=n) * 100.0
+    U[T // 2:, 0] += 50.0
+    taus = (5.0, 30.0, 120.0, 600.0, 1800.0, 7200.0)
+    ref, state = _run_by_steps(U, 1.0, taus)
+    fb = FilterBank(n, taus)
+    out = fb.run(U, 1.0)
+    scale = 1.0 + np.repeat(np.abs(U).max(axis=0), len(taus))
+    assert out.shape == ref.shape
+    assert np.max(np.abs(out - ref) / scale) < 1e-9
+    assert np.max(np.abs(fb.state - state) / scale.reshape(n, -1)) < 1e-9     # `step` continues from it
+
+
+def test_filter_bank_run_equals_sample_loop_on_node_data():
+    """The same on real plant tags: compressor-1's feeds and commands from a 20 min plant run, at
+    the 0.1 s and 1 s sample times."""
+    from model.plant import UtilitiesPlant
+    from model.wiring import wiring
+    p = UtilitiesPlant(seed=3, weather="site")
+    doc = wiring(p)["compressor-1"]
+    tags = [t for t in doc["feeds"] + doc["measures"]]
+    rows = []
+    for _ in range(12000):
+        p.step(0.1)
+        tg = p.tags()
+        rows.append([float(tg[t]) for t in tags])
+    U = np.asarray(rows)
+    for dt, Ud in ((0.1, U), (1.0, U[::10])):
+        ref, _ = _run_by_steps(Ud, dt, (5.0, 30.0, 120.0, 600.0, 1800.0, 7200.0))
+        out = FilterBank(Ud.shape[1], (5.0, 30.0, 120.0, 600.0, 1800.0, 7200.0)).run(Ud, dt)
+        scale = 1.0 + np.repeat(np.abs(Ud).max(axis=0), 6)
+        assert np.max(np.abs(out - ref) / scale) < 1e-9
+
+
 def test_gradients_match_finite_differences():
     rng = np.random.default_rng(0)
     m = NodeModel(["a", "b"], ["y"], hidden=(5,), taus=(3.0,))

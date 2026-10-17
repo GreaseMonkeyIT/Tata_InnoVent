@@ -32,7 +32,10 @@ spec:
             - { name: ENGINE_URL,     value: "http://correlation-engine.aiops.svc:9100" }
             - { name: AGGREGATOR_URL, value: "http://aggregator.aiops.svc:9000" }
             - { name: PLANT_URL,      value: "http://plant-sim.plant.svc:9200" }   # plane-2 sim -> /api/plant
-            - { name: OLLAMA_MODEL,   value: "gemma4:e4b-it-qat" }   # QAT 6.1GB (was e4b=11GB MXFP8 -> swapped the box); e2b-it-qat=4.3GB fits the 4GB GPU best
+            # gemma4:e4b-it-qat without the vision projector: 41 of 43 layers on the GPU (15 with it).
+            # forgemon Ask uses the same model, so the two callers share one loaded copy.
+            - { name: OLLAMA_MODEL,   value: "gemma4-text:e4b" }
+            - { name: OLLAMA_KEEP_ALIVE, value: "-1" }   # -1 keeps the model loaded; "10m" unloads it after 10 min idle
             # Ollama runs on the host (node IP; must listen on 0.0.0.0). Baked here so `kubectl apply`
             # no longer wipes it. Change to your node IP if it differs; empty -> template fallback.
             - { name: OLLAMA_HOST,    value: "http://192.168.1.239:11434" }

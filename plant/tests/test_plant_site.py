@@ -166,7 +166,7 @@ def test_press2_brake_time_moves_with_friction_and_speed():
 
 
 def test_material_batches_change_plate_and_blank():
-    p = UtilitiesPlant(seed=2, with_assembly=False)
+    p = UtilitiesPlant(seed=2, with_assembly=False, flow=False)
     seen_uts, seen_t = set(), set()
     for _ in range(int(3 * 3600 / 0.2)):
         p.step(0.2)

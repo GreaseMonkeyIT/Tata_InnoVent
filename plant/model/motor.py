@@ -51,6 +51,7 @@ import os
 from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 
+from ._jit import JIT, njit
 from .fit import golden_max, nelder_mead
 
 CU_INV_ALPHA = 234.5     # copper: R(T) = R0 * (234.5 + T) / (234.5 + T0) (IEC 60034-1, 8.6.2.3.3)
@@ -155,6 +156,105 @@ class OperatingPoint:
 def solve(c, rating, s, v_ll, f_hz, t_wind_c=None):
     """Solve the circuit at slip s. Reactances scale with f / f_N. Resistances follow the winding
     temperature. Rfe scales with f / f_N, so the iron loss at constant V/f rises with frequency."""
+    s, k, kcu, v_ph, i1, e, i2, p_ag, w_sync, p_ll, p_rot = _solve_core(c, rating, s, v_ll, f_hz, t_wind_c)
+    s_in = 3.0 * v_ph * i1.conjugate()
+    return OperatingPoint(
+        s=s, i1=i1, e=e, i2=i2, p_in=s_in.real, q_in=s_in.imag,
+        p_ag=p_ag, p_cu1=3.0 * abs(i1) ** 2 * c.r1 * kcu, p_fe=3.0 * abs(e) ** 2 / (c.rfe * k),
+        p_cu2=s * p_rot, t_em=p_rot / w_sync if w_sync > 0 else 0.0, p_ll=p_ll)
+
+
+def torque_em(c, rating, s, v_ll, f_hz, t_wind_c=None):
+    """solve(...).t_em alone (the motor's step needs only the torque in its inner loops): the same
+    operations, so the same value bit for bit, without building the operating point."""
+    p_rot, w_sync = _solve_core(c, rating, s, v_ll, f_hz, t_wind_c)[-1], 4.0 * math.pi * f_hz / rating.poles
+    return p_rot / w_sync if w_sync > 0 else 0.0
+
+
+def _solve_core(c, rating, s, v_ll, f_hz, t_wind_c):
+    if JIT:
+        t = rating.t_ref_c if t_wind_c is None else t_wind_c
+        return _solve_core_k(_packed(c, rating), s, v_ll, f_hz, t)
+    return _solve_core_py(c, rating, s, v_ll, f_hz, t_wind_c)
+
+
+_PACK = {}
+
+
+def _packed(c, rating):
+    """The circuit and rating values the kernel needs, as an array (kept per (c, rating) pair)."""
+    key = (id(c), id(rating))
+    e = _PACK.get(key)
+    if e is None or e[0] is not c or e[1] is not rating:
+        import numpy as np
+        if len(_PACK) > 256:
+            _PACK.clear()
+        arr = np.array([rating.f_hz, rating.t_ref_c, c.r1, c.x1, c.xm, c.rfe, c.r2a, c.x2a, c.r2b, c.x2b,
+                        c.p_ll_n, c.sat, rating.poles, rating.i_a, rating.is_in, rating.t_n, 2.0,
+                        c.p_fw_n, rating.n_rpm], dtype=float)
+        e = _PACK[key] = (c, rating, arr)
+    return e[2]
+
+
+@njit
+def _solve_core_k(q, s, v_ll, f_hz, t):
+    """_solve_core_py compiled (plant/model/_jit.py): the same operations in the same order. q is
+    _packed(c, rating); q[16] = 2.0 read at run time, so (x) ** q[16] calls the C pow as Python's
+    x ** 2 does."""
+    fr, t_ref, r1, x1, xm, rfe, r2a, x2a, r2b, x2b = q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9]
+    p_ll_n, sat, poles, i_a, is_in, t_n, two = q[10], q[11], q[12], q[13], q[14], q[15], q[16]
+    k = f_hz / fr
+    kcu = (CU_INV_ALPHA + t) / (CU_INV_ALPHA + t_ref)
+    kal = (AL_INV_ALPHA + t) / (AL_INV_ALPHA + t_ref)
+    if abs(s) < 1e-9:
+        s = 1e-9
+    v_ph = v_ll / math.sqrt(3.0)
+    ym = 1.0 / (rfe * k) + 1.0 / complex(0.0, xm * k)
+    ksat = 1.0
+    z1 = complex(0.0, 0.0)
+    y2 = complex(0.0, 0.0)
+    zp = complex(0.0, 0.0)
+    i1 = complex(0.0, 0.0)
+    for _ in range(4 if sat > 0 else 1):
+        z1 = complex(r1 * kcu, x1 * k * ksat)
+        y2 = (1.0 / complex(r2a * kal / s, x2a * k * ksat)
+              + 1.0 / complex(r2b * kal / s, x2b * k * ksat))
+        zp = 1.0 / (ym + y2)
+        i1 = v_ph / (z1 + zp)
+        if sat <= 0.0:                               # leakage_factor, written out
+            ksat_new = 1.0
+        else:
+            x = abs(i1) / i_a
+            xs1 = max(0.6 * is_in, 2.0)
+            f = (x - 1.5) / (xs1 - 1.5)
+            ksat_new = 1.0 - sat * min(1.0, max(0.0, f))
+        if abs(ksat_new - ksat) < 1e-6:
+            break
+        ksat = 0.5 * (ksat + ksat_new)
+    e = i1 * zp
+    i2 = e * y2
+    p_ag = 3.0 * (e * i2.conjugate()).real
+    w_sync = 4.0 * math.pi * f_hz / poles
+    t_raw = p_ag / w_sync if w_sync > 0 else 0.0
+    p_ll = p_ll_n * (t_raw / t_n) ** two * (f_hz / fr) if p_ll_n > 0 else 0.0
+    p_ll = min(p_ll, max(0.0, p_ag)) if p_ag > 0 else 0.0
+    p_rot = p_ag - p_ll
+    return s, k, kcu, v_ph, i1, e, i2, p_ag, w_sync, p_ll, p_rot
+
+
+@njit
+def _net_torque_k(q, w, v_ll, f_hz, t):
+    """Motor._tq compiled: the electromagnetic torque at shaft speed w less the friction and windage
+    drag (torque_em and mech_losses written out, the same operations)."""
+    w_sync = 4.0 * math.pi * f_hz / q[12]
+    s = 1.0 - w / w_sync
+    p_rot = _solve_core_k(q, s, v_ll, f_hz, t)[10]
+    t_em = p_rot / w_sync if w_sync > 0 else 0.0
+    w_n = q[18] * math.pi / 30.0
+    return t_em - q[17] / w_n * (w / w_n)
+
+
+def _solve_core_py(c, rating, s, v_ll, f_hz, t_wind_c):
     k = f_hz / rating.f_hz
     t = rating.t_ref_c if t_wind_c is None else t_wind_c
     kcu = (CU_INV_ALPHA + t) / (CU_INV_ALPHA + rating.t_ref_c)
@@ -176,7 +276,6 @@ def solve(c, rating, s, v_ll, f_hz, t_wind_c=None):
         ksat = 0.5 * (ksat + ksat_new)
     e = i1 * zp
     i2 = e * y2
-    s_in = 3.0 * v_ph * i1.conjugate()
     p_ag = 3.0 * (e * i2.conjugate()).real
     w_sync = 4.0 * math.pi * f_hz / rating.poles
     # Additional load losses vary with the square of the torque (IEC 60034-2-1). They come out of
@@ -185,10 +284,7 @@ def solve(c, rating, s, v_ll, f_hz, t_wind_c=None):
     p_ll = c.p_ll_n * (t_raw / rating.t_n) ** 2 * (f_hz / rating.f_hz) if c.p_ll_n > 0 else 0.0
     p_ll = min(p_ll, max(0.0, p_ag)) if p_ag > 0 else 0.0
     p_rot = p_ag - p_ll
-    return OperatingPoint(
-        s=s, i1=i1, e=e, i2=i2, p_in=s_in.real, q_in=s_in.imag,
-        p_ag=p_ag, p_cu1=3.0 * abs(i1) ** 2 * c.r1 * kcu, p_fe=3.0 * abs(e) ** 2 / (c.rfe * k),
-        p_cu2=s * p_rot, t_em=p_rot / w_sync if w_sync > 0 else 0.0, p_ll=p_ll)
+    return s, k, kcu, v_ph, i1, e, i2, p_ag, w_sync, p_ll, p_rot
 
 
 def leakage_factor(c, rating, amps):
@@ -432,7 +528,11 @@ class InductionMotor:
     def _params(self):
         if self.rotor_r_factor == 1.0:
             return self.c
-        return replace(self.c, r2a=self.c.r2a * self.rotor_r_factor, r2b=self.c.r2b * self.rotor_r_factor)
+        got = self.__dict__.get("_params_cache")
+        if got is None or got[0] is not self.c or got[1] != self.rotor_r_factor:   # the same values, made once
+            got = self._params_cache = (self.c, self.rotor_r_factor, replace(
+                self.c, r2a=self.c.r2a * self.rotor_r_factor, r2b=self.c.r2b * self.rotor_r_factor))
+        return got[2]
 
     def _torque(self, c, w, v_ll, f_hz):
         """(net motor torque at the shaft, operating point, drag power)."""
@@ -441,6 +541,18 @@ class InductionMotor:
         op = solve(c, self.rating, s, v_ll, f_hz, self.t_wind)
         t_drag, p_drag = mech_losses(c, self.rating, w)
         return op.t_em - t_drag, op, p_drag
+
+    def _tq(self, c, w, v_ll, f_hz):
+        """_torque(...)[0], the net torque alone (the same value)."""
+        if JIT:
+            qc = self.__dict__.get("_qc")
+            if qc is None or qc[0] is not c:
+                qc = self._qc = (c, _packed(c, self.rating))
+            t = self.rating.t_ref_c if self.t_wind is None else self.t_wind
+            return _net_torque_k(qc[1], w, v_ll, f_hz, t)
+        w_sync = 4.0 * math.pi * f_hz / self.rating.poles
+        s = 1.0 - w / w_sync
+        return torque_em(c, self.rating, s, v_ll, f_hz, self.t_wind) - mech_losses(c, self.rating, w)[0]
 
     def step(self, dt, v_ll, f_hz, load_torque, j_load=None, star=False):
         """Advance dt seconds. load_torque(w) gives the load torque in N m at shaft speed w (rad/s),
@@ -470,9 +582,9 @@ class InductionMotor:
             h = min(h, t_left)
             w0 = self.w
             if energized:
-                tm, _, _ = self._torque(c, w0, v_ll, f_hz)
+                tm = self._tq(c, w0, v_ll, f_hz)
                 dw = max(1e-3, 1e-4 * abs(w0))
-                dtm = (self._torque(c, w0 + dw, v_ll, f_hz)[0] - tm) / dw
+                dtm = (self._tq(c, w0 + dw, v_ll, f_hz) - tm) / dw
             else:
                 tm = -mech_losses(self.c, self.rating, w0)[0]    # coasting: friction and windage
                 dtm = 0.0
@@ -489,9 +601,9 @@ class InductionMotor:
                 # after a load drop can overshoot synchronous speed and the motor seems to
                 # generate (2026-10-15, press-1 at dt 0.1 s: -10.7 kW).
                 for _ in range(8):
-                    tm1 = self._torque(c, w1, v_ll, f_hz)[0]
+                    tm1 = self._tq(c, w1, v_ll, f_hz)
                     g = self.j * (w1 - w0) / h - (tm1 - load_torque(w1) - fric(w1))
-                    dtm1 = (self._torque(c, w1 + dw, v_ll, f_hz)[0] - tm1) / dw
+                    dtm1 = (self._tq(c, w1 + dw, v_ll, f_hz) - tm1) / dw
                     dl1 = (load_torque(w1 + 1e-3) - load_torque(w1)) / 1e-3
                     dg = self.j / h - dtm1 + dl1
                     if dg <= 0.0:
@@ -552,6 +664,12 @@ class InductionMotor:
         det = a11 * a22 - a12 * a21
         self.t_wind = (b1 * a22 - a12 * b2) / det
         self.t_body = (a11 * b2 - a21 * b1) / det
+        # lower bound for check(): with losses >= 0 the masses cannot be colder than the cooling air
+        # passed through the slowest body time constant (fan stopped). It falls with the air at once
+        # and rises with that lag, so a motor that lags a warming shop is not an error.
+        tau = self.c_body / max(self.rating.still_cooling * self.g_ba_n, 1e-9)
+        lo = getattr(self, "_t_air_lo", self.t_cool_c)
+        self._t_air_lo = min(self.t_cool_c, lo + (self.t_cool_c - lo) * min(1.0, dt / tau))
 
     def heat_stored(self):
         """Heat in the two masses above the cooling air, J (for the energy balance)."""
@@ -580,7 +698,7 @@ class InductionMotor:
             out.append(f"{self.name}: a value is not finite")
         if self.amps < 0 or self.p_loss < -1e-6:
             out.append(f"{self.name}: negative current or loss")
-        if min(self.t_wind, self.t_body) < self.t_cool_c - 1e-6:
+        if min(self.t_wind, self.t_body) < getattr(self, "_t_air_lo", self.t_cool_c) - 1e-6:
             out.append(f"{self.name}: a thermal mass is colder than its cooling air")
         if any(v < -1e-6 for v in self.losses.values()):
             out.append(f"{self.name}: a negative loss term")

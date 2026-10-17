@@ -1,5 +1,10 @@
-"""press-1: a CNC hydraulic press brake (ideas.md 11.5): an LVD PPEB 320/40 class machine bending
-excavator boom plate.
+"""Hydraulic presses (ideas.md 11.5): press-1, a CNC press brake (LVD PPEB 320/40 class) bending the
+cross members and brackets of truck frames, and lmp-1, the long member press (a 5,000 t class
+hydraulic press, Schuler SHP 50000 data) that forms each side member into a U channel in one stroke
+(Press Kogyo frame process; Tata Motors Jamshedpur lists a 5,000 t press). The same model serves
+both: a U channel is two bend lines over the member length (`Plate.bends`), with the punch travel
+equal to the flange height (`Plate.travel_mm`). A large press has several pump and motor sets
+(`n_motors`): they share the load torque equally.
 
 Parts: the main motor (motor.py) at constant speed, a fixed-displacement pump, the directional and
 proportional valves, a relief valve, two cylinders on the ram, the oil tank, and a water-cooled oil
@@ -80,11 +85,15 @@ class Plate:
     t_mm: float = 12.0
     length_m: float = 2.5
     v_mm: float = 120.0        # V-die opening 10 t for 9 to 12 mm plate (MetalForming chart)
+    bends: int = 1             # bend lines formed in one stroke (a U channel: 2)
+    travel_mm: float = None    # punch travel in the material; None: an air bend of about 90 degrees
 
     def force_kn(self):
-        return 1.42 * self.uts_mpa * self.t_mm ** 2 * self.length_m / self.v_mm
+        return self.bends * 1.42 * self.uts_mpa * self.t_mm ** 2 * self.length_m / self.v_mm
 
     def depth_mm(self):
+        if self.travel_mm is not None:
+            return self.travel_mm
         return 0.5 * self.v_mm * 0.9   # about a 90 degree air bend (project choice)
 
 
@@ -92,21 +101,22 @@ class PressBrake:
     IDLE, APPROACH, BEND, HOLD, DECOMPRESS, RETURN, TRIPPED = (
         "idle", "approach", "bend", "hold", "decompress", "return", "tripped")
 
-    def __init__(self, name, rating, motor_rating, handling_s=25.0, t_oil0=40.0):
+    def __init__(self, name, rating, motor_rating, handling_s=25.0, t_oil0=40.0, n_motors=1, plate=None):
         self.name, self.r = name, rating
+        self.n_motors = n_motors        # identical motor and pump sets sharing the load (one simulated)
         self.motor = InductionMotor(f"{name}-motor", motor_rating)
         self.w_n = motor_rating.n_rpm * math.pi / 30.0
         r = rating
         # Pump displacement: the bend speed at full flow with the rated volumetric efficiency.
         q_need = r.v_bend / 1000.0 * r.area_m2
-        self.disp_m3 = q_need / (self.w_n / (2 * math.pi)) / r.eta_v_rated
+        self.disp_m3 = q_need / (self.w_n / (2 * math.pi)) / r.eta_v_rated    # all pumps together
         # Leakage coefficient: Q_leak = c p / nu gives the rated volumetric efficiency at p_max, 40 C.
         q_th_n = self.disp_m3 * self.w_n / (2 * math.pi)
         self.c_leak = (1.0 - r.eta_v_rated) * q_th_n * nu_vg46(40.0) / (r.p_max_bar * 1e5)
         self.leak_factor = 1.0          # F2: pump wear multiplies the leakage
         self.friction_n = 0.02 * r.force_kn * 1e3   # ram guide friction, 2 % of force (project choice)
         self.friction_extra_n = 0.0     # F1
-        self.plate = Plate()
+        self.plate = plate or Plate()
         self.handling_s = handling_s
         self.phase = self.IDLE
         self.t_phase = 0.0
@@ -157,7 +167,9 @@ class PressBrake:
         elif self.phase == self.IDLE:
             if self.auto and self.t_phase >= self.handling_s and speed > 0.9:
                 self._go(self.APPROACH)
-                self.contact_mm = r.stroke_mm - 60.0          # plate 60 mm above bottom (project choice)
+                # plate 60 mm above the bottom (project choice), or deeper when the punch travels more
+                # (a U channel: the flange height + 10 mm)
+                self.contact_mm = r.stroke_mm - max(60.0, self.plate.depth_mm() + 10.0)
         elif self.phase == self.APPROACH:
             self.x_mm += r.v_approach * dt
             if self.x_mm >= self.contact_mm:
@@ -207,7 +219,7 @@ class PressBrake:
         self.p_bar = p_pa / 1e5
         # ---- pump shaft power -> motor load (constant torque at a pressure for a fixed pump)
         p_shaft = q_th * p_pa / r.eta_hm if speed > 0 else 0.0
-        t_load = (self.disp_m3 / (2 * math.pi)) * p_pa / r.eta_hm
+        t_load = (self.disp_m3 / (2 * math.pi)) * p_pa / r.eta_hm / self.n_motors
         energized = self.phase != self.TRIPPED
         self.motor.step(dt, v_ll if energized else 0.0, f_hz,
                         lambda w, t=t_load: t * min(1.0, max(w, 0.0) / (0.05 * self.w_n)))
@@ -235,9 +247,9 @@ class PressBrake:
             self.x_mm = 0.0
 
     def tags(self):
-        return {"current_a": self.motor.amps, "power_kw": self.motor.p_in / 1000.0,
+        return {"current_a": self.motor.amps * self.n_motors, "power_kw": self.n_motors * self.motor.p_in / 1000.0,
                 "pressure_bar": self.p_bar, "oil_c": self.t_oil, "ram_mm": self.x_mm,
-                "bends": self.bends, "phase": self.phase}
+                "bends": self.bends, "phase": self.phase, "cooler_valve": float(self.valve_open)}
 
     def check(self):
         out = self.motor.check()

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Score each machine on its own small model (ideas.md 17.6). CP-1 and CP-2 made into a harness.
+"""SUPERSEDED 2026-10-15 by eval/nodes.py. Kept as the record of the first machine scores (LOG-111).
+
+Why superseded (operator, 2026-10-15: no per-machine fixes, no invented faults): each bench here
+has a hand-written input list, its own model size, filter set and phase input, and scores faults
+that are not on the agreed list (ideas.md 11.10). eval/nodes.py builds every node from the plant's
+documents with one rule.
+
+Score each machine on its own small model (ideas.md 17.6). CP-1 and CP-2 made into a harness.
 
 For one machine:
   1. Train its small model (twin/node_model.py) on normal running only: random supply, cooling

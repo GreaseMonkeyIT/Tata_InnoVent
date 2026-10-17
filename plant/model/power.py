@@ -25,7 +25,15 @@ import cmath
 import math
 from dataclasses import dataclass
 
+from ._jit import JIT, njit
+
+if JIT:
+    import numpy as np     # the compiled sweep's arrays (the Python path needs no numpy)
+
 SQRT3 = math.sqrt(3.0)
+# Python 3.14 sums complex numbers with Neumaier compensation, 3.11 adds them in order. The compiled
+# sweep copies the rule of the Python that runs it (checked against sum() on both, 2026-10-16).
+SUM_COMPENSATED = sum([1e16 + 0j, 1 + 0j, -1e16 + 0j], 0j) != 0
 
 
 # ------------------------------------------------------------------------------- elements --
@@ -141,8 +149,15 @@ class Transformer(Branch):
     def shunt_s(self):
         r = self.rating
         u2 = (self.parent.v_ll / r.v1_ll) ** 2
-        return complex(r.p0_w * u2, math.sqrt(max((r.i0_pct / 100.0 * r.kva * 1000.0) ** 2
-                                                  - r.p0_w ** 2, 0.0)) * u2)
+        return complex(r.p0_w * u2, self.shunt_q0() * u2)
+
+    def shunt_q0(self):
+        """The magnetizing var at rated voltage (computed once per rating: the rating is frozen)."""
+        r = self.rating
+        q0 = self.__dict__.get("_q0")
+        if q0 is None or q0[0] is not r:
+            q0 = self._q0 = (r, math.sqrt(max((r.i0_pct / 100.0 * r.kva * 1000.0) ** 2 - r.p0_w ** 2, 0.0)))
+        return q0[1]
 
     @property
     def theta_h(self):
@@ -224,23 +239,66 @@ class Network:
         self.branches.append(branch)
         return branch
 
+    def _walk(self):
+        """(buses, branches) in breadth-first order from the root. The walk is kept while the
+        topology is the same (each bus keeps its number of branches): a new branch must leave a bus
+        of the walk to be reachable, so a change always shows (2026-10-16, speed only)."""
+        w = getattr(self, "_walk_cache", None)
+        if w is not None and all(len(b.children) == n for b, n in zip(w[0], w[2])):
+            return w
+        buses, order, todo = [], [], [self.root]
+        while todo:
+            b = todo.pop(0)
+            buses.append(b)
+            for br in b.children:
+                order.append(br)
+                todo.append(br.child)
+        self._walk_cache = (buses, order, [len(b.children) for b in buses])
+        return self._walk_cache
+
     def _order(self):
         """Branches in order from the root (a breadth-first walk)."""
-        out, todo = [], [self.root]
-        while todo:
-            b = todo.pop(0)
-            for br in b.children:
-                out.append(br)
-                todo.append(br.child)
-        return out
+        return list(self._walk()[1])
 
     def buses(self):
-        out, todo = [], [self.root]
-        while todo:
-            b = todo.pop(0)
-            out.append(b)
-            todo.extend(br.child for br in b.children)
-        return out
+        return list(self._walk()[0])
+
+    def _kernel_ok(self, order):
+        """The compiled sweep knows two shunts: none (Branch, Cable) and the transformer's."""
+        return all(type(br).shunt_s is Branch.shunt_s or type(br).shunt_s is Transformer.shunt_s
+                   for br in order)
+
+    def _solve_k(self, buses, order, load_s, e, sweeps):
+        """The sweeps of `solve`, compiled (_sweep_k): the same operations in the same order. The
+        fixed data (the walk, impedances, ratios, transformer shunts) are packed once and rebuilt
+        when one of those objects changes."""
+        w = self._walk()
+        refs = [self.grid.z] + [x for br in order for x in (br.z, br.ratio, getattr(br, "rating", None))]
+        k = getattr(self, "_k_pack", None)
+        if k is None or k[0] is not w or len(k[1]) != len(refs) or any(a is not b for a, b in zip(k[1], refs)):
+            bi = {id(b): n for n, b in enumerate(buses)}
+            ri = {id(br): j for j, br in enumerate(order)}
+            cptr, cidx = [0], []
+            for b in buses:
+                cidx += [ri[id(br)] for br in b.children]
+                cptr.append(len(cidx))
+            nbr, nb = len(order), len(buses)
+            idx = np.array([nbr, nb] + [bi[id(br.parent)] for br in order] + [bi[id(br.child)] for br in order]
+                           + cptr + cidx, np.int64)
+            tr = [isinstance(br, Transformer) for br in order]
+            fs = np.array([br.ratio for br in order] + [float(t) for t in tr]
+                          + [br.rating.p0_w if t else 0.0 for br, t in zip(order, tr)]
+                          + [br.shunt_q0() if t else 0.0 for br, t in zip(order, tr)]
+                          + [br.rating.v1_ll if t else 1.0 for br, t in zip(order, tr)] + [2.0, SQRT3], np.float64)
+            cs = np.array([br.z for br in order] + [self.grid.z], np.complex128)
+            k = self._k_pack = (w, refs, idx, fs, cs)
+        dyn = np.array([b.v for b in buses] + load_s, np.complex128)
+        out = _sweep_k(dyn, k[2], k[3], k[4], e, sweeps, SUM_COMPENSATED).tolist()
+        nb = len(buses)
+        for n, b in enumerate(buses):
+            b.v, b.s_down = out[n], out[nb + n]
+        for j, br in enumerate(order):
+            br.i, br.s_loss = out[2 * nb + j], out[2 * nb + len(order) + j]
 
     def solve(self, sweeps=3):
         """Backward/forward sweep with the load powers of this tick.
@@ -264,8 +322,15 @@ class Network:
         # drives shut down, and no real load keeps its power at zero voltage.
         def k_low(bus):
             return min(1.0, (bus.v_pu / 0.7) ** 2)
-        load_s = {id(b): sum((ld.s_va() for ld in b.loads), 0j) * k_low(b) for b in self.buses()}
         e = self.grid.e_pu * self.grid.rating.v_ll / SQRT3
+        if JIT and self._kernel_ok(order):
+            buses = self.buses()
+            self._solve_k(buses, order, [sum((ld.s_va() for ld in b.loads), 0j) * k_low(b) for b in buses],
+                          e, sweeps)
+            if self.grid.e_pu > 0.9:
+                self._profile = {id(b): b.v / self.grid.e_pu for b in buses}
+            return self
+        load_s = {id(b): sum((ld.s_va() for ld in b.loads), 0j) * k_low(b) for b in self.buses()}
         for _ in range(sweeps):
             s_in = {}
             for br in reversed(order):                       # backward: leaves first
@@ -307,13 +372,14 @@ class Network:
 
 
 class MotorLoad:
-    """Adapts an InductionMotor (or any model with p_in and q_in) to a bus load."""
+    """Adapts an InductionMotor (or any model with p_in and q_in) to a bus load; `count` identical
+    motors in the same state (the pump sets of a large press)."""
 
-    def __init__(self, model):
-        self.model = model
+    def __init__(self, model, count=1):
+        self.model, self.count = model, count
 
     def s_va(self):
-        return complex(self.model.p_in, self.model.q_in)
+        return self.count * complex(self.model.p_in, self.model.q_in)
 
 
 class ConstantLoad:
@@ -388,3 +454,82 @@ class Apfc:
         s = self.bus.s_down
         pf = s.real / abs(s) if abs(s) > 0 else 1.0
         return {"steps_on": self.n, "kvar": self.kvar(), "pf": pf}
+
+
+# ------------------------------------------------------------------ compiled sweep (_jit.py) --
+@njit
+def _children_sum(s_in, cidx, a, b, comp):
+    """sum((s_in[j] for j in cidx[a:b]), 0j) as the running Python computes it."""
+    if not comp:
+        r = 0j
+        for k in range(a, b):
+            r = r + s_in[cidx[k]]
+        return r
+    hr = lr = hi = li = 0.0
+    for k in range(a, b):
+        z = s_in[cidx[k]]
+        x = z.real
+        t = hr + x
+        if abs(hr) >= abs(x):
+            lr += (hr - t) + x
+        else:
+            lr += (x - t) + hr
+        hr = t
+        x = z.imag
+        t = hi + x
+        if abs(hi) >= abs(x):
+            li += (hi - t) + x
+        else:
+            li += (x - t) + hi
+        hi = t
+    re = hr + lr if (lr != 0.0 and math.isfinite(lr)) else hr
+    im = hi + li if (li != 0.0 and math.isfinite(li)) else hi
+    return complex(re, im)
+
+
+@njit
+def _sweep_k(dyn, idx, fs, cs, e, sweeps, comp):
+    """The backward/forward sweeps of Network.solve on packed arrays (Network._solve_k): bus 0 is
+    the root, the branches in breadth-first order. dyn = bus voltages then load powers; returns the
+    bus voltages, the bus s_down, the branch currents and the branch losses, one array. fs ends with
+    2.0 read at run time, so abs(i) ** two calls the C pow as Python's ** 2 does (_jit.py)."""
+    nbr, nb = idx[0], idx[1]
+    par, chi = idx[2:2 + nbr], idx[2 + nbr:2 + 2 * nbr]
+    cptr, cidx = idx[2 + 2 * nbr:3 + 2 * nbr + nb], idx[3 + 2 * nbr + nb:]
+    ratio, is_tr, p0, q0, v1 = fs[0:nbr], fs[nbr:2 * nbr], fs[2 * nbr:3 * nbr], fs[3 * nbr:4 * nbr], fs[4 * nbr:5 * nbr]
+    two, sqrt3 = fs[5 * nbr], fs[5 * nbr + 1]
+    z, zg = cs[0:nbr], cs[nbr]
+    v = dyn[0:nb].copy()
+    load_s = dyn[nb:2 * nb]
+    out = np.zeros(2 * nb + 2 * nbr, np.complex128)
+    s_in = np.zeros(nbr, np.complex128)
+    for _ in range(sweeps):
+        for j in range(nbr - 1, -1, -1):                     # backward: leaves first
+            c = chi[j]
+            s_c = load_s[c] + _children_sum(s_in, cidx, cptr[c], cptr[c + 1], comp)
+            out[nb + c] = s_c
+            if abs(v[c]) > 1e-6:
+                i = (s_c / (3.0 * v[c])).conjugate()
+            else:
+                i = 0j
+            out[2 * nb + j] = i
+            loss = 3.0 * z[j] * abs(i) ** two
+            out[2 * nb + nbr + j] = loss
+            if is_tr[j] != 0.0:
+                u2 = (abs(v[par[j]]) * sqrt3 / v1[j]) ** two
+                sh = complex(p0[j] * u2, q0[j] * u2)
+            else:
+                sh = 0j
+            s_in[j] = s_c + loss + sh
+        s_root = load_s[0] + _children_sum(s_in, cidx, cptr[0], cptr[1], comp)
+        out[nb] = s_root
+        if abs(v[0]) > 1e-6:
+            i_src = (s_root / (3.0 * v[0])).conjugate()
+        else:
+            i_src = 0j
+        v[0] = e - zg * i_src
+        for j in range(nbr):                                 # forward: from the grid down
+            v_p = v[par[j]] / ratio[j]
+            v[chi[j]] = v_p - z[j] * out[2 * nb + j]
+    out[0:nb] = v
+    return out
