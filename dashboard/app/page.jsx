@@ -1,19 +1,11 @@
 "use client";
-import { useState } from "react";
-import Boot from "./Boot";
-import Console from "./Console";
-import useConsoleData from "./lib/useConsoleData";
-import { getJSON } from "./lib/api";
+import "./ui/styles/tokens.css";
+import "./ui/styles/ui.css";
+import dynamic from "next/dynamic";
 
-// VISR operator console. The Boot overlay runs its real self-check on every full load (2D-1),
-// and the console renders under it, so the data is ready when the operator enters.
+// The VISR console (LOG-120). WebGL and the recording load in the browser only.
+const UiApp = dynamic(() => import("./ui/UiApp"), { ssr: false });
+
 export default function Page() {
-  const d = useConsoleData();
-  const [booting, setBooting] = useState(true);
-  return (
-    <>
-      {booting && <Boot getJSON={getJSON} onDone={() => setBooting(false)} />}
-      <Console d={d} />
-    </>
-  );
+  return <UiApp />;
 }

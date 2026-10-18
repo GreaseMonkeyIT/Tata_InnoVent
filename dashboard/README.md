@@ -4,7 +4,82 @@ The VISR dashboard is a Next.js **static export** (no Node server at runtime) se
 nginx also proxies `/api/` to the in-cluster API gateway (`api.aiops.svc:8088`), so the browser uses
 one origin (no CORS, no second exposed port). The page fetches live data from `/api/*`.
 
-## The operator console (LOG-062)
+## The console (LOG-120, LOG-121: Prototype B, waiting for the operator's look)
+
+The console is calm by default. The 3D floor (the Shop look) fills the screen, and boxed,
+translucent windows sit on it: the top bar, Verdict (top left), the vitals window with the dock (bottom), and Attention (top
+right, only while a station is abnormal). An abnormal state brings its notification, a marker over
+the station and a glyph in the vitals window. Recovery takes them out again: the item shows
+"Recovering" for 2 min of plant time, then it leaves. An alarm blinks until someone acknowledges it,
+and an acknowledged alarm leaves at once when it recovers. There is no close button on an item.
+Everything else is in a drawer at the right, one click or one key away: 1 Stations, 2 Events,
+3 Parts, 4 Tags, 5 Trends, 6 Energy, and Legend. The settings icon in the top bar opens Settings.
+Esc closes the floor view or the overlay, then the drawer, then the selection.
+
+Overlays (the top bar, "Overlay"): Power, Air, Water, Gas and Flow show one network of the plant
+sim on the floor, in the manner of the Dyson Sphere Program power view. The other stations fade, a
+line runs from each source to each user, and each member shows one value (kW, pressure,
+temperatures, gas flow, or the tracked IDs at a station). The topology comes from
+`plant/model/plant.py` and `plant/model/flow.py` (`app/ui/data/networks.js`). The sim has no cable,
+pipe or conveyor routes, so the lines are a schematic. A small window at the top centre names the
+overlay. Labels that would overlap move apart.
+
+Rules (ideas.md 22.6, the design language of Dyson Sphere Program and EVE Online from
+`references/ui_2026-10-18/research_hud_references.md`):
+
+- Windows are boxed: a 1 px border, square corners, hard edges. The fill is 88 % with a 10 px
+  blur of the floor behind it. The setting "Window fill: Solid" makes it opaque.
+- Names, states, tags and values are plain text, never in a box. Acknowledge is the one boxed
+  button. Other commands are blue text. Tooltips are small windows (`data-hint`), not the browser
+  title.
+- Gray and ink for normal. Red (square) and orange (filled triangle, ink outline) for the abnormal
+  only, on the glyph and on the abnormal value. Blue for commands, the active choice and selection.
+- On the floor: a marker with a stalk and a halo label over each abnormal station, four corner ticks
+  for the selection, a dashed path for "Show on the floor".
+- Sentence case and tabular numerals. No glow, gradients, shadows or uppercase labels.
+
+| Path | What |
+|---|---|
+| `app/page.jsx`, `app/ui/UiApp.jsx` | The console: the top bar, the verdict, attention, the vitals window, the dock and the drawers |
+| `app/ui/FloorHud.jsx` | The floor HUD: markers, selection ticks and readout, the hover tip, the fault path, the overlay lines and labels, labels that move apart. It follows the camera on every frame (`onFrame`, `anchorOf`). |
+| `app/ui/data/networks.js` | The overlays: power, air, water, gas and the material flow, with their sources in the plant model |
+| `app/ui/useReplayModel.js` | One clock: the plant recording, the mock verdict overlay, the floor scenes, the view-model to React twice a second, acknowledged alarms |
+| `app/ui/data/model.js` | The view-model: areas, the vital value per station, display bands, attention rules, acknowledgment, the hold (`HOLD_S`), the event log, the mock verdict |
+| `app/ui/Glyph.jsx`, `app/ui/styles/` | Status shapes, tokens (light and dark, with contrast figures), the stylesheet |
+| `app/floor/` | The 3D floor (LOG-119). Console hooks: `hud` (no sprite plates or floor brackets, a fainter grid), `onFrame`, `anchorOf`, `setRoles`, `setFocusSet`, `frame`. Floor themes: `shop`, `shopDark` (the Dark theme), `console` (old look, `/floor-lab` only). |
+| `app/legacy/page.jsx` | The previous console, unchanged, until its files are removed from this branch |
+
+The prototype runs on the plant recording (`plant/floor/replay.py` writes
+`public/floor/replay.json`) and on a MOCK verdict (an air header loss at compressor-1 from 08:00,
+recovery at 09:00). The top bar says both. Do not ship `/` to the box before the overhaul API
+serves the same view-model.
+
+URL parameters: `theme=light|dark`, `mode=live|energy`,
+`drawer=stations|events|parts|tags|trends|energy|legend|settings|inspect`, `sel=<station or ID>`,
+`show=1` (open the floor view of the verdict), `overlay=power|air|water|gas|flow`,
+`fill=glass|solid` (the window fill),
+`chamfer=0|1` (the cut drawer corner),
+`floor=dark|light` (the floor of the Dark theme), `t=<seconds after the recording start>`,
+`speed=<n>`, `pause=1`, `verdict=steady` (no mock verdict). The browser keeps the theme and the
+settings (`visr.theme`, `visr.ui`), so pass `theme` and `chamfer` for repeatable screenshots.
+
+### The console preview on forge
+
+The preview runs the console alone, without the API, the cluster or a login: a static export in a
+plain nginx container. It needs the plant recording in `public/floor/` (Syncthing copies it to
+forge). On forge:
+
+```bash
+bash ~/VISR_Overhaul/deploy/console-preview.sh
+```
+
+The script builds the image `visr-overhaul/console:<date-time>` (`Dockerfile.preview`,
+`nginx.preview.conf`) and replaces the container `visr-console-preview`. The container serves the
+console on port 3121 of the Tailscale address of forge only, and prints the address. It has no
+restart policy. `STOP=1 bash ~/VISR_Overhaul/deploy/console-preview.sh` removes it. The script does
+not touch k3s, the local registry or any image or namespace of the main stack.
+
+## The previous operator console (LOG-062, at /legacy)
 
 The dashboard is one static screen with no page scroll. Every panel has a fixed place, and only
 panel bodies scroll. The primary target is 1920×1080 at 100 % zoom. From 1280 to 1599 px wide, or
@@ -118,6 +193,22 @@ while the Trends tab is open.
 | `app/Fold.jsx` | The fold toggle and the `visr.*` preference hook |
 | `app/scifi.css` | The theme layer. It loads after `globals.css` and overrides only what it needs |
 | `app/*.jsx` | One file per panel or tab |
+| `app/floor/`, `app/floor-lab/` | The floor prototype (LOG-119): the new 3D floor in two looks, played from a plant recording. Not part of the console yet. |
+
+## Floor prototype (LOG-119)
+
+The page `/floor-lab` plays a plant recording on the new 3D floor. It is a prototype for the
+operator's pick of a look (ideas.md section 20). The console does not use it yet.
+
+1. Record a run: `python plant/floor/replay.py --seed 3 --hours 4 --warmup-h 3`. The script writes
+   `dashboard/public/floor/replay.json` (gitignored).
+2. Start the dev build and open `http://localhost:3000/floor-lab`.
+
+URL parameters: `theme=shop|console`, `t=<seconds after the warm-up>`, `speed=<n>`, `pause=1`,
+`view=site|frame|cross|ced|engine|plan`, `labels=1`, `ids=1`, `sel=<station or ID>`, `debug=1`.
+
+A hidden browser tab pauses WebGL frames. For screenshots, use headless Edge with
+`--headless=new --enable-unsafe-swiftshader --use-angle=swiftshader --virtual-time-budget=20000`.
 
 ## Local development (laptop)
 

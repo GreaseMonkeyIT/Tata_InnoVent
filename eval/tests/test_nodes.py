@@ -189,6 +189,19 @@ def test_cusum_limit_is_the_conformal_quantile():
     assert N.cusum_limit(list(range(1, 41)), 0.1, 0.0) == 37.0        # ceil(41 x 0.9) = 37
     assert N.cusum_limit([0.5, 1.0], 0.1, 5.0) == 5.0                 # never below the textbook h
     assert N.cusum_limit([], 0.1, 5.0) == 5.0
+    assert N.cusum_limit(list(range(1, 41)), None, 0.0) == 40.0       # no alpha: the largest maximum
+
+
+def test_gumbel_limit():
+    """The Gumbel limit of Gumbel samples comes near the true quantile and goes past the largest
+    maximum for a small alpha."""
+    rng = np.random.default_rng(12)
+    m = rng.gumbel(100.0, 20.0, 400)
+    h = N.cusum_limit(m, 0.01, 0.0, "gumbel")
+    assert abs(h - (100.0 - 20.0 * np.log(-np.log(0.99)))) < 15.0
+    few = m[:12]
+    assert N.cusum_limit(few, 0.008, 0.0, "gumbel") > few.max()
+    assert N.cusum_limit(few, 0.1, 0.0, "conformal") == few.max()
 
 
 def test_first_activity_of_the_root():
@@ -296,6 +309,38 @@ def test_text_output_and_own_loop_outputs_left_out_of_coverage():
     assert loop.matrices(r)[1].tolist() == [[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]]
 
 
+def test_cusum_up_and_rolling_mean_equal_their_loops():
+    rng = np.random.default_rng(11)
+    u = rng.normal(size=(800, 2))
+    cov = rng.random(800) > 0.1
+    S, ref = np.zeros(2), []
+    for t in range(800):
+        if cov[t]:
+            S = np.maximum(0.0, S + u[t] - np.array([0.3, 1.0]))
+        ref.append(S.max())
+    assert np.allclose(N.cusum_up(u, cov, np.array([0.3, 1.0])), ref, atol=1e-9)
+    m = N.rolling_mean(u, cov, 20)
+    for t in (5, 9, 10, 50, 799):
+        sl = slice(max(0, t + 1 - 20), t + 1)
+        okk = cov[sl]
+        exp = u[sl][okk].mean(0) if okk.sum() >= 10 else np.array([np.nan, np.nan])
+        assert np.allclose(m[t], exp, equal_nan=True)
+
+
+def test_fit2_split_gives_more_spread_days():
+    """fit2 with 60 training days: 24 fit days (2 per month) and 36 spread days (3 per month)."""
+    import collections
+    import datetime
+
+    def month(d):
+        return (datetime.date(2025, 1, 1) + datetime.timedelta(days=d)).month
+    train = [(N.SEED_BASE["train"] + i, None) for i in range(60)]
+    fit, cal = N.fit_and_calibration(train, "fit2")
+    assert collections.Counter(month(N.day_of_year(s)) for s, _ in fit) == {m: 2 for m in range(1, 13)}
+    assert collections.Counter(month(N.day_of_year(s)) for s, _ in cal) == {m: 3 for m in range(1, 13)}
+    assert N.fit_and_calibration(train[:36]) == N.fit_and_calibration(train[:36], "thirds")
+
+
 def test_score_by_asset():
     """A machine alarms when the first of its nodes does; the root is scored on the machine."""
     z = np.zeros(10, bool)
@@ -319,3 +364,185 @@ def test_node_matrices_from_arrays_equal_lists():
         U, Y = nd.matrices(r)
         assert U.tolist() == [[1.0, 0.0, 0.0, 1.0], [2.0, 1.0, 0.0, 0.0], [3.0, 0.0, 0.0, 1.0], [4.0, 0.0, 1.0, 0.0]]
         assert nd.bins(r).tolist() == [2, 0, 2, 1]
+
+
+def test_change_point_and_root_by_change_point():
+    """Page's estimate: the sample after the last zero of the statistic that passed its limit. The
+    root by change point is the machine whose change began first, even if it alarmed later."""
+    s = np.array([0.0, 0.0, 1.0, 3.0, 6.0, 9.0])
+    assert N.change_point([(s, 5.0)], 4) == 2 and N.change_point([(s, 50.0)], 4) == 4
+    z = np.zeros(20, bool)
+    al = {"root": z.copy(), "victim": z.copy()}
+    al["root"][12] = True                         # alarms later
+    al["victim"][8] = True                        # alarms first
+    rec = N.score_fault(al, {"onset_s": 5.0, "root": "root", "control": False}, None,
+                        {"root": 6, "victim": 7})
+    assert rec["first"] == ["victim"] and not rec["top1"]
+    assert rec["first_cp"] == ["root"] and rec["top1_cp"]
+
+
+def test_clip_caps_z_for_the_cusum_rules():
+    """With a clip, a node's z is capped at +-clip (a one-sample spike cannot pass a small limit
+    alone); the gate rule keeps its z."""
+    rng = np.random.default_rng(13)
+
+    def run(n, spike=False):
+        u = rng.normal(size=n)
+        y = 2.0 * u + 0.1 * rng.normal(size=n)
+        if spike:
+            y[n // 2] += 50.0
+        return {"a.u": u, "a.y": y}
+    doc = {"feeds": ["a.u"], "commands": [], "measures": ["a.y"], "asset": "a", "loop_outputs": []}
+    fit, cal = [(i, run(400)) for i in range(3)], [(9, run(400)), (10, run(400))]
+    clipped = N.Node("a", doc, "cusumk", clip=4.0).train(fit, cal)
+    z, _ = clipped.z(run(400, spike=True))
+    assert np.nanmax(np.abs(z)) <= 4.0 + 1e-12
+    gate = N.Node("a", doc, "gate", clip=4.0).train(fit, cal)
+    zg, _ = gate.z(run(400, spike=True))
+    assert np.nanmax(np.abs(zg)) > 4.0
+
+
+def test_feedback_inputs_follow_the_documents():
+    """An input is feedback when its node can be reached from this node's outputs; a feed from a
+    node that never sees this node's outputs is not."""
+    w = {"pump": {"feeds": ["user.out_c", "grid.v"], "commands": [], "measures": ["pump.supply_c"]},
+         "user": {"feeds": ["pump.supply_c", "grid.v"], "commands": [], "measures": ["user.out_c"]},
+         "grid": {"feeds": [], "commands": [], "measures": ["grid.v"]}}
+    fb = N.feedback_inputs(w)
+    assert fb == {"pump": ["user.out_c"], "user": ["pump.supply_c"], "grid": []}
+    nd = N.Node("pump", dict(w["pump"], loop_outputs=[], feedback_inputs=fb["pump"]))
+    assert nd.coverage_columns(["user.out_c", "grid.v"], 1) == [False, True, False, True]
+
+
+def test_tie_in_the_first_second_is_split_by_change_point():
+    z = np.zeros(20, bool)
+    al = {"root": z.copy(), "victim": z.copy()}
+    al["root"][9] = True
+    al["victim"][9] = True                        # the same second
+    rec = N.score_fault(al, {"onset_s": 5.0, "root": "root", "control": False}, None,
+                        {"root": 6, "victim": 8})
+    assert rec["first"] == ["root", "victim"] and not rec["top1"]
+    assert rec["named"] == ["root"] and rec["top1_named"]
+
+
+def test_graph_rule_names_the_upstream_machine():
+    """The victim alarms first, the root 30 s later: within the window the victim is downstream of the
+    root in the documents, so the graph rule names the root."""
+    w = {"pump": {"feeds": [], "commands": [], "measures": ["pump.q"]},
+         "user": {"feeds": ["pump.q"], "commands": [], "measures": ["user.t"]}}
+    reach = N.downstream(w)
+    assert reach == {"pump": {"user"}, "user": set()}
+    z = np.zeros(400, bool)
+    al = {"pump": z.copy(), "user": z.copy()}
+    al["user"][100] = True
+    al["pump"][130] = True
+    rec = N.score_fault(al, {"onset_s": 50.0, "root": "pump", "control": False}, None, {}, reach)
+    assert not rec["top1"] and rec["top1_g120"] and rec["top1_g600"]
+
+
+def test_confirm_drops_short_episodes():
+    a = np.array([0, 1, 1, 0, 1, 1, 1, 1, 0], bool)
+    assert N.confirm(a, 3).tolist() == [False, False, False, False, False, False, True, True, False]
+    assert N.confirm(a, 1).tolist() == a.tolist()
+
+
+def test_change_point_uses_the_sum_that_passed():
+    """Two sums: one stays a little above 0 from the start (noise), one starts at sample 50 and
+    passes the limit. The change point is 50, not the start of the run."""
+    T = 100
+    noise = np.full(T, 0.5)                       # never back at 0
+    sig = np.where(np.arange(T) >= 50, (np.arange(T) - 49) * 2.0, 0.0)
+    S = np.column_stack([noise, sig])
+    assert N.change_point([(S, 30.0)], 80) == 50
+    assert N.change_point([(S.max(axis=1), 30.0)], 80) == 0      # what the largest sum alone gives
+    # in an episode below the limit at t (the alarm holds until the sum is back at 0)
+    S2 = np.column_stack([np.r_[np.zeros(10), np.arange(1, 21) * 3.0, np.arange(20, 0, -1) * 1.0, np.zeros(10)]])
+    assert N.change_point([(S2, 40.0)], 45) == 10
+
+
+def test_score_pair_names_both_roots():
+    """Two faults: both roots alarm and neither is downstream of the other, so both are named and the
+    pair passes; a victim downstream of a root is not named; a control case needs no root."""
+    reach = {"a": {"v"}, "b": set(), "v": set()}
+    z = np.zeros(50, bool)
+    al = {"a": z.copy(), "b": z.copy(), "v": z.copy()}
+    al["a"][20] = al["b"][30] = al["v"][21] = True
+    info = {"fid": "F1+F2", "seed": 1, "onset_s": 10.0, "faults": [
+        {"fid": "F1", "root": "a", "control": False, "onset_s": 10.0},
+        {"fid": "F2", "root": "b", "control": False, "onset_s": 25.0}]}
+    rec = N.score_pair(al, info, {}, reach)
+    assert rec["named"] == ["a", "b"] and rec["passed"] and rec["all_detected"]
+    # an upstream machine that alarms after a root does not remove it
+    late = dict(al, up=np.zeros(50, bool))
+    late["up"][35] = True                         # after both roots
+    rec2 = N.score_pair(late, info, {}, dict(reach, up={"a", "b", "v"}))
+    assert "a" in rec2["named"] and "b" in rec2["named"]
+    # a root that alarmed before its own onset (set off by the other fault) does not pass
+    early = dict(info, faults=[info["faults"][0], dict(info["faults"][1], onset_s=35.0)])
+    assert not N.score_pair(al, early, {}, reach)["passed"]
+    info["faults"][1] = {"fid": "F15", "root": "", "control": True, "onset_s": 25.0}
+    assert N.score_pair(al, info, {}, reach)["roots"] == ["a"]
+
+
+def test_simulate_multi_applies_both_faults(monkeypatch):
+    """Two faults in one short run: each is injected at its own onset (the press friction and the
+    plant air leak show in their plant parameters)."""
+    monkeypatch.setattr(N, "WARMUP_S", 60.0)
+    monkeypatch.setattr(N, "LEAD_S", 30.0)
+    raw, info = N.simulate_multi(40003, 0.02, (("F1", 0.5, 10.0), ("F6", 0.5, 40.0)))
+    assert info["fid"] == "F1+F6" and info["onset_s"] == 10.0 and info["lead"] == 30
+    assert [f["fid"] for f in info["faults"]] == ["F1", "F6"] and all(f["magnitude"] > 0 for f in info["faults"])
+    assert len(raw["press-1.oil_c"]) == 30 + 72
+
+
+def test_crossings_and_a_second_fault_on_an_alarmed_machine():
+    """Sum 0 passes its limit early (the first fault); sum 1 starts at 60 and passes later (a second
+    fault). crossings() reports both, each with its own change point; score_pair counts the second
+    fault as detected on a machine that was already in alarm."""
+    T = 200
+    s0 = np.where(np.arange(T) >= 10, (np.arange(T) - 9) * 5.0, 0.0)
+    s1 = np.where(np.arange(T) >= 60, (np.arange(T) - 59) * 5.0, 0.0)
+    ev = N.crossings([(np.column_stack([s0, s1]), 100.0)], 0)
+    assert ev == [(30, 10), (80, 60)]
+    z = np.zeros(T, bool)
+    al = {"m": z.copy()}
+    al["m"][30:] = True
+    info = {"fid": "Fa+Fb", "seed": 1, "onset_s": 10.0, "faults": [
+        {"fid": "Fa", "root": "m", "control": False, "onset_s": 10.0},
+        {"fid": "Fb", "root": "m2", "control": False, "onset_s": 58.0}]}
+    asset = {"m": "m", "m2:x": "m2"}
+    rec = N.score_pair(dict(al, **{"m2:x": z.copy()}), info, asset, {}, {"m": ev, "m2:x": []})
+    assert rec["detected"] == {"m": True, "m2": False}
+    info["faults"][1]["root"] = "m"
+    rec = N.score_pair(al, info, {}, {}, {"m": ev})
+    assert rec["detected"]["m"] is True
+
+
+def test_masked_second_root_is_named_by_its_own_change():
+    """R2 is downstream of R1, R1's fault sets R2 off at once (a victim), then R2's own fault starts
+    later: its own change, with no upstream alarm before it, names R2 and the pair passes."""
+    T = 400
+    z = np.zeros(T, bool)
+    al = {"r1": z.copy(), "r2": z.copy()}
+    al["r1"][50:] = True
+    al["r2"][60:] = True                          # set off by r1 within 120 s: a victim at first
+    info = {"fid": "Fa+Fb", "seed": 1, "onset_s": 40.0, "faults": [
+        {"fid": "Fa", "root": "r1", "control": False, "onset_s": 40.0},
+        {"fid": "Fb", "root": "r2", "control": False, "onset_s": 300.0}]}
+    reach = {"r1": {"r2"}, "r2": set()}
+    rec = N.score_pair(al, info, {}, reach, {"r1": [(50, 41)], "r2": [(60, 52), (320, 305)]})
+    assert "r2" in rec["named"] and rec["passed"]
+    rec = N.score_pair(al, info, {}, reach, {"r1": [(50, 41)], "r2": [(60, 52)]})
+    assert rec["named"] == ["r1"] and not rec["passed"]
+
+
+def test_order_aware_graph_rule():
+    """The root alarms first, an upstream machine (no cycle) alarms 30 s later: the plain graph rule
+    drops the root, the order-aware one keeps it."""
+    z = np.zeros(400, bool)
+    al = {"root": z.copy(), "up": z.copy()}
+    al["root"][100] = True
+    al["up"][130] = True
+    reach = {"up": {"root"}, "root": set()}
+    rec = N.score_fault(al, {"onset_s": 50.0, "root": "root", "control": False}, None, {}, reach)
+    assert rec["top1"] and not rec["top1_g120"] and rec["top1_g120o"]

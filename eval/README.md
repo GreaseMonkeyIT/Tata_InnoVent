@@ -142,32 +142,82 @@ warm-up (the longest filter time constant) are recorded as the run's lead. The l
 model's filters, so they start from history, as in a plant that runs all the time. The lead is not
 fitted, calibrated or scored. The onset times of the faults count from the end of the warm-up.
 
-Training days (`fit_and_calibration`, since 2026-10-17): the training runs come in rounds of 12,
-one day per month. Every third round sets the residual spreads, and the other rounds are the days
-the models fit on. The default `--train 36` gives 24 fit days (2 per month) and 12 spread days
-(1 per month), so both cover the year. With fewer than 36 runs, the last quarter sets the spreads,
-and its months are then missing from the fit.
+Training days (`fit_and_calibration`): the training runs come in rounds of 12, one day per month.
+Since LOG-118 the default is `--train 120 --calib fit2`: the first two rounds (24 days, 2 per
+month) are the days the models fit on, and the other eight rounds (96 days, 8 per month) set the
+residual spreads and the alarm limits. So both cover the year. The rule `thirds` (every third round
+sets the spreads, the default of LOG-114 to LOG-117) stays as an option.
 
-    python -m eval.nodes --hours 6 --train 36 --runs 8 --splits tuning,validation
+    python -m eval.nodes --hours 6 --runs 8 --splits tuning,validation
 
-Alarm rules (`--rule`, since 2026-10-17). The default is `cusumk` (LOG-115: it held on the
-validation split). The other rules stay as options. All work on the standardized residuals z (the
-residual divided by its spread for the PLC state):
+Alarm rules (`--rule`). The default is `cusumkv` (LOG-118). The other rules stay as options. All
+work on the standardized residuals z (the residual divided by its spread for the PLC state):
 
-- `gate`: the rule of today's engine. A node alarms when at least 79 of the last 120
-  samples have |z| above 3.5 (the 35th percentile of the window above 3.5). The window forgets. A
-  machine that works in short cycles (a press bend of 8 s in about 41 s) never fills it.
+- `gate`: the rule of today's engine. A node alarms when at least 79 of the last 120 samples have
+  |z| above 3.5 (the 35th percentile of the window above 3.5). The window forgets. A machine that
+  works in short cycles (a press bend of 8 s in about 41 s) never fills it.
 - `cusum`: a two-sided CUSUM on each output, S+ = max(0, S+ + z - 0.5) and S- = max(0, S- - z - 0.5).
   The node alarms when a sum passes its limit h, and the alarm ends when the sums fall back to 0.
-  Samples outside the training range add nothing. Each node takes h from its calibration days: the
-  split-conformal quantile of the per-day maxima at alpha 0.1 (with 12 days, the largest), never below
-  the textbook 5. With 12 calibration days the limit can only hold a node to about one false alarm
-  day in 13.
-- `cusumk` (the default): CUSUM with a k per output from the slow bias of the calibration days: the
-  0.99 quantile of |mean z| over 30 min windows, never below 0.5. Then h as for `cusum`.
+  Samples outside the training range add nothing.
+- `cusumk`: CUSUM with a k per output from the slow bias of the calibration days: the 0.99
+  quantile of |mean z| over 30 min windows, never below 0.5.
+- `cusumkv` (the default): `cusumk`, and also a one-sided CUSUM on the variance of each residual,
+  for a fault that adds noise with no shift (a worn welding contact tip, F5). The statistic is the
+  residual less its 60 s mean, squared, divided by its calibration variance, less 1. Its k and h
+  come from the calibration days by the same rules. Not on controller outputs (an output of the
+  asset's own control loops, such as an on/off valve): their residual is a switching error.
 - `both`: the gate or plain CUSUM (the combined Shewhart-CUSUM scheme).
 
-LOG-115 has the scores of the four rules on the days of campaign 8.
+Limits: each node takes h from its calibration days. The default (`--alpha` not set) is the largest
+calibration-day maximum, so with 96 spread days a node passes it on about 1 normal day in 97. With
+`--alpha`, the split-conformal quantile of the day maxima at that alpha, and with `--limit gumbel` a
+Gumbel fit to them. Never below the textbook 5.
+
+Coverage ("don't know"): a sample counts only when every feature lies inside its training range
+(with a 10 % margin). Two kinds of input do not count, because a fault of the node itself can drive
+them out of range: an output of the asset's own control loops (LOG-117), and a feedback input, one
+whose node can be reached from this node's outputs through the documents (`feedback_inputs`,
+LOG-118: a failing cooling pump heats the water the compressor returns to cool-1).
+
+Root naming (`score_fault`): "root first" is the strict count, the first machine to alarm and no
+tie. The engine's rule ("root named", the graph rule, `top1_g120`): of the machines that alarm
+within 120 s of the first, those downstream of another candidate in the documents drop out
+(`downstream`, unless the two are in a cycle), and the earliest of the rest is named. Machines that
+alarm in the same second are split by the earlier change point (Page's estimate, `change_point`:
+the sample after the last zero of the single CUSUM sum that passed its limit). The change point
+alone is also reported (`top1_cp`).
+
+Fault pairs (`--pairs F6+F13,F7+F8 --pair-runs 10`, LOG-118, ideas.md 11.9 and 11.10): runs with
+two faults, each at its own random severity and onset (`simulate_multi`). The engine names as roots
+the machines that alarm after the first onset, except one that a machine upstream of it in the
+documents (not in a cycle with it) alarmed before, by at most 120 s. A pair passes when every real
+root (not the control cases F14 to F16) is named and has alarmed for its own fault: a first alarm
+after its onset, or, when the other fault already holds the machine in alarm, a single CUSUM sum of
+the machine that crosses its limit with a change that began after the onset (`crossings`).
+
+LOG-115 and LOG-118 have the scores of the rules.
+
+Switches for experiments (LOG-118).
+
+| Switch | Values | What it does |
+|---|---|---|
+| `--calib` | `fit2` (default), `fit3`, `fit4`, `thirds` | `fitK`: the first K rounds of 12 training days fit, every later round sets the spreads and limits |
+| `--alpha` | none (default) | the chance that a normal day passes a node's limit; none: the largest calibration-day maximum |
+| `--limit` | `conformal` (default), `gumbel` | `gumbel`: the limit from a Gumbel fit to the day maxima |
+| `--clip` | none (default) | robust CUSUM: \|z\| is capped at this value before it enters a sum |
+| `--confirm` | 0 (default) | an alarm counts once it has lasted this many seconds |
+| `--no-feedback-rule` | off (default) | count feedback inputs for coverage, as before LOG-118 |
+| `--no-added-loop-inputs` | off (default) | leave out the loop outputs that `wiring.py` adds to a machine's own node |
+| `VISR_FACTORY` (environment) | 0 (default) | another factory: other calibration biases of the instruments |
+| `VISR_HIDDEN` (environment) | 32,32 (default) | the hidden layers of every node's network |
+| `VISR_VAR_STEADY_S` (environment) | 0 (default) | the variance statistic leaves out this many seconds after a change of the PLC state |
+
+The report records the rule, the split, the limit settings, the network size, the factory and the
+instrument switch in its `meta`.
+
+The instruments draw their noise per tag from the tag's own stream (`Instruments.read_column`,
+seeded by the run and the tag), so a change to the documents does not change the noise of the other
+readings.
 
 The engine view (since 2026-10-17): `view()` saves each run once as the engine sees it, after the
 documents and the instruments, in `eval/cache/view/` (`VISR_VIEW_DIR` moves it). Text states are

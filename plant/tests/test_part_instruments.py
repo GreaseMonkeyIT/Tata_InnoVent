@@ -46,3 +46,22 @@ def test_digital_values_pass_unchanged():
     inst = Instruments(0)
     assert inst.read("press-1.phase", "bend") == "bend"
     assert inst.read("x.flag", True) is True
+    assert inst.read_column("press-1.phase", ["idle", "bend"], 1) == ["idle", "bend"]
+
+
+def test_read_column_matches_read_and_keeps_its_own_noise():
+    """Without noise a column reads as `read` does, value for value. With noise, an instrument's
+    readings depend only on the run and its own tag, not on the other tags read."""
+    a = Instruments(4, noise=False, ranges={"press-1.current_a": 72.0})
+    vals = [0.0, 1.0, 40.0, 72.0, None, float("nan"), 200.0]
+    for t in ("press-1.current_a", "press-1.oil_c", "lmp-1.oil_c", "compressor-1.pressure_barg", "ced-1.tank_gas_m3h"):
+        col = a.read_column(t, vals, 3)
+        ref = [a.read(t, v) for v in vals]
+        assert [round(c, 9) for c in col[:4] + col[6:]] == [round(r, 9) for r in ref[:4] + ref[6:]]
+        assert col[4] is None and col[5] != col[5]
+    b = Instruments(4)
+    x1 = b.read_column("press-1.oil_c", [50.0] * 100, 9)
+    b.read_column("press-1.current_a", [40.0] * 100, 9)
+    x2 = Instruments(4).read_column("press-1.oil_c", [50.0] * 100, 9)
+    assert x1 == x2 and len(set(x1)) > 1
+    assert Instruments(4).read_column("press-1.oil_c", [50.0] * 100, 10) != x1

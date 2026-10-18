@@ -1,0 +1,72 @@
+/* VISR console tokens (LOG-121). The design language of Dyson Sphere Program and EVE Online, fitted
+   to the console rules (references/ui_2026-10-18/research_hud_references.md, section 5), with the
+   operator corrections of 2026-10-18: windows are boxed (a 1 px border, square corners, hard
+   edges), translucent with a light blur of the floor behind them (a setting makes them opaque).
+   Keywords and names are never boxed. Window contrast figures are for the composite over the floor
+   and, after the slash, over the darkest (light theme) or brightest (dark theme) object behind.
+
+   Contrast is computed against the sampled light floor #abafb5. Only --ink-strong and --ink may sit
+   on the bare floor (floor labels, with the halo). Red and orange fail 3:1 on the floor alone, so
+   every status glyph has the 1.5 px --glyph-outline. */
+:root {
+  --floor-bg: #d6dbe1;
+  --ink-strong: #14171b;      /* values, verdict, names: 8.2 on the floor, 15.2 / 12.9 on --win */
+  --ink: #262b31;             /* body text: 6.5 on the floor */
+  --ink-muted: #4a5058;       /* labels, units, times: 6.9 / 5.8 on --win, not on the bare floor */
+  --hairline: rgba(20, 23, 27, 0.14);
+  --win: rgba(243, 244, 246, 0.88);   /* window fill, translucent */
+  --win-solid: #f3f4f6;       /* the opaque fill (setting), sticky table heads */
+  --win-blur: 10px;
+  --win-border: #8f969e;      /* window border, 1 px */
+  --btn: #e3e6ea;             /* the one boxed button (Acknowledge) */
+  --btn-border: #6f767e;
+  --select: #1a56b0;          /* commands, the active choice, selection ticks: 5.9 / 5.0 on --win */
+  --select-tint: rgba(26, 86, 176, 0.1);
+  --hover-tint: rgba(20, 23, 27, 0.05);
+  --alarm: #c8102e;           /* glyph fill only */
+  --alarm-text: #b30d27;      /* an abnormal value in alarm: 5.9 / 5.0 on --win */
+  --warn: #e8890c;            /* glyph fill only */
+  --warn-text: #9a5200;       /* an abnormal value in warning: 5.0 / 4.2 on --win (the blur lifts the worst case) */
+  --glyph-outline: #14171b;
+  --halo: #e4e6ea;            /* 2 px stroke behind floor labels, no blur */
+  --track: rgba(20, 23, 27, 0.1);
+  --band-fill: rgba(20, 23, 27, 0.16);
+
+  --font: "Segoe UI", Arial, sans-serif;
+  --mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+  --fs-xs: 12px;              /* units and hotkey superscripts only */
+  --fs-label: 13px;           /* labels, column heads, times */
+  --fs-body: 14px;            /* body, table cells */
+  --fs-title: 16px;           /* drawer titles, attention names, the verdict sentence */
+  --fs-value: 18px;           /* vitals values, the clock */
+  --fs-calm: 20px;
+  --fs-who: 28px;             /* the verdict machine */
+  --margin: 24px;
+  --row: 28px;
+  --group-gap: 32px;
+}
+
+:root[data-theme="dark"] {
+  --floor-bg: #121519;
+  --ink-strong: #f1f3f5;
+  --ink: #e8eaed;             /* 14.2 / 10.1 on --win */
+  --ink-muted: #a0a7b0;       /* 7.1 / 5.0 on --win */
+  --hairline: rgba(255, 255, 255, 0.12);
+  --win: rgba(23, 27, 32, 0.88);
+  --win-solid: #171b20;
+  --win-blur: 10px;
+  --win-border: #3b434d;
+  --btn: #242a31;
+  --btn-border: #56606b;
+  --select: #5b9cff;          /* 6.2 / 4.4 */
+  --select-tint: rgba(91, 156, 255, 0.16);
+  --hover-tint: rgba(255, 255, 255, 0.05);
+  --alarm: #ff5a64;           /* 5.6 / 4.0 */
+  --alarm-text: #ff5a64;
+  --warn: #f0a020;            /* 8.0 / 5.6 */
+  --warn-text: #f0a020;
+  --glyph-outline: #0b0d10;
+  --halo: #15191d;
+  --track: rgba(255, 255, 255, 0.1);
+  --band-fill: rgba(255, 255, 255, 0.2);
+}

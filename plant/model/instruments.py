@@ -78,3 +78,35 @@ class Instruments:
 
     def read_all(self, tags, names):
         return {t: self.read(t, tags.get(t)) for t in names}
+
+    def read_column(self, tag, values, run_seed):
+        """A whole column of readings of one instrument for a run (2026-10-18): the same bias,
+        accuracy and resolution as `read`, with the noise from the instrument's own stream (seeded by
+        the run and the tag). So the noise of one instrument does not depend on which other tags are
+        read. Values that are not finite numbers pass through unchanged."""
+        import hashlib
+
+        import numpy as np
+        vals = list(values)
+        num = np.array([isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in vals],
+                       bool)
+        if not num.any():
+            return vals
+        x = np.array([float(v) if ok else 0.0 for v, ok in zip(vals, num)])
+        rng_ = self.ranges.get(tag)
+        v = np.abs(x) if rng_ is None else np.maximum(np.abs(x), LOW_END * rng_)
+        unit = tag.rsplit(".", 1)[-1]
+        if unit.endswith("_c"):
+            acc = np.where(v <= 150.0, 0.15 + 0.002 * v, np.maximum(1.5, 0.004 * v))
+            res = 0.1
+        else:
+            _, res = _accuracy(tag, 1.0, rng_)
+            a1, _ = _accuracy(tag, 1.0, None)                 # the accuracy of a reading of 1.0
+            a0, _ = _accuracy(tag, 0.0, None)
+            acc = a0 + (a1 - a0) * v                          # every non-temperature rule is linear in v
+        y = x + self._bias(tag) * acc
+        if self.noise:
+            seed = int.from_bytes(hashlib.sha256(f"noise:{run_seed}:{tag}".encode()).digest()[:8], "little")
+            y = y + np.random.default_rng(seed).normal(0.0, 1.0, len(y)) * (acc / 5.0)
+        y = np.round(y / res) * res
+        return [float(a) if ok else b for a, b, ok in zip(y.tolist(), vals, num)]

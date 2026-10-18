@@ -74,3 +74,6 @@ mechatronics_lab_manual.pdf
 eval/results/
 plant/verify_results/
 /eval/cache/
+
+# floor prototype replays: regenerate with plant/floor/replay.py
+/dashboard/public/floor/

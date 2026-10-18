@@ -1,10 +1,11 @@
-import "./globals.css";
-import "./scifi.css";   // the digital-twin theme layer: loaded after globals.css, overrides only what it needs
 import localFont from "next/font/local";
 
-// VISR display face — Industry (Fontfabric), self-hosted via next/font/local so the static export
-// stays air-gap portable (no CDN). Used for HUD chrome (brand, section heads, gauges, micro-labels);
-// body/data text stays Inter. Trial ("Test") weights — swap to licensed files in app/fonts when ready.
+// Each route loads its own stylesheet (LOG-120): the new console imports app/ui/styles, the legacy
+// console (/legacy) imports globals.css and scifi.css. The root layout loads no CSS.
+//
+// The legacy console's display face, Industry (Fontfabric trial "Test" weights), self-hosted via
+// next/font/local so the static export stays air-gap portable. Only /legacy uses it (--font-display);
+// preload is off so the new console does not fetch it. It leaves with the legacy console.
 const display = localFont({
   src: [
     { path: "./fonts/IndustryTest-Medium.otf", weight: "500", style: "normal" },
@@ -14,11 +15,12 @@ const display = localFont({
   ],
   variable: "--font-display",
   display: "swap",
+  preload: false,
 });
 
 export const metadata = {
-  title: "VISR · Causal AIOps",
-  description: "Causal correlation verdict for a single-node industrial edge stack.",
+  title: "VISR",
+  description: "Plant operator console: the floor, the vitals and the verdict.",
 };
 
 export default function RootLayout({ children }) {

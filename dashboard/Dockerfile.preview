@@ -1,0 +1,16 @@
+# The console preview (LOG-121): the same static export as Dockerfile, served by a plain nginx
+# (nginx.preview.conf) with no TLS, no login and no API proxy. The preview runs on the plant
+# recording and the mock verdict only. deploy/console-preview.sh builds and runs it on forge.
+# The plant recording (public/floor/replay.json, gitignored, from plant/floor/replay.py) must be in
+# the build context.
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY . .
+RUN test -f public/floor/replay.json && npm run build
+
+FROM nginx:alpine
+COPY nginx.preview.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/out /usr/share/nginx/html
+EXPOSE 80

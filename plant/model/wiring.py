@@ -9,7 +9,9 @@ ideas.md 12.1).
 Each node: {"feeds": [tags of the media it takes from], "commands": [PLC tags: states, phases,
 outputs], "measures": [its own instrument tags], "asset": the machine it belongs to,
 "loop_outputs": the outputs of that machine's own PLC control loops}. Counters and per-part records
-(holes, parts, last_*) are not time series and stay out (per-part records: ideas.md 17.2, week 2).
+(holes, parts, last_*) are not time series and stay out (per-part records: ideas.md 17.2, week 2),
+except the counters of a tool's use since its change and the force of each hit, which a CNC keeps:
+plasma-1.electrode_starts (LOG-116), pierce-1.punch_hits and pierce-1.last_force_kn (LOG-118).
 
 Since 2026-10-18 a machine can have more than one node: "<asset>:loop" for its PLC control loops
 (the measured variable in, the controller output out, `loops`) and "compressor-1:air" for the air
@@ -23,7 +25,8 @@ def wiring(p):
     shop = ["site.shop_air_c"] if p.site_weather else []
     outdoor = ["site.dry_bulb_c", "site.wet_bulb_c"] if p.site_weather else []
     air = ["compressor-1.pressure_barg"]
-    water = ["cool-1.supply_c"]
+    # the cooling water header: its supply temperature and the loop flowmeter (P&ID, 2026-10-18)
+    water = ["cool-1.supply_c", "cool-1.flow_m3h"] if not p.chiller else ["cool-1.supply_c"]
 
     def add(node, feeds, commands, measures):
         w[node] = {"feeds": list(feeds), "commands": list(commands), "measures": list(measures)}
@@ -34,15 +37,17 @@ def wiring(p):
         add("cool-1", ["psu-b.voltage_v", "compressor-1.water_out_c", "compressor-1.power_kw",
                        "press-1.cooler_valve"] + (["lmp-1.cooler_valve", "hot-1.coolant_kw"] if p.fab or p.asm else [])
             + outdoor, ["cool-1-tower.fan_on"],
-            ["cool-1.supply_c", "cool-1.return_c", "cool-1-tower.basin_c"])
+            ["cool-1.supply_c", "cool-1.return_c", "cool-1-tower.basin_c", "cool-1.flow_m3h", "cool-1-tower.hot_c"])
     if p.press is not None:
         add("press-1", ["psu-a.voltage_v"] + water, ["press-1.phase", "press-1.cooler_valve"],
             ["press-1.current_a", "press-1.pressure_bar", "press-1.oil_c"])
     if p.fab:
         add("lmp-1", ["psu-a.voltage_v"] + water, ["lmp-1.phase", "lmp-1.cooler_valve"],
             ["lmp-1.current_a", "lmp-1.pressure_bar", "lmp-1.oil_c"])
-        add("pierce-1", ["psu-a.voltage_v"], ["pierce-1.state"],
-            ["pierce-1.current_a", "pierce-1.pressure_bar"])
+        # the CNC counts the hits on the punch since its change, and logs the force of each hit
+        # (frame_line.py): the counter is a PLC input, the force a measure (2026-10-18)
+        add("pierce-1", ["psu-a.voltage_v"], ["pierce-1.state", "pierce-1.punch_hits"],
+            ["pierce-1.current_a", "pierce-1.pressure_bar", "pierce-1.last_force_kn"])
         add("press-2", ["psu-a.voltage_v"] + air, ["press-2.state"],
             ["press-2.current_a", "press-2.flywheel_rpm"])
         # the CNC counts the arc starts on the consumables since their change (fab_stations.py)
@@ -55,7 +60,8 @@ def wiring(p):
              "ced-1.rect_a"])
         add("conveyor-1", ["psu-a.voltage_v"], ["conveyor-1.state"], ["conveyor-1.current_a", "conveyor-1.speed_mps"])
     if p.asm:
-        add("washer-1", shop, ["washer-1.phase", "washer-1.heater_on"], ["washer-1.tank_c", "washer-1.power_kw"])
+        add("washer-1", shop, ["washer-1.phase", "washer-1.heater_on"],
+            ["washer-1.tank_c", "washer-1.power_kw", "washer-1.part_out_c"])
         # the export limiter is a PLC function: its output, the braking resistor's share, decides how
         # much of the dyno power goes back to the supply (plant.py, the no-export rule)
         add("hot-1", ["hot-1.resistor_kw"], ["hot-1.state", "hot-1.load_pct"], ["hot-1.coolant_kw", "hot-1.power_kw"])
@@ -85,7 +91,9 @@ def wiring(p):
         # the machine's node takes its own loop outputs as inputs (a valve, a burner, a heater acts on
         # what the machine measures); add the ones the lists above do not have
         doc = w[lp["asset"]]
-        doc["feeds"] += [t for t in lp["output"] if t not in doc["feeds"] + doc["commands"]]
+        added = [t for t in lp["output"] if t not in doc["feeds"] + doc["commands"]]
+        doc["feeds"] += added
+        doc.setdefault("added_inputs", []).extend(added)
     for name, doc in w.items():
         doc["asset"] = name.split(":")[0]
         doc["loop_outputs"] = list(own.get(doc["asset"], []))
