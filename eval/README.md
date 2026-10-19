@@ -14,6 +14,7 @@ one against the truth that the simulator knows, and reports every rate with its 
 | `nodes.py` | The node score: every node of the plant with one method (below). `--save-models` also writes `models.pkl` for `cf.py` and `joint.py`. |
 | `cf.py` | The counterfactual root (`ideas.md` 12.3 step 10) and the replay error of the twin (step 8), on the saved models of a campaign. |
 | `joint.py` | The joint pass of the twin (step 9): the nodes with a chained input refitted on free replay inputs, for the twin only. |
+| `dowhy_check.py` | The reference check of the counterfactual root against DoWhy-GCM: synthetic models with a known root, and the validation fault runs of a campaign. |
 | `tests/test_metrics.py` | Unit checks of the metrics on hand-made timelines. |
 | `tests/test_machines.py` | Unit checks of the machine detector (the gate on residuals, the episodes). |
 
@@ -190,6 +191,14 @@ alarm in the same second are split by the earlier change point (Page's estimate,
 the sample after the last zero of the single CUSUM sum that passed its limit). The change point
 alone is also reported (`top1_cp`).
 
+The engine's root of a single fault (since LOG-124, `--root cf`, the default): the counterfactual
+of `cf.py`. A campaign with fault runs saves its models, runs `cf.py` on the single-fault runs
+(`cf-root.json` and `cf-root.md` in the results folder) and puts its root into the report as
+"Root named (counterfactual, the engine's rule)". The graph rule stays in three places: as the
+cross-check column of the report, as the fallback (`cf.py` takes the graph rule's root when no
+reset removes any trouble), and as the rule for fault pairs. `--root graph` scores the graph rule
+only (no `cf.py` run, about 10 to 15 min less on forge).
+
 Fault pairs (`--pairs F6+F13,F7+F8 --pair-runs 10`, LOG-118, ideas.md 11.9 and 11.10): runs with
 two faults, each at its own random severity and onset (`simulate_multi`). The engine names as roots
 the machines that alarm after the first onset, except one that a machine upstream of it in the
@@ -204,6 +213,7 @@ Switches for experiments (LOG-118).
 
 | Switch | Values | What it does |
 |---|---|---|
+| `--root` | `cf` (default), `graph` | the rule that names the root of a single fault (LOG-124) |
 | `--calib` | `fit2` (default), `fit3`, `fit4`, `thirds` | `fitK`: the first K rounds of 12 training days fit, every later round sets the spreads and limits |
 | `--alpha` | none (default) | the chance that a normal day passes a node's limit; none: the largest calibration-day maximum |
 | `--limit` | `conformal` (default), `gumbel` | `gumbel`: the limit from a Gumbel fit to the day maxima |
@@ -335,3 +345,28 @@ names nothing.
 `joint.py` refits each node with a chained input on its 24 fit days twice: with the measured inputs
 and with the chained inputs from a free replay of the step 1 twin over the whole day. The targets
 stay the measured outputs. It writes `twin_models.pkl`.
+
+## The reference check against DoWhy-GCM (`dowhy_check.py`, 2026-10-19, LOG-124)
+
+DoWhy-GCM (JMLR 25, 2024) is the reference implementation of the root cause method of Budhathoki et
+al. (ICML 2022). DoWhy 0.14 needs scipy 1.15.3, so it is in its own venv on the laptop
+(`%USERPROFILE%/venvs/visr-dowhy`, Python 3.11.9, numpy 2.4.6 as in `.venv`), not in `.venv`.
+forge cannot install it (Python 3.14: only DoWhy 0.8 from wheels).
+
+    %USERPROFILE%/venvs/visr-dowhy/Scripts/python.exe -m eval.dowhy_check synthetic
+    %USERPROFILE%/venvs/visr-dowhy/Scripts/python.exe -m eval.dowhy_check plant --data eval/cache/dowhy
+
+- `synthetic`: random models with 8 nodes, linear or nonlinear, and an outlier of 4 to 6 spreads in
+  the noise of one node. Both methods use the mechanisms that DoWhy fits. Ours is the static form of
+  `cf.py`: reset a node's noise, carry the change downstream, and name the node that removes the
+  most trouble at the alarmed nodes. In these models a source node is a modelled node with a noise
+  of its own, so the normal values have it at its median (`free_roots`).
+- `plant`: DoWhy-GCM as it is published, on one sample with no time history. The input folder holds
+  `manifest.json` (the documents, the fit days, and per validation fault run its view, the first
+  alarms and the results of `cf-c3` and the graph rule), the views and `models.pkl`, copied from
+  forge into `eval/cache/dowhy/` (ignored by git and Syncthing). The graph of tags comes from the
+  documents. PLC commands and controller outputs are source nodes, and the cooling water cycle is
+  cut at the return from compressor-1 to cool-1. DoWhy fits a gradient-boosting regressor with
+  additive noise per node on the 24 fit days, one sample every 30 s.
+
+Results (`eval/results/<UTC time>-dowhy-<part>/`): `twin/README.md` and LOG-124.

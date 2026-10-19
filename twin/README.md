@@ -210,7 +210,46 @@ gradient through the chain.
 
 - The twin chains numbers only. PLC commands and controller outputs stay measured, so a replay does
   not close a control loop.
-- One check run of the method on our own sim. DoWhy-GCM (the reference of `ideas.md` 15) is not
-  installed, so the cross-check against it is open.
+- One check run of the method on our own sim, and one reference check against DoWhy-GCM (below,
+  `eval/dowhy_check.py`).
 - The window lengths (900 s before the alarm, 120 s after) are project choices. They were not
   tuned.
+
+### Reference check against DoWhy-GCM (2026-10-19, LOG-124)
+
+DoWhy-GCM is the reference implementation of the method (`ideas.md` 15). `eval/dowhy_check.py` runs
+it in two settings.
+
+Synthetic models (8 nodes, an outlier in the noise of one known node, 100 trials per kind; scored:
+the trials where a node alarms). Both methods use the mechanisms that DoWhy fits:
+
+| Mechanisms | Scored trials | Our rule names the root | DoWhy-GCM names the root | The two agree |
+|---|---|---|---|---|
+| linear | 53 | 52 | 52 | 53 |
+| nonlinear | 40 | 39 | 38 | 39 |
+
+The logic of our rule gives the reference's answer. The first version of the static port missed
+every outlier in a source node (36 and 23 right): its normal values kept the source nodes as
+observed, as the twin does for its exogenous inputs. In these models a source node has a noise of its
+own, so the check now puts it at its median.
+
+Plant, the 116 validation fault runs with an alarm (`20261018T215624Z-nodes`; DoWhy on one sample at
+the largest deviation in the 120 s after the first alarm, no time history), roots named:
+
+| Method | Right of 116 |
+|---|---|
+| DoWhy-GCM as published (static) | 102 |
+| Our rule, static form, on DoWhy's mechanisms | 99 |
+| Our counterfactual on the twin (`cf-c3`) | 106 |
+| Graph rule | 100 |
+
+DoWhy-GCM and our counterfactual name the same machine in 109 of 116 runs. In every run where DoWhy
+is right, our counterfactual is right too. Our counterfactual is right where DoWhy is wrong in 4 runs
+(F2, F8 twice, F12), and both are wrong in 10. The static form of our rule loses F6 (3 of 10): the
+evidence of the air leak is in the compressor's load state, a source node that its normal values keep
+as observed. The twin models that state with the loop node, so the dynamic counterfactual has it.
+DoWhy samples at random, so a second run can move its counts by about 1.
+
+Adopted (operator, 2026-10-19): the counterfactual is the engine's root of a single fault
+(`eval/nodes.py --root cf`, the default). The graph rule is the fallback, the cross-check and the
+rule for fault pairs.

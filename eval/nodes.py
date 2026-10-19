@@ -93,6 +93,12 @@ DEFAULT_RULE = "cusumkv"    # since 2026-10-18 (LOG-118; cusumk from LOG-115): i
 # this gave more faults found, fewer false alarms and the root first more often than LOG-117's
 # defaults, on the tuning and the validation split.
 DEFAULT_TRAIN, DEFAULT_CALIB = 120, "fit2"     # 24 fit days, 96 spread days (8 per month)
+# The root of a single fault (LOG-124, operator 2026-10-19): the counterfactual of eval/cf.py on the twin.
+# It named 98 / 106 of 130 against 94 / 100 for the graph rule on factory 0 (98 / 100 against 90 / 93,
+# 98 / 106 against 94 / 99 on factories 1 and 2), and DoWhy-GCM, the reference, agreed (LOG-124). The
+# graph rule stays as the fallback (cf.py names its root when no reset removes any trouble), as the
+# cross-check in the report, and as the rule for fault pairs.
+DEFAULT_ROOT = "cf"
 # One filter set for every node: the node model's defaults (5 s to 30 min) and a 2 h constant for the
 # slow thermal states (an oil tank or a water tank behind a thermostat that cycles over about 30 min)
 TAUS = (5.0, 30.0, 120.0, 600.0, 1800.0, 7200.0)
@@ -1209,6 +1215,11 @@ def main(argv=None):
                     help="count feedback inputs for coverage, as before LOG-118 (feedback_inputs)")
     ap.add_argument("--no-added-loop-inputs", action="store_true",
                     help="leave out the loop outputs that wiring.py adds to a machine's own node")
+    ap.add_argument("--root", choices=("cf", "graph"), default=DEFAULT_ROOT,
+                    help="the rule that names the root of a single fault: cf, the counterfactual of eval/cf.py (the "
+                         "default since LOG-124; it saves the models and runs after the scoring), or graph, the graph "
+                         "rule only. The graph rule is always reported as the cross-check, and it names the roots of "
+                         "fault pairs")
     ap.add_argument("--save-models", action="store_true",
                     help="also write models.pkl (the trained nodes, the documents and the scored views) for "
                          "eval/cf.py, the twin and the counterfactual root")
@@ -1217,6 +1228,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     splits = [s.strip() for s in a.splits.split(",") if s.strip()]
     fids = [f.strip() for f in a.faults.split(",") if f.strip()]
+    if a.root == "cf" and fids:
+        a.save_models = True            # eval/cf.py reads the trained nodes
     pairs = [tuple(x.strip() for x in pr.split("+")) for pr in a.pairs.split(",") if pr.strip()]
     if "test" in splits and not a.freeze:
         ap.error("the test split is held out: run it only at the freeze, with --freeze")
@@ -1280,6 +1293,7 @@ def main(argv=None):
                        "hidden": list(HIDDEN), "factory_seed": FACTORY_SEED, "instruments": INSTRUMENTS,
                        "no_added_loop_inputs": a.no_added_loop_inputs, "alpha": a.alpha, "limit": a.limit, "clip": a.clip,
                        "feedback_rule": not a.no_feedback_rule, "confirm_s": a.confirm, "var_steady_s": VAR_STEADY_S,
+                       "root_rule": a.root,
                        "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")},
               "nodes": {}, "faults": {}}
     for name in w:
@@ -1328,6 +1342,23 @@ def main(argv=None):
         with open(os.path.join(out, "models.pkl"), "wb") as fh:
             pickle.dump({"nodes": {n: fitted[n]["state"] for n in w}, "wiring": w, "fit": fit, "calib": calib,
                          "runs": runs, "hours": a.hours, "meta": report["meta"]}, fh)
+    if a.root == "cf" and report["faults"]:
+        # the engine's root of a single fault: the counterfactual (eval/cf.py, LOG-124), merged into the report
+        from eval import cf as CF
+        CF.main([out, "--kinds", "fault", "--tag", "root", "--workers", str(a.workers)])
+        with open(os.path.join(out, "cf-root.json")) as fh:
+            got = json.load(fh)["faults"]
+        for sp, recs in report["faults"].items():
+            by = {r["seed"]: r for r in got.get(sp, [])}
+            for rec in recs:
+                c = by.get(rec["seed"])
+                if c is not None and not rec.get("control"):
+                    rec["named_cf"], rec["top1_cf"] = c.get("named_cf"), bool(c.get("top1_cf"))
+        md = report_md(report, a)
+        with open(os.path.join(out, "report.json"), "w") as fh:
+            json.dump(report, fh, indent=1, default=float)
+        with open(os.path.join(out, "report.md"), "w", encoding="utf-8") as fh:
+            fh.write(md)
     print("\n" + md + "\nwritten to " + out)
     return 0
 
@@ -1353,10 +1384,10 @@ def report_md(report, a):
         L.append(f"| {name} | {len(row['inputs'])} | {row['weights']} | {r2} | " + " | ".join(cells) + " |")
     if report["faults"]:
         L += ["", "## Faults (severity uniform in 0.05 to 1 of the range rule, fault_ranges.py)", "",
-              "| Split | Fault | Root | Detected on the root (95 % CI) | Root alarmed first | Root named (graph rule, 120 s) "
-              "| Delay median (s) "
+              "| Split | Fault | Root | Detected on the root (95 % CI) | Root alarmed first | Root named (counterfactual, "
+              "the engine's rule) | Graph rule (120 s, cross-check) | Delay median (s) "
               "| From the root's first activity, median (s) | Nodes alarmed, median | Alarms before onset |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
         for sp in splits:
             recs = report["faults"].get(sp, [])
             for fid in sorted({r["fid"] for r in recs}, key=lambda x: int(x[1:])):
@@ -1368,18 +1399,19 @@ def report_md(report, a):
                     k = sum(1 for r in rs if r["false_nodes"])
                     lo, hi = wilson(k, n)
                     L.append(f"| {sp} | {fid} (control) | none | false alarms in {k} / {n} runs "
-                             f"({100 * lo:.0f} to {100 * hi:.0f} %) | - | - | - | - | {nal} | {pre} |")
+                             f"({100 * lo:.0f} to {100 * hi:.0f} %) | - | - | - | - | - | {nal} | {pre} |")
                     continue
                 k = sum(r["detected"] for r in rs)
                 t1 = sum(r["top1"] for r in rs)
                 tc = sum(bool(r.get("top1_g120")) for r in rs)
+                tf = f"{sum(bool(r.get('top1_cf')) for r in rs)} / {n}" if any("top1_cf" in r for r in rs) else "-"
                 lo, hi = wilson(k, n)
                 d = sorted(r["delay_s"] for r in rs if r["detected"])
                 dm = f"{d[len(d) // 2]:.0f}" if d else "-"
                 da = sorted(r["delay_active_s"] for r in rs if r["detected"] and r.get("delay_active_s") is not None)
                 dam = f"{da[len(da) // 2]:.0f}" if da else "-"
                 L.append(f"| {sp} | {fid} | {rs[0]['root']} | {k} / {n} ({100 * lo:.0f} to {100 * hi:.0f} %) | "
-                         f"{t1} / {n} | {tc} / {n} | {dm} | {dam} | {nal} | {pre} |")
+                         f"{t1} / {n} | {tf} | {tc} / {n} | {dm} | {dam} | {nal} | {pre} |")
     if report.get("pairs"):
         L += ["", "## Fault pairs (ideas.md 11.10: a pair passes only if the engine names every real root)", "",
               "| Split | Pair | Runs | Every root detected | Passed (every root named) | Machines named, median |",
