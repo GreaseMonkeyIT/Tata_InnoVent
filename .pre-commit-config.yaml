@@ -1,0 +1,11 @@
+# pre-commit hooks (https://pre-commit.com). Install once: pip install pre-commit, then pre-commit install.
+# The hook folder of a git worktree is shared with the main checkout, so install it only in a clone.
+repos:
+  - repo: local
+    hooks:
+      - id: repo-guard
+        name: repository guard (paths, sizes, secrets, personal paths)
+        entry: python scripts/check_commit.py --staged
+        language: system
+        pass_filenames: false
+        always_run: true

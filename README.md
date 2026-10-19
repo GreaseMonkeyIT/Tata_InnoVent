@@ -58,4 +58,9 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
   the six onboarding phases arrive. A virtual PLC is a protocol profile, not vendor firmware.
 - **Act on a verdict**: console → Actions → Execute, then Confirm and execute inside the card. SCADA
   writes one setpoint over the PLC protocol, and the event log records the citation and the measured relief.
+
+## Contributing and security
+
+`CONTRIBUTING.md` gives the setup, the tests, the commit style and what stays out of git.
+`SECURITY.md` says how to report a security problem.
   The proposal derates a machine to 55 %, or stops compressor-1. VISR never proposes an action on chiller-1.

@@ -1,0 +1,56 @@
+# CI: the repository guard, the tests and the console build, on every push and pull request.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Tracked files (paths and sizes)
+        run: python scripts/check_commit.py --tree
+      - name: Lines added by the push
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        run: python scripts/check_commit.py --range "${{ github.event.before }}..${{ github.sha }}"
+      - name: Lines added by the pull request
+        if: github.event_name == 'pull_request'
+        run: python scripts/check_commit.py --range "${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install -r correlation/requirements.txt pytest numba pymodbus==3.6.9
+      - name: Plant, twin and score harness
+        # without data/weather the plant uses its design-condition weather
+        run: python -m pytest plant/tests twin/tests eval/tests -q
+
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run build

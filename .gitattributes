@@ -3,3 +3,11 @@
 *.jpg binary
 *.pdf binary
 *.pptx binary
+*.otf binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.npz binary
+*.pkl binary
+*.xlsx binary
+*.mp4 binary
