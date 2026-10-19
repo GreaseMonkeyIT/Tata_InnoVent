@@ -726,6 +726,27 @@ class Node:
             self.model.bounds = self.model.leads = None
         return res, cov, Y[n:], self.bins(r)[n:]
 
+    def predict(self, r):
+        """The model's prediction of the outputs of run r after its lead (T x outputs) and the covered
+        mask (T): the measured outputs less the residuals. The twin reads it (twin/twin.py)."""
+        res, cov, Y, _ = self._residuals(r)
+        return Y - res, cov
+
+    def state(self):
+        """The trained node as plain data (no class reference, so a file written by `python -m
+        eval.nodes` loads in another program): eval/cf.py rebuilds it with `from_state`."""
+        s = {k: v for k, v in self.__dict__.items() if k not in ("model", "_stats", "_bins")}
+        s["model"] = dict(self.model.__dict__)
+        return s
+
+    @classmethod
+    def from_state(cls, s):
+        nd = cls.__new__(cls)
+        nd.__dict__.update({k: v for k, v in s.items() if k != "model"})
+        nd.model = RunsModel.__new__(RunsModel)
+        nd.model.__dict__.update(s["model"])
+        return nd
+
     def z(self, r):
         """The standardized residuals of a run after its lead (T x outputs) and the covered mask (T),
         capped at +-clip when the node has a clip (the CUSUM rules only; the gate keeps them)."""
@@ -974,12 +995,12 @@ def first_alarm(alarm, start):
 
 
 def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE, alpha=None, limit="conformal",
-             onsets=None, clip=None, confirm_s=0.0):
+             onsets=None, clip=None, confirm_s=0.0, keep=False):
     """One node in a worker process: train it, then its alarms and coverage on every scored run
     ({key: view path} -> {key: (alarm, covered)}), and what the report needs of the model. fit and
     calib: [(seed, view path)]. The node loads only its own tags, and a scored run only while it
     scores that run. onsets {key: sample}: for a fault run, the change point of the node's first
-    alarm after the onset ("cp")."""
+    alarm after the onset ("cp"). keep: also return the trained node as plain data ("state")."""
     t1 = time.time()
     tags = doc["feeds"] + doc["commands"] + doc["measures"]
     nd = Node(name, doc, rule, alpha, limit, clip)
@@ -998,7 +1019,8 @@ def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE, alpha=None, limit
     return {"inputs": nd.model.inputs, "outputs": nd.model.outputs, "weights": nd.model.n_weights(),
             "r2": nd.r2, "calib_covered": nd.calib_covered, "h": nd.h, "hv": getattr(nd, "hv", None),
             "k": None if nd.k is None else np.atleast_1d(nd.k).astype(float).tolist(),
-            "alarms": alarms, "cp": cps, "events": events, "wall_s": time.time() - t1}
+            "alarms": alarms, "cp": cps, "events": events, "wall_s": time.time() - t1,
+            "state": nd.state() if keep else None}
 
 
 GRAPH_WINDOWS_S = (120.0, 600.0)
@@ -1139,6 +1161,7 @@ def score_fault(al, info, asset=None, cps=None, reach=None):
                 cmin = min(hit_cp[m] for m in pick)
                 pick = sorted(m for m in pick if hit_cp[m] == cmin)
             rec[f"top1_g{int(wnd)}"] = pick == [root]
+            rec[f"named_g{int(wnd)}"] = pick
         # the order-aware variant: a candidate drops out only when an upstream candidate alarmed
         # before it (a victim alarms after its cause), as in score_pair (LOG-118 review)
         wnd = GRAPH_WINDOWS_S[0]
@@ -1186,6 +1209,9 @@ def main(argv=None):
                     help="count feedback inputs for coverage, as before LOG-118 (feedback_inputs)")
     ap.add_argument("--no-added-loop-inputs", action="store_true",
                     help="leave out the loop outputs that wiring.py adds to a machine's own node")
+    ap.add_argument("--save-models", action="store_true",
+                    help="also write models.pkl (the trained nodes, the documents and the scored views) for "
+                         "eval/cf.py, the twin and the counterfactual root")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--out", default=os.path.join(ROOT, "eval", "results"))
     a = ap.parse_args(argv)
@@ -1244,7 +1270,7 @@ def main(argv=None):
         futs = {}
         for name, doc in w.items():
             futs[ex.submit(node_job, name, doc, fit, calib, scored, a.rule, a.alpha, a.limit, onsets, a.clip,
-                           a.confirm)] = name
+                           a.confirm, a.save_models)] = name
         for f in cf.as_completed(futs):
             fitted[futs[f]] = f.result()
             print(f"trained and scored {futs[f]}: {fitted[futs[f]]['weights']} weights, "
@@ -1296,6 +1322,12 @@ def main(argv=None):
         json.dump(report, fh, indent=1, default=float)
     with open(os.path.join(out, "report.md"), "w", encoding="utf-8") as fh:
         fh.write(md)
+    if a.save_models:
+        import pickle
+        runs = {f"{sp}|{kind}|{sd}": (path, info) for (sp, kind), rs in data.items() for sd, path, info in rs}
+        with open(os.path.join(out, "models.pkl"), "wb") as fh:
+            pickle.dump({"nodes": {n: fitted[n]["state"] for n in w}, "wiring": w, "fit": fit, "calib": calib,
+                         "runs": runs, "hours": a.hours, "meta": report["meta"]}, fh)
     print("\n" + md + "\nwritten to " + out)
     return 0
 

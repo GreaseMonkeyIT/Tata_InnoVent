@@ -11,6 +11,9 @@ one against the truth that the simulator knows, and reports every rate with its 
 | `legacy.py` | One trial of today's engine (v1, the box engine) on the box's plant simulator (`plant/sim/main.py`), through `correlation/service.py` as on the box. |
 | `harness.py` | The campaign: plans the trials, runs each one in a fresh process, scores them and writes the report. |
 | `machines.py` | The machine score (`ideas.md` 17.6): each machine's small model, trained on normal running only, against random normal, victim, control and fault runs on the new plant model. |
+| `nodes.py` | The node score: every node of the plant with one method (below). `--save-models` also writes `models.pkl` for `cf.py` and `joint.py`. |
+| `cf.py` | The counterfactual root (`ideas.md` 12.3 step 10) and the replay error of the twin (step 8), on the saved models of a campaign. |
+| `joint.py` | The joint pass of the twin (step 9): the nodes with a chained input refitted on free replay inputs, for the twin only. |
 | `tests/test_metrics.py` | Unit checks of the metrics on hand-made timelines. |
 | `tests/test_machines.py` | Unit checks of the machine detector (the gate on residuals, the episodes). |
 
@@ -296,3 +299,39 @@ These changes make an engine iteration faster. They do not change the method.
 - **forge.** A 32-run campaign (`--hours 6 --train 12 --runs 4 --faults F1,F6,F9 --fault-runs 2
   --workers 14`): 289 s fresh, 50 s from the cache, identical reports. A 6.5 h run takes 86 s (143 s
   in campaign 6, before the plant speed paths of `plant/model/README.md`). About 7 MB per cached day.
+
+## The twin and the counterfactual root (`cf.py`, `joint.py`, 2026-10-19, LOG-122)
+
+    python -m eval.nodes --hours 6 --runs 8 --faults F1,...,F16 --fault-runs 10 --pairs F6+F13,F11+F5,F7+F8,F1+F15,F14+F9 --save-models
+    python -m eval.cf eval/results/<UTC time>-nodes --tag c4 --workers 14
+    python -m eval.joint eval/results/<UTC time>-nodes --workers 14
+    python -m eval.cf eval/results/<UTC time>-nodes --tag c5 --twin-models --workers 14
+
+`--save-models` writes the trained nodes as plain data (`Node.state`, so that a file written by
+`python -m eval.nodes` loads in another program), the documents and the paths of the scored views.
+With it, a campaign gives the same report as without it (T1 against P3: the same `report.md`).
+
+`cf.py` recomputes the alarms and the graph rule of every fault and pair run with the saved models,
+then explains each run with the twin (`twin/twin.py`, `twin/README.md` CP-3 has the method). It writes
+`cf-<tag>.json` and `cf-<tag>.md` into the results folder. The JSON keeps the normalized terms of
+every window (the trouble per node, and the trouble that each suspect's reset removes per node), so
+a new rule on them needs no new replay.
+
+| Switch | Default | What it does |
+|---|---|---|
+| `--window` | 900 | seconds of the window before the alarm |
+| `--post` | 120 | seconds after the alarm, and the span in which a machine's alarm makes it a target |
+| `--calib-step` | 4 | use every n-th calibration day for the free replay variance (24 of 96 days) |
+| `--kinds` | fault,pair | the run kinds to score |
+| `--twin-models` | off | replay with the models of `joint.py` (the alarms and the coverage keep the step 1 models) |
+| `--limit` | 0 | score only the first n runs of each split (a quick check) |
+| `VISR_CF_TROUBLE` (environment) | all | `numeric`: count only number outputs that are not controller outputs (c1) |
+
+Fault pairs: a pair run gets a window at the first alarm of every machine, and at a new crossing of a
+CUSUM sum (its change point after the first onset), up to 12 windows. The first alarms come first.
+The named roots are the explanations of all windows. A window where no reset removes any trouble
+names nothing.
+
+`joint.py` refits each node with a chained input on its 24 fit days twice: with the measured inputs
+and with the chained inputs from a free replay of the step 1 twin over the whole day. The targets
+stay the measured outputs. It writes `twin_models.pkl`.

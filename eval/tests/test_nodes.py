@@ -546,3 +546,48 @@ def test_order_aware_graph_rule():
     reach = {"up": {"root"}, "root": set()}
     rec = N.score_fault(al, {"onset_s": 50.0, "root": "root", "control": False}, None, {}, reach)
     assert rec["top1"] and not rec["top1_g120"] and rec["top1_g120o"]
+
+
+def test_node_state_round_trip_and_the_twin_on_trained_nodes():
+    """A trained node as plain data (state, from_state) predicts and alarms as before, after a pickle;
+    in the twin, a reset of the upstream node removes its residual and the downstream node keeps its
+    own (eval/cf.py, LOG-122)."""
+    import pickle
+    from twin.twin import Twin
+    rng = np.random.default_rng(21)
+
+    def run(n, bump=0.0):
+        u = rng.normal(size=n)
+        ya = 2.0 * u + 0.1 * rng.normal(size=n)
+        ya[n // 2:] += bump
+        yb = 3.0 * ya + 0.1 * rng.normal(size=n)
+        return N.Run({"site.u": u, "a.y": ya, "b.y": yb}, lead=20)
+    da = {"feeds": ["site.u"], "commands": [], "measures": ["a.y"], "asset": "a", "loop_outputs": []}
+    db = {"feeds": ["a.y"], "commands": [], "measures": ["b.y"], "asset": "b", "loop_outputs": []}
+    fit, cal = [(i, run(600)) for i in range(3)], [(9, run(600)), (10, run(600))]
+    nodes = {"a": N.Node("a", da).train(fit, cal), "b": N.Node("b", db).train(fit, cal)}
+    r = run(600, bump=1.0)
+    back = N.Node.from_state(pickle.loads(pickle.dumps(nodes["a"].state())))
+    assert np.allclose(back.predict(r)[0], nodes["a"].predict(r)[0])
+    assert (back.alarms(r) == nodes["a"].alarms(r)).all()
+    tw = Twin(nodes, {"a": da, "b": db}, {"site.u", "a.y", "b.y"})
+    base, meas = tw.base(r), tw.measured(r)
+    vals, _ = tw.replay(r, 0, reset=["a"])
+    assert np.allclose(vals["a"], base["a"])                              # a at its learned normal
+    # b keeps its own residual and loses the bump that a carried into it
+    assert np.allclose(vals["b"] - tw.nodes["b"].predict(N.Run({**r, "a.y": np.r_[r["a.y"][:20], base["a"][:, 0]]}, 20))[0],
+                       meas["b"] - base["b"])
+    assert abs(float(np.mean(vals["b"][300:] - meas["b"][300:]))) > 1.0
+
+
+def test_cf_targets_and_scores():
+    """The counterfactual rule: the targets are the machines whose first alarm or new crossing lies in
+    the window's last seconds, and a suspect scores the trouble its reset removes at them."""
+    from eval import cf as CF
+    rec = {"hit": {"a": 100, "b": 150, "c": 400}, "cross": {"d": [130], "c": [900]}}
+    assert CF.targets_at(rec, 100, 120) == {"a", "b", "d"}
+    win = {"d": {"a": {"a": np.array([4.0, 2.0]), "b": np.array([6.0])}, "b": {"b": np.array([1.0])},
+                 "c": {"c": np.array([50.0])}}}
+    sig2 = {"a": np.array([1.0, 2.0]), "b": np.array([2.0]), "c": np.array([1.0])}
+    sc = CF.target_scores(win, sig2, {"a", "b"}, {"a": "a", "b": "b", "c": "c"})
+    assert sc == {"a": 4.0 + 1.0 + 3.0, "b": 0.5, "c": 0.0}

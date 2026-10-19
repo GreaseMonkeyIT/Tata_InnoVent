@@ -2862,6 +2862,32 @@ Then the model stays loaded and no caller waits for a reload.
   - Project choices for the operator's review are in ideas.md 22.6 (acknowledge, the 2-min hold, the calm glyph, the dark floor, the square corner).
   - Left for the operator: the commit (nothing of LOG-118 to LOG-121 is committed), Inter (download on the operator's word), the delete of the old console files.
 
+**LOG-122 · 2026-10-19 · CP-3: the twin, the joint pass and the counterfactual root (ideas.md 12.3 steps 8, 9 and 10).**
+
+**Why:** the operator scheduled an engine round for 03:10, to start after the session "UI overhaul" had stopped. The scope was steps 8, 9 and 10 of ideas.md 12.3, the next prototype steps. The graph rule of LOG-118 names the root of 94 / 100 of 130 single faults. It cannot order the machines of the cooling water cycle, and it names downstream victims and chance alarms.
+
+  - Base: LOG-118 to LOG-121 were committed as `b434656` before this round. A new campaign with the LOG-118 defaults and `--save-models` (T1, `20261018T215624Z-nodes`) gives the same `report.md` as P3.
+  - The twin (`twin/twin.py`): the trained node models joined along `plant/model/wiring.py`. Each edge has the field `basis` of ideas.md 18.3 ("documented" for every edge now). A number tag that is not a controller output is chained: the replay gives the downstream node the upstream prediction. A free replay is the normal plant. A reset replay is the counterfactual: the reset machine takes its predictions, and every node downstream keeps its own residual. The cooling water cycle is solved with 4 passes of waveform relaxation (largest change in the last pass 0.036).
+  - Step 8, the replay error against the one-step error (normal tuning windows of 17 min): 1.00 for the nodes with no chained input, 0.98 to 1.01 for compressor-1, press-1, lmp-1, press-2 and conveyor-1, 1.17 to 1.24 for cool-1, 1.3 for plasma-1, 2.2 to 2.6 for the cooler valves and the ced-1 burners, 6.6 for the compressor-1 load state.
+  - Step 10, the counterfactual root (`eval/cf.py`, after Budhathoki et al., ICML 2022): the window runs from 900 s before the first alarm to 120 s after it. The trouble is the squared deviation from the free replay per output, in units of its normal free-replay variance, on covered samples only. The targets are the machines that alarm within 120 s of the first alarm. The root is the machine whose reset removes the most trouble at the targets.
+
+    | Run | Change | Root named, tuning / validation (graph rule 94 / 100) | Kept |
+    |---|---|---|---|
+    | c1 | every machine a suspect, standardized score, numbers only, all samples | 86 / 95 | no |
+    | c2 | covered samples only, every output counts | 94 / 98 | no |
+    | c2, offline | the suspects that reach the machines that alarm within 120 s (several rules on the saved terms) | 98 / 104 to 106 | yes, the simplest of the three best |
+    | c3 | the rule in `cf.py`: the trouble removed at the targets | 98 / 106 | yes |
+    | c6 | c3 with the models of the joint pass | 98 / 106, the same roots | no (below) |
+
+  - c3 against the graph rule, per fault: F8 8 / 6 to 10 / 10, F6 7 to 9 on tuning, F4 and F12 one more each on validation, no fault lost. The other factories (other instrument biases, the same days): factory 1 98 / 100 against 90 / 93, factory 2 98 / 106 against 94 / 99. The rule was chosen on the tuning split of factory 0. On tuning, three rules tied at 98, and the simplest one stays.
+  - Fault pairs: a window at the first alarm of every machine and at each new CUSUM crossing (the first alarms first, up to 12 windows, c4). The counterfactual passes 35 / 35 of 50, the graph rule 41 / 38. The counterfactual names fewer wrong machines (46 / 56 against 52 / 59), but it fails F7 + F8 in 5 / 3 of 10 runs. In c3 the crossings of the F6 air leak took every window before F13 started (F6 + F13: 6 / 7). c4 fixed that (9 / 10). Not kept (c5): one crossing window per machine per 30 min (34 / 33), and a name only above the suspect's largest normal removal (21 / 19). For pairs, the graph rule stays.
+  - Step 9, the joint pass (`eval/joint.py`): the 15 nodes with a chained input refitted on their 24 fit days with the measured inputs and with the inputs of a free replay of the step 1 twin. The models serve the twin only, so the detection does not change. The free replay error, root mean square, joint over step 1: lower for 10 nodes (the compressor-1 load state 0.38, the press-1 cooler valve 0.67, the ced-1 burners 0.68 and 0.83, plasma-1 0.74 and 0.79, compressor-1 0.92), higher for 4 (cool-1 1.28 to 1.30, its fan loop 1.24, the conveyor-1 current 1.37, the lmp-1 oil temperature 1.08). The roots named do not change. Not the default: in the cooling water cycle both models change in the same pass. The switch `--twin-models` stays.
+  - Code: `eval/nodes.py`: `Node.predict`, `Node.state` and `Node.from_state` (the trained node as plain data), `--save-models`, and the name that the graph rule picks (`named_g120`). `eval/cf.py` and `eval/joint.py` are new. The saved terms of every window are in `cf-<tag>.json`, so a new rule on them needs no new replay.
+  - Wall time on forge: a campaign 7 min from the cache, `cf.py` 14 to 23 min (14 workers, the pairs take the most), `joint.py` 13 min (6 workers).
+  - Tests: `twin/tests/test_twin.py` (5: a chain, a reset that keeps the downstream residual, a cycle, the edges that are not chained, the order), and 2 in `eval/tests/test_nodes.py` (the node state round trip and the twin on trained nodes, the targets and the scores). eval and twin: 68 pass. The plant did not change.
+  - Docs: `twin/README.md` (CP-3), `eval/README.md` (`cf.py`, `joint.py`, switches), ideas.md 12.3 and 18.3.
+  - Left for the operator: the commit (nothing of LOG-122 is committed), DoWhy-GCM as the reference check (a package install, on the operator's word), and whether the counterfactual replaces the graph rule for single faults in the engine.
+
 **LOG-123 · 2026-10-19 · Every console graph is a Grafana panel, and the preview on forge gets Grafana and a wall-clock replay.**
 
 **Why:** the operator ordered that the graphs of the console are always Grafana panels, never a chart of the console's own, in Grafana's default look, with a window that keeps scrolling and never freezes until a page refresh (a fault of the old console's embedded panels).
