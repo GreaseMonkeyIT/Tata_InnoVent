@@ -21,36 +21,31 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 
 | Path | What |
 |---|---|
-| `BOOK.md` | The whole solution end to end, in plain words: the problem, every part, the inspirations, the proof, the plan |
 | `plant/` · `plc/` · `scada/` | Plant physics sim, OpenPLC trip program, SCADA tag server + historian writer |
 | `vplc/` | Virtual PLC runtime: Structured Text tasks, S7comm and Modbus TCP protocol profiles (2H) |
-| `FLEET.md` | Design and interface contract of the virtual PLC fleet and the act loop |
-| `SCENARIOS.md` | The PS fault set (PS0 to PS6), its real-incident anchors, and its interface contract |
 | `aggregator/` · `correlation/` | L2 telemetry window, L3 deterministic causal engine |
-| `api/` · `dashboard/` | L4 API (operator gate + audit ledger), VISR dashboard |
+| `api/` · `dashboard/` | L4 API (operator gate + audit ledger), VISR operator console |
+| `twin/` · `eval/` | The overhaul engine: one small model per machine, the twin, the counterfactual root, and the score harness |
+| `scripts/` | Repository tools: `check_commit.py`, the guard that keeps data and credentials out of git |
 | `deploy/` | K3s manifests, Helm values, `skctl` bootstrap |
 | `soak/` | Soak recorder: cycles the PS set and builds an HTML evidence report with a false-positive count |
-| `video/` | Window placement and screen capture scripts for the demo takes (`POC_SCRIPT.md` 2 and 4) |
+| `video/` | Window placement and screen capture scripts for the demo takes |
 | `docs/images/` | The whole-system architecture diagram above |
 | `PIVOT_SETUP.md` | Box bring-up runbook (single-node K3s) |
-| `POC_SCRIPT.md` | Stage 2 PoC recording script |
-| `INNOVENT_PLAN.md` | Current state at a glance, and the open items |
-| `INNOVENT_MASTER_PLAN.md` | The Stage 2/3 build plan (phases, gates, fallacy guards) |
-| `INNOVENT_LOG.md` | Append-only decision log (LOG-001 onward), the authoritative history |
 
 ## Run it
 
 - **Box bring-up** (single-node K3s): follow `PIVOT_SETUP.md`.
 - **Tests**: `make test`, or `python -m pytest -q` inside `correlation/`, `plant/`, `api/`, `scada/`, or `vplc/`.
-- **The console** is one screen: Assets and the event log on the left, the map and the detail tabs
-  in the center, the verdict and actions on the right. The operator drags the gaps to resize panels.
-  `dashboard/README.md` has the map.
+- **The console** on this branch is one screen: the 3D floor, the verdict, attention, the vitals and
+  the drawers. It plays a plant recording. `dashboard/README.md` describes it. The steps below run
+  the proof-of-concept stack of branch `main` on K3s, with its own console.
 - **Fire a fault**: from the fault shell on the box, not the console:
   `ssh -t forge 'bash ~/Tata_InnoVent/deploy/faults.sh'`, then `f 1` (fire), `r all` (reset).
   Each scenario is anchored on a real incident:
   PS1 rail-sag cascade · PS2 a failed pressure sensor overheats the loop · PS3 control network storm · PS4A setpoint
   write with no record · PS4B current report contradicts the feeder · PS5 coolant pump degradation ·
-  PS6 the monitor runs out of memory. `SCENARIOS.md` is the contract for the set.
+  PS6 the monitor runs out of memory.
 - **Show the refusals**: `bash deploy/refusals.sh` on the box. The api refuses a fire without a token
   (401), an execute with a stale proposal (409), and a delete of the base PLC (403), and each refusal
   writes a ledger row.

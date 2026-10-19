@@ -10,13 +10,11 @@ one against the truth that the simulator knows, and reports every rate with its 
 | `metrics.py` | The metric definitions: verdict, detection, top-1, top-3, mean reciprocal rank, delay, false alarms per hour, trip card precision, recall, lead time and ETA error. Pure functions. |
 | `legacy.py` | One trial of today's engine (v1, the box engine) on the box's plant simulator (`plant/sim/main.py`), through `correlation/service.py` as on the box. |
 | `harness.py` | The campaign: plans the trials, runs each one in a fresh process, scores them and writes the report. |
-| `machines.py` | The machine score (`ideas.md` 17.6): each machine's small model, trained on normal running only, against random normal, victim, control and fault runs on the new plant model. |
 | `nodes.py` | The node score: every node of the plant with one method (below). `--save-models` also writes `models.pkl` for `cf.py` and `joint.py`. |
 | `cf.py` | The counterfactual root (`ideas.md` 12.3 step 10) and the replay error of the twin (step 8), on the saved models of a campaign. |
 | `joint.py` | The joint pass of the twin (step 9): the nodes with a chained input refitted on free replay inputs, for the twin only. |
 | `dowhy_check.py` | The reference check of the counterfactual root against DoWhy-GCM: synthetic models with a known root, and the validation fault runs of a campaign. |
 | `tests/test_metrics.py` | Unit checks of the metrics on hand-made timelines. |
-| `tests/test_machines.py` | Unit checks of the machine detector (the gate on residuals, the episodes). |
 
 ## Run
 
@@ -89,41 +87,21 @@ The ranges are project choices: about 20 to 35 % around the scripted fault.
 - This is a tuning-split score. The engine was tuned on these scenarios, so it is still an optimistic
   number. The held-out split and the public datasets (`ideas.md` 16.4) give the honest one.
 
-## Machine score (`machines.py`)
-
-    python -m eval.machines --machine compressor-1 --runs 30
-    python -m eval.machines --machine press-1 --runs 30
-
-1. **Train:** the machine's small model (`twin/node_model.py`) learns 12 h of normal running on the new
-   plant model: a random supply drift, cooling water, air demand or operator handling, and S355
-   material batches. The model sees only signals, never the simulator.
-2. **Trials:** 30 runs each of normal running, every machine fault at a random magnitude and onset,
-   every victim case (the machine only suffers: a supply sag, warmer water, more air demand) and every
-   control case (press-1: a plate above the S355 range, a material change and no machine fault).
-3. **Detect:** today's engine statistics on the residuals. Per output, z = residual / its normal
-   spread (press-1: a spread per discovered cycle phase). A channel alarms when the 35th percentile of
-   |z| over the last 120 s is above 3.5, the box's `GATE_Q` and `DEV_K`. press-1 also has a cycle-part
-   duration channel (CP-2): it alarms when the median of the last 5 working parts is more than 3.5
-   spreads from normal.
-4. **Score:** detection rate and median delay per fault, the first channel that alarmed, and false
-   alarms in normal, victim and control time and before each onset. Rates have 95 % Wilson intervals.
-
-The fault, victim and control magnitude ranges in `machines.py` are project choices around the CP-1
-and CP-2 levels. The tuning split uses seeds from 20,000, the test split from 920,000 (`--freeze`).
+## Where the campaigns run
 
 On forge the campaigns run outside the cluster at low priority, from the synced worktree
 `~/VISR_Overhaul`, with a user venv `~/visr-venv` (numpy, pytest):
 
-    screen -dmS visr-eval bash -c "cd ~/VISR_Overhaul && nice -n 10 ~/visr-venv/bin/python -m eval.machines --machine press-1 --runs 30 > /var/tmp/visr-eval-press.log 2>&1"
+    screen -dmS visr-eval bash -c "cd ~/VISR_Overhaul && nice -n 10 ~/visr-venv/bin/python -m eval.nodes --hours 6 --runs 8 --faults F1,F6 --fault-runs 10 > /var/tmp/visr-eval-nodes.log 2>&1"
 
 ## Node score, one method for every node (`nodes.py`, 2026-10-15)
 
-`machines.py` is superseded: its benches had a hand-written input list, model size, filter set and
-phase input per machine, and scored faults that are not on the agreed list. `nodes.py` builds every
-node from the plant's documents (`plant/model/wiring.py`: a node's feeds, PLC commands and
-measures) with one rule: the same model size and filters for all, categorical commands one-hot,
-the residual spread per command state. The data are whole-plant runs with the site weather and the
-material flow, on separate days of the year per split:
+The machine score before it (`machines.py`, removed 2026-10-19) had a hand-written input list,
+model size, filter set and phase input per machine, and scored faults that are not on the agreed
+list. `nodes.py` builds every node from the plant's documents (`plant/model/wiring.py`: a node's
+feeds, PLC commands and measures) with one rule: the same model size and filters for all,
+categorical commands one-hot, the residual spread per command state. The data are whole-plant runs
+with the site weather and the material flow, on separate days of the year per split:
 
 | Split | Seeds | Use |
 |---|---|---|
