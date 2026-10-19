@@ -7,13 +7,13 @@
 // Everything else is in a drawer at the right edge, one click or one key away (1 to 6). Esc closes
 // the floor view (or overlay), then the drawer, then the selection. Overlays (power, air, water, gas,
 // flow) show a network of the plant sim on the floor.
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { FloorScene } from "../floor/FloorScene";
 import { BY_NAME, MACHINES } from "../floor/layout";
 import Glyph from "./Glyph";
 import FloorHud from "./FloorHud";
-import useReplayModel from "./useReplayModel";
-import { AREAS, HOLD_S, VITAL, bandLevel, cap, fmt, label, series, unitOf, vitalLabel } from "./data/model";
+import useReplayModel, { timeOf } from "./useReplayModel";
+import { AREAS, HOLD_S, VITAL, bandLevel, cap, fmt, label, unitOf, vitalLabel } from "./data/model";
 import { OVERLAYS, buildOverlay } from "./data/networks";
 
 const DRAWERS = [["stations", "Stations"], ["events", "Events"], ["parts", "Parts"], ["tags", "Tags"], ["trends", "Trends"], ["energy", "Energy"], ["legend", "Legend"]];
@@ -22,10 +22,7 @@ const MAX_ITEMS = 4;                // attention items on the screen; the rest a
 const q = () => (typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search));
 const pref = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* not kept */ } };
-const clockOf = (rep, t) => {
-  const s = (((rep?.meta?.t_day0_h ?? 0) * 3600 + t) % 86400 + 86400) % 86400;
-  return [s / 3600, (s % 3600) / 60, s % 60].map((x) => String(Math.floor(x)).padStart(2, "0")).join(":");
-};
+const clockOf = timeOf;                 // wall clock with the preview server, else plant time
 const ago = (s) => (s < 90 ? `${Math.max(0, Math.round(s))} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 const vitalText = (s) => (s?.vital && s.vital.value != null ? `${s.vital.label} ${fmt(s.vital.value, s.vital.tag)} ${s.vital.unit}`.trim() : null);
 
@@ -45,6 +42,7 @@ export default function UiApp() {
   const [areaFocus, setAreaFocus] = useState(null);
   const D = useReplayModel({ mock, speed, paused, startRel: Number(u.get("t") || 0) });
   const m = D.model, rep = D.rep;
+  const gf = useMemo(() => ({ on: !!D.server, theme }), [D.server, theme]);
   const scene = useRef(null);
   const seen = useRef({});
   const ov = overlay && m ? buildOverlay(overlay, m) : null;
@@ -118,6 +116,7 @@ export default function UiApp() {
   }
 
   return (
+    <Gf.Provider value={gf}>
     <div className={`app${ui.opaque ? " opaque" : ""}`}>
       <FloorMap D={D} sceneRef={scene} floorTheme={floorTheme} onPick={(h) => setSel(h?.id || null)} onHover={(h) => setHover(h?.id || null)} />
       {m && <FloorHud sceneRef={scene} markers={markers} names={ui.names ? MACHINES.map((x) => x.name) : []} sel={selInfo} hover={hoverInfo} onInspect={inspect}
@@ -131,13 +130,13 @@ export default function UiApp() {
       )}
       <Tips />
       <Top m={m} rep={rep} theme={theme} setTheme={setTheme} drawer={drawer} toggle={toggle} follow={follow} setFollow={setFollow}
-        paused={paused} setPaused={setPaused} speed={speed} setSpeed={setSpeed} mock={mock} overlay={overlay} pickOverlay={pickOverlay} />
+        paused={paused} setPaused={setPaused} speed={speed} setSpeed={setSpeed} mock={D.server ? D.server.mock : mock} server={D.server} overlay={overlay} pickOverlay={pickOverlay} />
       {m && <Verdict m={m} inspect={inspect} pick={setSel} showOn={showOn} />}
       {m && !drawer && cards.length > 0 && (
         <section className="attn win" aria-label="attention">
           <div className="wh">Attention<span className="sp" /><span className="meta">{cards.filter((c) => c.state === "active").length} abnormal</span></div>
           <div className="wb">
-            {cards.slice(0, MAX_ITEMS).map((c) => <Item key={c.key} c={c} m={m} rep={rep} mock={mock} ack={D.ack} inspect={inspect} showOn={showOn} />)}
+            {cards.slice(0, MAX_ITEMS).map((c) => <Item key={c.key} c={c} m={m} rep={rep} mock={D.server ? D.server.mock : mock} ack={D.ack} inspect={inspect} showOn={showOn} />)}
             {cards.length > MAX_ITEMS && <button className="cmd more" onClick={() => toggle("events")}>{cards.length - MAX_ITEMS} more in Events</button>}
           </div>
         </section>
@@ -149,10 +148,11 @@ export default function UiApp() {
         </footer>
       )}
       {m && drawer && (
-        <Drawer kind={drawer} chamfer={ui.chamfer} m={m} rep={rep} mock={mock} sel={sel} pick={setSel}
+        <Drawer kind={drawer} chamfer={ui.chamfer} m={m} rep={rep} mock={D.server ? D.server.mock : mock} server={D.server} sel={sel} pick={setSel}
           inspect={inspect} showOn={showOn} ack={D.ack} close={() => setDrawer(null)} ui={ui} setUi={setUi} setMock={setMock} openEvents={() => toggle("events")} />
       )}
     </div>
+    </Gf.Provider>
   );
 }
 
@@ -193,22 +193,18 @@ const Sliders = () => (
 );
 const Cross = () => (<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" stroke="currentColor" strokeWidth="1.5"><path d="M2 2l10 10M12 2L2 12" /></svg>);
 
-function MiniTrend({ xs, b, w = 160, h = 28 }) {
-  const vals = xs.filter((x) => x != null);
-  if (vals.length < 2) return <svg className="trend" width={w} height={h} />;
-  let lo = Math.min(...vals), hi = Math.max(...vals);
-  if (b) { lo = Math.min(lo, b.lo); hi = Math.max(hi, b.hi); }
-  const sp = hi - lo || 1, pad = 3;
-  const X = (i) => (i / (xs.length - 1)) * w, Y = (v) => pad + (1 - (v - lo) / sp) * (h - 2 * pad);
-  let d = "";
-  xs.forEach((v, i) => { if (v != null) d += `${d ? "L" : "M"}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`; });
-  return (
-    <svg className="trend" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden="true">
-      {b && <rect x="0" width={w} y={Y(b.hi)} height={Math.max(1, Y(b.lo) - Y(b.hi))} fill="var(--band-fill)" />}
-      <path d={d} fill="none" stroke="var(--ink)" strokeWidth="1.5" />
-    </svg>
-  );
+// Every graph of the console is a Grafana panel (operator order, 2026-10-19): the preview Grafana on
+// the same origin (/grafana/, deploy/preview/), in Grafana's own default look and the console's light
+// or dark theme. The window is relative (now-<minutes>m to now) and the panel refreshes every 5 s, so
+// it keeps scrolling. The URL holds no time, so a React re-render never reloads the frame.
+const Gf = createContext({ on: false, theme: "light" });
+function GrafanaPanel({ tag, title, minutes = 15, height = 140 }) {
+  const { on, theme } = useContext(Gf);
+  const src = `/grafana/d-solo/visr-console/visr-console?orgId=1&panelId=1&var-tag=${encodeURIComponent(tag)}&var-title=${encodeURIComponent(title || tag)}&from=now-${minutes}m&to=now&refresh=5s&theme=${theme}`;
+  if (!on) return <div className="gf-off">The graph is a Grafana panel. Grafana runs with the preview on forge (deploy/console-preview.sh).</div>;
+  return <iframe className="gf" src={src} height={height} title={`${title || tag}, Grafana`} />;
 }
+const gfTitle = (tag) => `${vitalLabel(tag)}${unitOf(tag) ? `, ${unitOf(tag)}` : ""}`;
 
 function Band({ b, v, level }) {
   if (!b || v == null) return null;
@@ -237,21 +233,23 @@ function FloorMap({ D, sceneRef, floorTheme, onPick, onHover, onDown }) {
 }
 
 // ── top bar: a solid window, text controls ──────────────────────────────────────────────────────
-function Top({ m, rep, theme, setTheme, drawer, toggle, follow, setFollow, paused, setPaused, speed, setSpeed, mock, overlay, pickOverlay }) {
+function Top({ m, rep, theme, setTheme, drawer, toggle, follow, setFollow, paused, setPaused, speed, setSpeed, mock, server, overlay, pickOverlay }) {
   return (
     <header className="top win">
       <span className="brand">VISR</span>
       <Choice label="mode" items={[["live", "Live"], ["energy", "Energy"]]} value={drawer === "energy" ? "energy" : "live"} onChange={(k) => { if ((k === "energy") !== (drawer === "energy")) toggle("energy"); }} />
-      <span className="status">Plant recording, not live{mock ? ". Mock verdict" : ""}</span>
+      <span className="status">{server ? "Plant recording, replayed live" : "Plant recording, not live"}{mock ? ". Mock verdict" : ""}</span>
       <span className="ovl"><span className="muted">Overlay</span><Choice label="overlay" items={OVERLAYS} value={overlay} onChange={pickOverlay} /></span>
       <span className="sp" />
       <label className="check"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />Follow alarms</label>
       <Choice label="theme" items={[["light", "Light"], ["dark", "Dark"]]} value={theme} onChange={setTheme} />
-      <span className="play">
-        <button className="cmd" onClick={() => setPaused(!paused)}>{paused ? "Play" : "Pause"}</button>
-        <Choice label="speed" items={[[1, "1×"], [20, "20×"], [60, "60×"]]} value={speed} onChange={setSpeed} />
-      </span>
-      <span className="clock" data-hint="Plant time of the recording">{m && rep ? clockOf(rep, m.t) : "--:--:--"}</span>
+      {!server && (
+        <span className="play">
+          <button className="cmd" onClick={() => setPaused(!paused)}>{paused ? "Play" : "Pause"}</button>
+          <Choice label="speed" items={[[1, "1×"], [20, "20×"], [60, "60×"]]} value={speed} onChange={setSpeed} />
+        </span>
+      )}
+      <span className="clock" data-hint={server ? "Time of day: the recording plays on the wall clock, as in Grafana" : "Plant time of the recording"}>{m && rep ? clockOf(rep, m.t) : "--:--:--"}</span>
       <button className={`icon${drawer === "settings" ? " on" : ""}`} data-hint="Settings" aria-label="Settings" onClick={() => toggle("settings")}><Sliders /></button>
     </header>
   );
@@ -314,7 +312,10 @@ function Item({ c, m, rep, mock, ack, inspect, showOn }) {
       <div className="i-hd"><Glyph st={p.glyph} size={16} blink={c.blink} /><b className="name" onClick={() => inspect(c.station)}>{c.station}</b><span className="role">{p.role}</span><span className="since">{ago(m.t - c.since)}</span></div>
       <div className="i-what">{p.what}</div>
       {p.tag && rep && (
-        <div className="i-val"><span className="l">{vitalLabel(p.tag)}</span><MiniTrend xs={series(rep, p.tag, m.t, 900, mock)} b={p.b} w={150} /><span className={`v ${p.lvl || ""}`}>{fmt(p.v, p.tag)}<span className="u">{unitOf(p.tag)}</span></span></div>
+        <>
+          <div className="i-val"><span className="l">{vitalLabel(p.tag)}</span><Band b={p.b} v={p.v} level={p.lvl} /><span className={`v ${p.lvl || ""}`}>{fmt(p.v, p.tag)}<span className="u">{unitOf(p.tag)}</span></span></div>
+          <GrafanaPanel tag={p.tag} title={`${c.station}: ${gfTitle(p.tag)}`} height={140} />
+        </>
       )}
       <div className="cmds">
         {c.needsAck && <button className="btn" onClick={() => ack(c.key)}>Acknowledge</button>}
@@ -365,7 +366,7 @@ function Dock({ drawer, toggle, ticks }) {
 }
 
 // ── drawers ─────────────────────────────────────────────────────────────────────────────────────
-function Drawer({ kind, chamfer, m, rep, mock, sel, pick, inspect, showOn, ack, close, ui, setUi, setMock, openEvents }) {
+function Drawer({ kind, chamfer, m, rep, mock, server, sel, pick, inspect, showOn, ack, close, ui, setUi, setMock, openEvents }) {
   const isPart = kind === "inspect" && !(BY_NAME[sel] || m.stations[sel]);
   const titles = { stations: "Stations", events: "Events", parts: "Parts", tags: "Tags", trends: "Trends", energy: "Energy", legend: "Legend", settings: "Settings", inspect: sel || "Inspect" };
   const st = kind === "inspect" && m.stations[sel];
@@ -385,8 +386,8 @@ function Drawer({ kind, chamfer, m, rep, mock, sel, pick, inspect, showOn, ack, 
         {kind === "trends" && <Trends m={m} rep={rep} mock={mock} sel={sel} />}
         {kind === "energy" && <Energy m={m} rep={rep} />}
         {kind === "legend" && <Legend />}
-        {kind === "settings" && <Settings ui={ui} setUi={setUi} mock={mock} setMock={setMock} />}
-        {kind === "inspect" && (isPart ? <PartCard m={m} rep={rep} id={sel} inspect={inspect} /> : <Inspect m={m} rep={rep} mock={mock} name={sel} showOn={showOn} />)}
+        {kind === "settings" && <Settings ui={ui} setUi={setUi} mock={mock} setMock={setMock} server={server} />}
+        {kind === "inspect" && (isPart ? <PartCard m={m} rep={rep} id={sel} inspect={inspect} /> : <Inspect key={sel} m={m} rep={rep} mock={mock} name={sel} showOn={showOn} />)}
       </div>
     </aside>
   );
@@ -472,34 +473,12 @@ function Tags({ m }) {
   );
 }
 
-function TrendChart({ rep, tag, t, mock, b, w = 416, h = 132, windowS = 1800 }) {
-  const xs = series(rep, tag, t, windowS, mock);
-  const vals = xs.filter((x) => x != null);
-  if (vals.length < 2) return <div className="muted">No data.</div>;
-  const lo = Math.min(...vals, b?.lo ?? Infinity), hi = Math.max(...vals, b?.hi ?? -Infinity), sp = hi - lo || 1;
-  const X = (i) => 44 + (i / (xs.length - 1)) * (w - 48), Y = (v) => 6 + (1 - (v - lo) / sp) * (h - 26);
-  let d = "";
-  xs.forEach((v, i) => { if (v != null) d += `${d ? "L" : "M"}${X(i).toFixed(1)} ${Y(v).toFixed(1)} `; });
-  const tx = { fontSize: 12, fill: "var(--ink-muted)" };
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} width="100%" role="img" aria-label={`${tag} trend`}>
-      {b && <rect x={44} width={w - 48} y={Y(b.hi)} height={Math.max(1, Y(b.lo) - Y(b.hi))} fill="var(--band-fill)" />}
-      <path d={d} fill="none" stroke="var(--ink)" strokeWidth="1.5" />
-      <text x={38} y={Y(hi) + 4} textAnchor="end" {...tx}>{fmt(hi, tag)}</text>
-      <text x={38} y={Y(lo) + 4} textAnchor="end" {...tx}>{fmt(lo, tag)}</text>
-      <text x={44} y={h - 3} {...tx}>−{Math.round(windowS / 60)} min</text>
-      <text x={w - 4} y={h - 3} textAnchor="end" {...tx}>now</text>
-    </svg>
-  );
-}
-
 function Trends({ m, rep, mock, sel }) {
   const tags = [VITAL[sel]?.tag, `${sel}.power_kw`, "incomer-1.p_kw", "compressor-1.pressure_barg", "ced-1.bath_c", "cool-1.supply_c"]
     .filter((x, i, a) => x && a.indexOf(x) === i && rep?.vTags.includes(x)).slice(0, 5);
   return tags.map((tag) => (
     <div key={tag} style={{ marginBottom: 14 }}>
-      <div className="sub" style={{ marginTop: 0 }}>{tag}{unitOf(tag) ? `, ${unitOf(tag)}` : ""}</div>
-      <TrendChart rep={rep} tag={tag} t={m.t} mock={mock} b={m.bands[tag]} />
+      <GrafanaPanel tag={tag} title={`${tag.split(".")[0]}: ${gfTitle(tag)}`} minutes={30} height={170} />
     </div>
   ));
 }
@@ -507,6 +486,7 @@ function Trends({ m, rep, mock, sel }) {
 function Inspect({ m, rep, mock, name, showOn }) {
   const s = m.stations[name];
   const [more, setMore] = useState(false);
+  const [chart, setChart] = useState(null);
   if (!s) return <div className="muted">{BY_NAME[name]?.label ? `${BY_NAME[name].label}. ` : ""}No live values for {name} in this recording.</div>;
   const tags = Object.keys(m.values).filter((k) => k.startsWith(`${name}.`));
   return (
@@ -519,13 +499,12 @@ function Inspect({ m, rep, mock, name, showOn }) {
         {s.vital?.band && <><span className="k">Normal band</span><span className="v"><Band b={s.vital.band} v={s.vital.value} level={s.vital.level} /> {fmt(s.vital.band.lo)} to {fmt(s.vital.band.hi)}<span className="u">{s.vital.unit}</span></span></>}
         {s.kw != null && <><span className="k">Power</span><span className="v">{fmt(s.kw)}<span className="u">kW</span></span></>}
       </div>
-      {s.vital && rep && <><div className="sub">{cap(s.vital.label)}, last 30 min</div><TrendChart rep={rep} tag={s.vital.tag} t={m.t} mock={mock} b={s.vital.band} /></>}
+      {(chart || s.vital) && <div style={{ marginTop: 12 }}><GrafanaPanel tag={chart || s.vital.tag} title={`${name}: ${gfTitle(chart || s.vital.tag)}`} minutes={30} height={200} /></div>}
       <div className="cmds"><button className="cmd" onClick={() => showOn(name)}>Show on the floor</button><button className="cmd" onClick={() => setMore(!more)}>{more ? "Fewer values" : `All ${tags.length} values`}</button></div>
       {more && (
-        <table className="t" style={{ marginTop: 10 }}><thead><tr><th>Value</th><th className="r">Now</th><th>15 min</th></tr></thead>
+        <table className="t" style={{ marginTop: 10 }}><thead><tr><th>Value, a click shows its graph</th><th className="r">Now</th></tr></thead>
           <tbody>{tags.map((k) => { const v = m.values[k]; return (
-            <tr key={k}><td>{label(k)} <span className="muted">{unitOf(k)}</span></td><td className="r">{typeof v === "number" ? fmt(v, k) : String(v)}</td>
-              <td style={{ width: 120 }}>{typeof v === "number" && rep && <MiniTrend xs={series(rep, k, m.t, 900, mock)} w={110} h={18} />}</td></tr>); })}</tbody></table>
+            <tr key={k} className={`click${(chart || s.vital?.tag) === k ? " sel" : ""}`} onClick={() => setChart(k)}><td>{label(k)} <span className="muted">{unitOf(k)}</span></td><td className="r">{typeof v === "number" ? fmt(v, k) : String(v)}</td></tr>); })}</tbody></table>
       )}
     </div>
   );
@@ -625,10 +604,12 @@ function Legend() {
   );
 }
 
-function Settings({ ui, setUi, mock, setMock }) {
+function Settings({ ui, setUi, mock, setMock, server }) {
   return (
     <div className="set">
-      <label className="check"><input type="checkbox" checked={mock} onChange={(e) => setMock(e.target.checked)} />Mock verdict: an air header loss at compressor-1 from 08:00, back at 09:00</label>
+      {server
+        ? <p>Mock verdict {server.mock ? "on" : "off"}: an air header loss at compressor-1, 60 min into each {Math.round((server.t1 - server.t0) / 3600)} h loop of the recording, back after 60 min. The replay server sets it (VISR_MOCK).</p>
+        : <label className="check"><input type="checkbox" checked={mock} onChange={(e) => setMock(e.target.checked)} />Mock verdict: an air header loss at compressor-1 from 08:00, back at 09:00</label>}
       <label className="check"><input type="checkbox" checked={ui.names} onChange={(e) => setUi({ ...ui, names: e.target.checked })} />Show the names of all stations on the floor</label>
       <div className="row"><span>Drawer corner</span><Choice label="drawer corner" items={[["s", "Square"], ["c", "Chamfer"]]} value={ui.chamfer ? "c" : "s"} onChange={(k) => setUi({ ...ui, chamfer: k === "c" })} /></div>
       <div className="row"><span>Window fill</span><Choice label="window fill" items={[["t", "Translucent"], ["s", "Solid"]]} value={ui.opaque ? "s" : "t"} onChange={(k) => setUi({ ...ui, opaque: k === "s" })} /></div>

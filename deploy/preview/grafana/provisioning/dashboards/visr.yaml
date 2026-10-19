@@ -1,0 +1,10 @@
+# The dashboard of the console panels (LOG-122), read from the mounted folder.
+apiVersion: 1
+providers:
+  - name: visr
+    folder: VISR
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

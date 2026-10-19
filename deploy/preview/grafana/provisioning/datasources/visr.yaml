@@ -1,0 +1,17 @@
+# The datasource of the console preview (LOG-122): the replay exporter, which answers the
+# Prometheus query API for the plant recording on the wall clock (deploy/preview/replay-exporter.mjs).
+# Each panel asks only for its own window (for example the last 15 min).
+apiVersion: 1
+datasources:
+  - name: VISR replay
+    uid: visr-prom
+    type: prometheus
+    access: proxy
+    url: http://visr-replay:9108
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 2s
+      prometheusType: Prometheus
+      prometheusVersion: 2.53.0

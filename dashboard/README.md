@@ -4,7 +4,7 @@ The VISR dashboard is a Next.js **static export** (no Node server at runtime) se
 nginx also proxies `/api/` to the in-cluster API gateway (`api.aiops.svc:8088`), so the browser uses
 one origin (no CORS, no second exposed port). The page fetches live data from `/api/*`.
 
-## The console (LOG-120, LOG-121: Prototype B, waiting for the operator's look)
+## The console (LOG-120 to LOG-122: Prototype B)
 
 The console is calm by default. The 3D floor (the Shop look) fills the screen, and boxed,
 translucent windows sit on it: the top bar, Verdict (top left), the vitals window with the dock (bottom), and Attention (top
@@ -37,13 +37,26 @@ Rules (ideas.md 22.6, the design language of Dyson Sphere Program and EVE Online
 - On the floor: a marker with a stalk and a halo label over each abnormal station, four corner ticks
   for the selection, a dashed path for "Show on the floor".
 - Sentence case and tabular numerals. No glow, gradients, shadows or uppercase labels.
+- Every graph is a Grafana panel (operator order, LOG-122), never a chart of the console's own:
+  the attention items, Inspect (the vital, or any value picked in its table) and Trends. The
+  panel is the dashboard `visr-console` of the preview Grafana, on the same origin (`/grafana/`),
+  in Grafana's own default look and the console's light or dark theme. Its window is relative
+  (`from=now-15m` or `now-30m`, `to=now`) with `refresh=5s`, so it keeps scrolling. The frame URL
+  holds no time, so a re-render of the console never reloads it. Without Grafana (the dev server),
+  a graph shows one line that says where Grafana runs.
+
+Clocks: with the preview on forge, the console reads `/api/clock` and plays the recording on the
+wall clock, with the anchor and the speed of the replay exporter. Grafana draws the same values on
+the same wall clock, so a panel and the console show the same moment. The top bar then shows the
+time of day and has no pause or speeds. Without `/api/clock` (the dev server), the browser replays
+the recording with pause and speeds, and the clock shows the plant time.
 
 | Path | What |
 |---|---|
 | `app/page.jsx`, `app/ui/UiApp.jsx` | The console: the top bar, the verdict, attention, the vitals window, the dock and the drawers |
 | `app/ui/FloorHud.jsx` | The floor HUD: markers, selection ticks and readout, the hover tip, the fault path, the overlay lines and labels, labels that move apart. It follows the camera on every frame (`onFrame`, `anchorOf`). |
 | `app/ui/data/networks.js` | The overlays: power, air, water, gas and the material flow, with their sources in the plant model |
-| `app/ui/useReplayModel.js` | One clock: the plant recording, the mock verdict overlay, the floor scenes, the view-model to React twice a second, acknowledged alarms |
+| `app/ui/useReplayModel.js` | One clock (the server clock or the browser replay): the plant recording, the mock verdict overlay, the floor scenes, the view-model to React twice a second, acknowledged alarms, `timeOf` |
 | `app/ui/data/model.js` | The view-model: areas, the vital value per station, display bands, attention rules, acknowledgment, the hold (`HOLD_S`), the event log, the mock verdict |
 | `app/ui/Glyph.jsx`, `app/ui/styles/` | Status shapes, tokens (light and dark, with contrast figures), the stylesheet |
 | `app/floor/` | The 3D floor (LOG-119). Console hooks: `hud` (no sprite plates or floor brackets, a fainter grid), `onFrame`, `anchorOf`, `setRoles`, `setFocusSet`, `frame`. Floor themes: `shop`, `shopDark` (the Dark theme), `console` (old look, `/floor-lab` only). |
@@ -65,19 +78,39 @@ settings (`visr.theme`, `visr.ui`), so pass `theme` and `chamfer` for repeatable
 
 ### The console preview on forge
 
-The preview runs the console alone, without the API, the cluster or a login: a static export in a
-plain nginx container. It needs the plant recording in `public/floor/` (Syncthing copies it to
-forge). On forge:
+The preview runs the console without the API, the cluster or a login, as three Docker containers on
+the network `visr-preview`:
+
+| Container | What |
+|---|---|
+| `visr-replay` | `deploy/preview/replay-exporter.mjs` on `node:22-slim`: the plant recording played on the wall clock. It is Grafana's datasource: it answers the Prometheus query API (`/api/v1/query_range`, `/api/v1/query`) for the selector `visr_value{tag="<tag>"}`, computed from the recording for each panel's window. It also serves `/clock` for the console and `/metrics` for a real Prometheus later. It uses the console's own modules (`app/floor/replay.js`, `applyOverlay`), mounted read-only, so Grafana shows the values that the console shows. |
+| `visr-grafana` | Grafana with the datasource and the dashboard `visr-console` (`deploy/preview/grafana/`), anonymous viewer, embedding on, served from `/grafana/`, no update checks, a random admin password that nobody keeps |
+| `visr-console-preview` | The static export (`Dockerfile.preview`). Its nginx (`nginx.preview.conf`) proxies `/grafana/` and `/api/clock` on the same origin. |
+
+There is no Prometheus container: the Prometheus image of the k3s store had lost its packed layers,
+and the replay can answer the queries of the panels directly. The Grafana image comes from the
+paused k3s stack. Copy it into Docker once (the script reads the k3s store files and does not start
+k3s):
+
+```bash
+ssh -t forge 'sudo python3 ~/VISR_Overhaul/deploy/k3s-images-to-docker.py'
+```
+
+Then, on forge (the plant recording must be in `public/floor/`, Syncthing copies it):
 
 ```bash
 bash ~/VISR_Overhaul/deploy/console-preview.sh
 ```
 
-The script builds the image `visr-overhaul/console:<date-time>` (`Dockerfile.preview`,
-`nginx.preview.conf`) and replaces the container `visr-console-preview`. The container serves the
-console on port 3121 of the Tailscale address of forge only, and prints the address. It has no
-restart policy. `STOP=1 bash ~/VISR_Overhaul/deploy/console-preview.sh` removes it. The script does
-not touch k3s, the local registry or any image or namespace of the main stack.
+The script builds `visr-overhaul/console:<date-time>` and replaces the three containers. Only the
+console publishes a port: 3121 on the Tailscale address of forge (not on the LAN). The replay clock
+starts when the script runs, at `VISR_START` seconds into the recording (default 0). The mock
+incident starts at 3600 s and recovers at 7200 s, so `VISR_START=3300` shows it five minutes after
+the start. Each Grafana panel shows only its own window (15 or 30 min); the window is full at once,
+because the replay computes the past values of the recording. The containers have no restart policy.
+`STOP=1 bash ~/VISR_Overhaul/deploy/console-preview.sh` removes them. `GRAFANA_IMAGE`, `VISR_SPEED`
+and `VISR_MOCK` override the defaults. The script does not touch k3s, the local registry or any image
+or namespace of the main stack.
 
 ## The previous operator console (LOG-062, at /legacy)
 

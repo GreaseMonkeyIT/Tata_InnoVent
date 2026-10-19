@@ -96,14 +96,18 @@ p { margin: 0; }
 .item .i-hd .role { font-size: var(--fs-label); color: var(--ink-muted); }
 .item .i-hd .since { margin-left: auto; font-size: var(--fs-label); color: var(--ink-muted); }
 .item .i-what { margin-top: 2px; color: var(--ink); }
-.item .i-val { display: grid; grid-template-columns: 1fr 150px 104px; gap: 12px; align-items: center; margin-top: 6px; }
+.item .i-val { display: grid; grid-template-columns: 1fr auto 104px; gap: 12px; align-items: center; margin-top: 6px; }
+.item .gf { margin-top: 6px; }
 .item .i-val .l { font-size: var(--fs-label); color: var(--ink-muted); }
 .item .i-val .v { text-align: right; font-size: var(--fs-title); font-weight: 600; color: var(--ink-strong); white-space: nowrap; }
 .item .cmds { margin-top: 8px; }
 .v.alarm, b.alarm { color: var(--alarm-text) !important; }
 .v.warn, b.warn { color: var(--warn-text) !important; }
 .attn .more { display: block; margin: 6px 0 4px; font-size: var(--fs-label); }
-.trend { display: block; overflow: visible; }
+/* Grafana panels (GrafanaPanel in UiApp.jsx): the panel brings its own look */
+.gf { display: block; width: 100%; border: 0; background: transparent; }
+.gf-off { font-size: var(--fs-label); color: var(--ink-muted); margin-top: 6px; }
+.drawer .gf + .gf, .drawer .gf { margin-bottom: 10px; }
 
 /* vitals bar: bottom, the plant values, one column per area, the dock */
 .bottom { left: 12px; right: 12px; bottom: 12px; height: 116px; z-index: 5; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
@@ -223,7 +227,6 @@ table.t tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--select); }
   :root { --fs-who: 24px; --fs-value: 16px; }
   .verdict { width: 460px; }
   .attn { width: 380px; }
-  .item .i-val { grid-template-columns: 1fr 110px 96px; }
   .drawer { width: 400px; }
   .dock { grid-template-columns: repeat(2, auto); }
 }

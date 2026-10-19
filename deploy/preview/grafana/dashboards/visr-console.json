@@ -1,0 +1,52 @@
+{
+  "uid": "visr-console",
+  "title": "VISR console",
+  "description": "The panels that the VISR console embeds (LOG-122). The console picks the tag with var-tag and the title with var-title. The time range is relative and the dashboard refreshes, so an embedded panel keeps scrolling.",
+  "editable": false,
+  "graphTooltip": 0,
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": { "refresh_intervals": ["5s", "10s", "30s", "1m"] },
+  "templating": {
+    "list": [
+      {
+        "name": "tag",
+        "type": "textbox",
+        "hide": 2,
+        "query": "compressor-1.pressure_barg",
+        "current": { "text": "compressor-1.pressure_barg", "value": "compressor-1.pressure_barg" }
+      },
+      {
+        "name": "title",
+        "type": "textbox",
+        "hide": 2,
+        "query": "compressor-1.pressure_barg",
+        "current": { "text": "compressor-1.pressure_barg", "value": "compressor-1.pressure_barg" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "${title}",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "visr-prom" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "visr-prom" },
+          "expr": "visr_value{tag=\"$tag\"}",
+          "legendFormat": "{{tag}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": {
+        "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    }
+  ]
+}
