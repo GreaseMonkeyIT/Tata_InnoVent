@@ -427,6 +427,25 @@ def is_text(v):
     return any(isinstance(x, str) for x in v[:2000])
 
 
+def is_counter(cols, resets=0.001, ones=0.9):
+    """A PLC counter in the columns of the training runs: whole numbers that step up only (a step
+    down, a reset, at most `resets` of the samples), mostly by one (at least `ones` of the steps up:
+    a setpoint jumps by more), and more than two values (an on/off command is not a counter)."""
+    seen, steps, down, up, by_one = set(), 0, 0, 0, 0
+    for c in cols:
+        x = np.asarray(c, float)
+        x = x[np.isfinite(x)]
+        if not len(x) or np.any(x != np.round(x)):
+            return False
+        seen.update(np.unique(x)[:3].tolist())
+        d = np.diff(x)
+        steps += len(d)
+        down += int((d < 0).sum())
+        up += int((d > 0).sum())
+        by_one += int((d == 1).sum())
+    return len(seen) > 2 and up > 0 and down <= resets * steps and by_one >= ones * up
+
+
 def text_cats(v):
     """The text values that occur in a column."""
     if isinstance(v, Text):
@@ -572,10 +591,19 @@ class Node:
         self.sd = {}
         self.sd_all = None
         self.state_cmd = None
+        self.cmd_delta = False          # numeric commands also enter as their change since the last sample
+        self.delta_in = []
+        self.counter_resets = True      # a counter that steps down was reset: its change is the new value
 
     def design(self, runs):
         """Input names from the documents: numeric feeds and commands as they are, categorical
-        commands one-hot over the categories of the training runs."""
+        commands one-hot over the categories of the training runs. With cmd_delta, a PLC counter among
+        the commands also enters as its change since the last sample ("d:<tag>"): a counter that steps
+        by one at a cycle event carries the phase of the cycle, which its level and its filters (5 s and
+        longer) do not resolve (2026-10-22). A counter is found in the training runs (`is_counter`); an
+        on/off command or a setpoint is not one (E1, LOG-128: their changes raised the limits). A step
+        down is a reset (a new electrode): the change is then the new value, as a counter rate takes it,
+        not a drop of about 1,368 in one sample (LOG-128)."""
         self.num_in = []
         for t in self.doc["feeds"] + self.doc["commands"]:
             if any(is_text(r[t]) for _, r in runs):
@@ -585,7 +613,10 @@ class Node:
                     self.state_cmd = t
             else:
                 self.num_in.append(t)
-        names = list(self.num_in) + [f"{t}={c}" for t, cs in self.cats.items() for c in cs]
+        self.delta_in = ([t for t in self.doc["commands"] if t in self.num_in and is_counter([r[t] for _, r in runs])]
+                         if self.cmd_delta else [])
+        names = (list(self.num_in) + [f"{t}={c}" for t, cs in self.cats.items() for c in cs]
+                 + [f"d:{t}" for t in self.delta_in])
         # a categorical output (a controller's state): one output per category, 1 where it holds
         self.out_names = []
         for t in self.doc["measures"]:
@@ -605,7 +636,7 @@ class Node:
         from this node's outputs through the documents, so this node's own fault can drive it out of
         range (a cooling pump that fails heats the water a machine returns to it)."""
         own = set(self.doc.get("loop_outputs", [])) | set(self.doc.get("feedback_inputs", []))
-        keep = [n.split("=", 1)[0] not in own for n in names]
+        keep = [n.split("=", 1)[0].removeprefix("d:") not in own for n in names]
         return keep + [k for k in keep for _ in range(n_tau)]
 
     def matrices(self, r):
@@ -613,6 +644,12 @@ class Node:
         for t, cs in self.cats.items():
             for c in cs:
                 cols.append(text_eq(r[t], c).astype(float))
+        for t in getattr(self, "delta_in", ()):          # (a node saved before 2026-10-22 has none)
+            x = np.asarray(r[t], float)
+            d = np.diff(x, prepend=x[:1])
+            if getattr(self, "counter_resets", False):  # (a node saved before the reset rule keeps the plain change)
+                d = np.where(d < 0, x, d)
+            cols.append(d)
         U = np.column_stack(cols) if cols else np.zeros((len(r[self.doc["measures"][0]]), 0))
         ys = []
         for t in self.doc["measures"]:
@@ -1001,7 +1038,7 @@ def first_alarm(alarm, start):
 
 
 def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE, alpha=None, limit="conformal",
-             onsets=None, clip=None, confirm_s=0.0, keep=False):
+             onsets=None, clip=None, confirm_s=0.0, keep=False, cmd_delta=False):
     """One node in a worker process: train it, then its alarms and coverage on every scored run
     ({key: view path} -> {key: (alarm, covered)}), and what the report needs of the model. fit and
     calib: [(seed, view path)]. The node loads only its own tags, and a scored run only while it
@@ -1011,6 +1048,7 @@ def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE, alpha=None, limit
     tags = doc["feeds"] + doc["commands"] + doc["measures"]
     nd = Node(name, doc, rule, alpha, limit, clip)
     nd.confirm_s = confirm_s
+    nd.cmd_delta = cmd_delta
     nd = nd.train([(sd, load_view(p, tags)) for sd, p in fit],
                                      [(sd, load_view(p, tags)) for sd, p in calib])
     alarms, cps, events = {}, {}, {}
@@ -1213,6 +1251,8 @@ def main(argv=None):
                     help="an alarm counts once it has lasted this many seconds (default 0: at once)")
     ap.add_argument("--no-feedback-rule", action="store_true",
                     help="count feedback inputs for coverage, as before LOG-118 (feedback_inputs)")
+    ap.add_argument("--cmd-delta", action="store_true",
+                    help="each numeric PLC command also enters as its change since the last sample (Node.design)")
     ap.add_argument("--no-added-loop-inputs", action="store_true",
                     help="leave out the loop outputs that wiring.py adds to a machine's own node")
     ap.add_argument("--root", choices=("cf", "graph"), default=DEFAULT_ROOT,
@@ -1283,7 +1323,7 @@ def main(argv=None):
         futs = {}
         for name, doc in w.items():
             futs[ex.submit(node_job, name, doc, fit, calib, scored, a.rule, a.alpha, a.limit, onsets, a.clip,
-                           a.confirm, a.save_models)] = name
+                           a.confirm, a.save_models, a.cmd_delta)] = name
         for f in cf.as_completed(futs):
             fitted[futs[f]] = f.result()
             print(f"trained and scored {futs[f]}: {fitted[futs[f]]['weights']} weights, "
@@ -1293,6 +1333,7 @@ def main(argv=None):
                        "hidden": list(HIDDEN), "factory_seed": FACTORY_SEED, "instruments": INSTRUMENTS,
                        "no_added_loop_inputs": a.no_added_loop_inputs, "alpha": a.alpha, "limit": a.limit, "clip": a.clip,
                        "feedback_rule": not a.no_feedback_rule, "confirm_s": a.confirm, "var_steady_s": VAR_STEADY_S,
+                       "cmd_delta": a.cmd_delta,
                        "root_rule": a.root,
                        "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")},
               "nodes": {}, "faults": {}}

@@ -67,9 +67,10 @@ def wiring(p):
         add("hot-1", ["hot-1.resistor_kw"], ["hot-1.state", "hot-1.load_pct"], ["hot-1.coolant_kw", "hot-1.power_kw"])
         # pallet-1 and cold-1 give no PLC state tag yet (week 2, ideas.md 17.2): a model with no input
         # can only predict a mean, so they are not nodes until then
-    # incomer-1: the grid and the transformers; the site load explains the bus voltages
+    # incomer-1: the grid and the transformers; the site load explains the bus voltages. The Class A
+    # analyzer at the 11 kV metering (2026-10-22) adds the lowest voltage of its last interval (dips)
     add("incomer-1", ["incomer-1.p_kw", "incomer-1.q_kvar", "tr-1.load_pct", "tr-2.load_pct"], [],
-        ["psu-a.voltage_v", "psu-b.voltage_v", "psu-c.voltage_v", "psu-d.voltage_v"])
+        ["psu-a.voltage_v", "psu-b.voltage_v", "psu-c.voltage_v", "psu-d.voltage_v", "incomer-1.v_min_v"])
     # gas-1: the regulator; the gas flow explains the header pressure (droop)
     if p.fab:
         add("gas-1", ["ced-1.tank_gas_m3h", "ced-1.oven_gas_m3h"], [], ["gas-1.header_kpa"])

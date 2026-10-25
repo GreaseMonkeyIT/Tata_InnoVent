@@ -197,6 +197,7 @@ Switches for experiments (LOG-118).
 | `--limit` | `conformal` (default), `gumbel` | `gumbel`: the limit from a Gumbel fit to the day maxima |
 | `--clip` | none (default) | robust CUSUM: \|z\| is capped at this value before it enters a sum |
 | `--confirm` | 0 (default) | an alarm counts once it has lasted this many seconds |
+| `--cmd-delta` | off (default) | a PLC counter among a node's commands also enters as its change since the last sample, and a step down counts as a reset (LOG-128) |
 | `--no-feedback-rule` | off (default) | count feedback inputs for coverage, as before LOG-118 |
 | `--no-added-loop-inputs` | off (default) | leave out the loop outputs that `wiring.py` adds to a machine's own node |
 | `VISR_FACTORY` (environment) | 0 (default) | another factory: other calibration biases of the instruments |
@@ -303,7 +304,9 @@ With it, a campaign gives the same report as without it (T1 against P3: the same
 then explains each run with the twin (`twin/twin.py`, `twin/README.md` CP-3 has the method). It writes
 `cf-<tag>.json` and `cf-<tag>.md` into the results folder. The JSON keeps the normalized terms of
 every window (the trouble per node, and the trouble that each suspect's reset removes per node), so
-a new rule on them needs no new replay.
+a new rule on them needs no new replay. Since 2026-10-22 it also keeps `sig2`, the free-replay
+variance of each output (`free_variance`), which the live engine needs too (`live/engine.py pack`
+computes it the same way, from the calibration windows without the suspects' replays).
 
 | Switch | Default | What it does |
 |---|---|---|

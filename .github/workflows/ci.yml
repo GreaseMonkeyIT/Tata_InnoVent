@@ -36,9 +36,9 @@ jobs:
           python-version: "3.11"
       - name: Install
         run: pip install -r correlation/requirements.txt pytest numba pymodbus==3.6.9
-      - name: Plant, twin and score harness
+      - name: Plant, twin, score harness and live plant
         # without data/weather the plant uses its design-condition weather
-        run: python -m pytest plant/tests twin/tests eval/tests -q
+        run: python -m pytest plant/tests twin/tests eval/tests live/tests -q
 
   console:
     runs-on: ubuntu-latest

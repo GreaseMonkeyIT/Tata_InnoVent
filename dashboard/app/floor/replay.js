@@ -28,7 +28,28 @@ export class Replay {
       if (k >= 0) this.ramMax[n] = Math.max(1, ...V.rows.map((r) => r[k] ?? 0));
     }
     this.events = rec.events;
+    this.version = 0;          // grows with every appended segment (the live plant)
     this._reset();
+  }
+
+  // A segment of the live plant (live/plant_service.py GET /floor?since=t1): the states, value rows
+  // and tracking events after t1, in the form of a recording. The rows continue the rows held.
+  append(seg) {
+    for (const [t, name, word] of seg.states) (this.st[name] ||= []).push([t, word]);
+    const V = seg.values;
+    if (V.rows.length) {
+      const k = Math.round((V.t0 - this.vT0) / this.vDt);
+      if (k !== this.rows.length) throw new Error(`live rows do not continue: row ${k}, held ${this.rows.length}`);
+      for (const r of V.rows) this.rows.push(r);
+      for (const n of Object.keys(this.ramMax)) {
+        const j = this.vTags.indexOf(`${n}.ram_mm`);
+        for (const r of V.rows) this.ramMax[n] = Math.max(this.ramMax[n], r[j] ?? 0);
+      }
+    }
+    for (const e of seg.events) this.events.push(e);
+    Object.assign(this.items, seg.items);
+    this.t1 = seg.meta.t_end;
+    this.version++;
   }
 
   _reset() {

@@ -51,13 +51,24 @@ the same wall clock, so a panel and the console show the same moment. The top ba
 time of day and has no pause or speeds. Without `/api/clock` (the dev server), the browser replays
 the recording with pause and speeds, and the clock shows the plant time.
 
+Live mode (2026-10-22, `live/README.md`): when `/api/live/plant/clock` answers, the console runs on
+the live plant instead of a recording. It loads the floor recording of the plant service
+(`GET /floor`, the same form as `replay.json`), appends the new part every second
+(`Replay.append`), and shows the plant time of the newest sample. The verdict comes from the engine
+service (`/api/live/engine/state`, every 2 s): the newest open incident with a named root
+(`liveVerdict` in `app/ui/data/model.js`), and the incidents go into the event log. The display
+bands come from the first 2 h of rows (the lead of the run). There is no mock verdict, no pause and
+no speed choice. The dev server proxies `/api/live/plant` and `/api/live/engine` to the plant and
+engine services on the laptop (`next.config.mjs`, `VISR_PLANT`, `VISR_ENGINE`); the preview's nginx
+proxies them on forge (GET only).
+
 | Path | What |
 |---|---|
 | `app/page.jsx`, `app/ui/UiApp.jsx` | The console: the top bar, the verdict, attention, the vitals window, the dock and the drawers |
 | `app/ui/FloorHud.jsx` | The floor HUD: markers, selection ticks and readout, the hover tip, the fault path, the overlay lines and labels, labels that move apart. It follows the camera on every frame (`onFrame`, `anchorOf`). |
 | `app/ui/data/networks.js` | The overlays: power, air, water, gas and the material flow, with their sources in the plant model |
-| `app/ui/useReplayModel.js` | One clock (the server clock or the browser replay): the plant recording, the mock verdict overlay, the floor scenes, the view-model to React twice a second, acknowledged alarms, `timeOf` |
-| `app/ui/data/model.js` | The view-model: areas, the vital value per station, display bands, attention rules, acknowledgment, the hold (`HOLD_S`), the event log, the mock verdict |
+| `app/ui/useReplayModel.js` | One clock (the live plant, the server clock or the browser replay): the plant recording, the mock verdict overlay, the floor scenes, the view-model to React twice a second, acknowledged alarms, `timeOf` |
+| `app/ui/data/model.js` | The view-model: areas, the vital value per station, display bands, attention rules, acknowledgment, the hold (`HOLD_S`), the event log, the mock verdict, the engine's verdict in live mode (`liveVerdict`, `incidentLog`) |
 | `app/ui/Glyph.jsx`, `app/ui/styles/` | Status shapes, tokens (light and dark, with contrast figures), the stylesheet |
 | `app/floor/` | The 3D floor (LOG-119). Console hooks: `hud` (no sprite plates or floor brackets, a fainter grid), `onFrame`, `anchorOf`, `setRoles`, `setFocusSet`, `frame`. Floor themes: `shop`, `shopDark` (the Dark theme), `console` (old look, `/floor-lab` only). |
 
@@ -110,6 +121,19 @@ because the replay computes the past values of the recording. The containers hav
 `STOP=1 bash ~/VISR_Overhaul/deploy/console-preview.sh` removes them. `GRAFANA_IMAGE`, `VISR_SPEED`
 and `VISR_MOCK` override the defaults. The script does not touch k3s, the local registry or any image
 or namespace of the main stack.
+
+`LIVE=1 bash ~/VISR_Overhaul/deploy/console-preview.sh` runs the same preview on the live plant. The
+plant service (`--floor`) and the engine service (the newest `eval/results/*/live-pack.pkl`, or
+`VISR_PACK`) run on forge itself from `~/visr-venv`, in the screen sessions `visr-live-plant` and
+`visr-live-engine` (logs `/var/tmp/visr-live-*.log`). They listen on the docker0 address
+(172.17.0.1) only. The replay exporter serves the live plant to Grafana (`VISR_LIVE`). `VISR_SEED`
+(default 60000, a validation day), `VISR_SPEED` (default 1) and `VISR_FAULTS` (for example
+`"F6:0.5:900"`, seconds after the warm-up) set the run. The plant warms up first (9 h of plant time
+at full speed, a few minutes on forge). A fault during the run comes from a shell on forge:
+
+```bash
+curl -X POST http://172.17.0.1:9110/fault -H "Content-Type: application/json" -d '{"fid": "F6", "severity": 0.5}'
+```
 
 ## Floor prototype (LOG-119)
 

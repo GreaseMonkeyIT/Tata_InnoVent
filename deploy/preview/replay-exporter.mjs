@@ -19,6 +19,11 @@
 // Environment: VISR_APP (default /app), VISR_REPLAY (default /data/replay.json), VISR_ANCHOR
 // (unix s, default the start of the process), VISR_SPEED (default 1), VISR_MOCK (default 1),
 // PORT (default 9108).
+//
+// Live mode (2026-10-22, VISR_LIVE=<the plant service, live/plant_service.py --floor>): the values come
+// from the live plant's floor recording, appended every second (Replay.append, as the console does),
+// on the plant's own clock: t(w) = anchor_t + (w - anchor) * speed, no loop and no mock verdict. A
+// wall time before the first row or after the newest row takes the nearest row.
 import http from "node:http";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -27,13 +32,34 @@ const APP = process.env.VISR_APP || "/app";
 const { Replay } = await import(pathToFileURL(`${APP}/floor/replay.js`).href);
 const { applyOverlay } = await import(pathToFileURL(`${APP}/ui/data/model.js`).href);
 
-const rep = new Replay(JSON.parse(readFileSync(process.env.VISR_REPLAY || "/data/replay.json", "utf8")));
+const LIVE = (process.env.VISR_LIVE || "").replace(/\/$/, "");
+const getJSON = (u) => fetch(u).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let rep, clock = null;
+if (LIVE) {
+  let seg = await getJSON(`${LIVE}/floor`);
+  while (!seg || !seg.values.rows.length) { await sleep(2000); seg = await getJSON(`${LIVE}/floor`); }   // the plant warms up
+  rep = new Replay({ meta: seg.meta, states: seg.states, values: seg.values, events: seg.events, items: seg.items });
+  clock = await getJSON(`${LIVE}/clock`);
+  let busy = false;
+  setInterval(async () => {
+    if (busy) return; busy = true;
+    const s = await getJSON(`${LIVE}/floor?since=${rep.t1}`);
+    if (s) { try { rep.append(s); } catch (e) { console.error(String(e)); } }
+    busy = false;
+  }, 1000);
+  setInterval(async () => { clock = (await getJSON(`${LIVE}/clock`)) || clock; }, 5000);
+} else {
+  rep = new Replay(JSON.parse(readFileSync(process.env.VISR_REPLAY || "/data/replay.json", "utf8")));
+}
 const ANCHOR = Number(process.env.VISR_ANCHOR || Math.floor(Date.now() / 1000));
 const SPEED = Number(process.env.VISR_SPEED || 1);
-const MOCK = process.env.VISR_MOCK !== "0";
+const MOCK = !LIVE && process.env.VISR_MOCK !== "0";
 const SPAN = rep.t1 - rep.t0;
 const MAX_POINTS = 11000;                       // the Prometheus limit per series
-const plantT = (w) => rep.t0 + ((((w - ANCHOR) * SPEED) % SPAN) + SPAN) % SPAN;
+const plantT = LIVE
+  ? (w) => (clock?.anchor ? clock.anchor_t + (w - clock.anchor) * clock.speed : rep.t1)
+  : (w) => rep.t0 + ((((w - ANCHOR) * SPEED) % SPAN) + SPAN) % SPAN;
 const esc = (s) => String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 const num = (v) => (typeof v === "boolean" ? Number(v) : v);
 
@@ -113,7 +139,10 @@ function send(res, code, type, body) {
 http.createServer((req, res) => {
   const url = new URL(req.url, "http://replay");
   if (url.pathname === "/metrics") return send(res, 200, "text/plain; version=0.0.4", metrics());
-  if (url.pathname === "/clock") return send(res, 200, "application/json", JSON.stringify({ anchor: ANCHOR, speed: SPEED, t0: rep.t0, t1: rep.t1, mock: MOCK }));
+  if (url.pathname === "/clock") {
+    return send(res, 200, "application/json", JSON.stringify(LIVE ? { ...clock, live: true, t0: rep.t0, t1: rep.t1, mock: false }
+      : { anchor: ANCHOR, speed: SPEED, t0: rep.t0, t1: rep.t1, mock: MOCK }));
+  }
   if (url.pathname === "/healthz") return send(res, 200, "text/plain", "ok\n");
   if (!url.pathname.startsWith("/api/v1/")) return send(res, 404, "text/plain", "not found\n");
   let body = "";
@@ -126,4 +155,5 @@ http.createServer((req, res) => {
     if (!out) return send(res, 404, "application/json", JSON.stringify(bad("not supported")));
     send(res, out.status === "success" ? 200 : 400, "application/json", JSON.stringify(out));
   });
-}).listen(Number(process.env.PORT || 9108), () => console.log(`replay exporter: ${rep.vTags.length} tags, ${SPAN} s loop, speed ${SPEED}, mock ${MOCK}`));
+}).listen(Number(process.env.PORT || 9108), () => console.log(LIVE ? `replay exporter, live: ${rep.vTags.length} tags from ${LIVE}`
+  : `replay exporter: ${rep.vTags.length} tags, ${SPAN} s loop, speed ${SPEED}, mock ${MOCK}`));

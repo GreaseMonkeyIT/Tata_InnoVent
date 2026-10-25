@@ -139,7 +139,7 @@ def window_terms(run, t_end, window_s=WINDOW_S, post_s=POST_S, suspects=None):
     ss1 = {n: np.nansum(((meas[n] - base[n])[start:end][rows[n]][:, masks[n]]) ** 2, axis=0) for n in w}
     assets = sorted({d["asset"] for d in w.values()})
     d = {}
-    for S in (suspects or assets):
+    for S in (assets if suspects is None else suspects):     # () gives the free replay terms only
         reset = [n for n in w if w[n]["asset"] == S]
         vals, _ = tw.replay(rt, start, reset=reset, base=base, meas=meas)
         d[S] = {n: ss0[n] - ss(vals[n], n) for n in tw.affected(reset)}
@@ -147,11 +147,22 @@ def window_terms(run, t_end, window_s=WINDOW_S, post_s=POST_S, suspects=None):
     return {"t": int(t_end), "n": end - start, "cnt": cnt, "ss0": ss0, "ss1": ss1, "d": d, "conv": conv}
 
 
-def calib_job(path, hours, n_windows=CAL_WINDOWS, window_s=WINDOW_S, post_s=POST_S):
+def calib_job(path, hours, n_windows=CAL_WINDOWS, window_s=WINDOW_S, post_s=POST_S, suspects=None):
     """Windows on a normal day, evenly spaced."""
     run = load_view(path)
     T = len(next(iter(run.values()))) - run.lead
-    return [window_terms(run, int(T * k / (n_windows + 1)), window_s, post_s) for k in range(1, n_windows + 1)]
+    return [window_terms(run, int(T * k / (n_windows + 1)), window_s, post_s, suspects)
+            for k in range(1, n_windows + 1)]
+
+
+def free_variance(cal_w, w):
+    """{node: the free-replay variance per output} from the calibration windows, in their order."""
+    sig2 = {}
+    for n in w:
+        num = sum(x["ss0"][n] for x in cal_w)
+        den = sum(x["cnt"][n] for x in cal_w)
+        sig2[n] = np.maximum(num / max(den, 1), 1e-12)
+    return sig2
 
 
 def fault_job(kind, path, info, window_s=WINDOW_S, post_s=POST_S):
@@ -273,11 +284,7 @@ def main(argv=None):
             recs[fj[f]] = f.result()
             print(f"{fj[f]} done ({time.time() - t0:.0f} s)", flush=True)
     # the free-replay variance per output, from the calibration windows
-    sig2 = {}
-    for n in w:
-        num = sum(x["ss0"][n] for x in cal_w)
-        den = sum(x["cnt"][n] for x in cal_w)
-        sig2[n] = np.maximum(num / max(den, 1), 1e-12)
+    sig2 = free_variance(cal_w, w)
     # each suspect's removed trouble on normal windows: its mean and spread
     rem = [removed(x, sig2) for x in cal_w]
     mu = {S: float(np.mean([r[S] for r in rem])) for S in rem[0]}
@@ -294,7 +301,7 @@ def main(argv=None):
                     "trouble": TROUBLE, "coverage": True, "twin_models": a.twin_models,
                     "calib_days": len(calib), "calib_windows": len(cal_w), "normal_windows": len(nor_w),
                     "cycle_last_change": conv, "wall_s": round(time.time() - t0)},
-           "mu": mu, "sd": sd, "calib_max": cal_max, "ratio": ratio, "faults": {}, "pairs": {},
+           "mu": mu, "sd": sd, "sig2": sig2, "calib_max": cal_max, "ratio": ratio, "faults": {}, "pairs": {},
            "calib_windows": [parts(x, sig2) for x in cal_w]}
     asset = {n: d["asset"] for n, d in w.items()}
     for k, rec in sorted(recs.items()):

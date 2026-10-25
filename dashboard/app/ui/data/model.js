@@ -104,6 +104,50 @@ export function mockVerdict(tRel, on) {
     affectedWhat: "Low air at its inlet, from the air header",
   };
 }
+// ── the engine's verdict (live mode): live/engine_service.py GET /state ──────────────────────────
+// The newest open incident with a named root. Its candidates and victims are the affected stations.
+// "recovering" while none of its machines alarms, "steady" with no open incident. The strength is the
+// share of the root's counterfactual score in the two best scores (1: one clear suspect), 0.5 when the
+// graph rule named the root alone.
+export function liveVerdict(state, rep) {
+  const open = (state?.open || []).filter((i) => i.named);
+  if (!open.length) return { state: "steady", since: null };
+  const inc = open.reduce((a, b) => (b.t0_plant > a.t0_plant ? b : a));
+  const root = String(inc.named).split(",")[0];
+  const members = [...Object.keys(inc.hit || {}), ...Object.keys(inc.victims || {})];
+  const affected = [...new Set(members)].filter((m) => m !== root);
+  const inAlarm = new Set(state.machines_in_alarm || []);
+  const sc = Object.values(inc.cf_scores || {}).sort((a, b) => b - a);
+  const strength = inc.named_cf && sc.length ? sc[0] / (sc[0] + (sc[1] > 0 ? sc[1] : 0)) : 0.5;
+  const list = affected.length ? affected.join(", ") : null;
+  const how = inc.named_cf
+    ? `In the twin, ${root} set back to its learned normal removes the most deviation from the machines in alarm${list ? ` (${list})` : ""}.`
+    : `${root} alarmed first, upstream of the other machines in alarm${list ? ` (${list})` : ""} in the plant documents.`;
+  return {
+    state: members.some((m) => inAlarm.has(m)) ? "incident" : "recovering",
+    opened: inc.t0_plant - rep.t0, root, medium: VITAL[root]?.label ?? "", affected, strength,
+    text: `The engine names ${root} as the root cause. ${how}`,
+    recoverText: `The machines of this incident no longer alarm. It closes after 10 min without an alarm.`,
+    todo: `Check ${root} first${list ? `; ${list} react to it` : ""}.`,
+    rootWhat: inc.named_cf ? "Root cause, named by the engine (counterfactual)" : "Root cause, named by the engine (graph rule)",
+    affectedWhat: `In alarm in the incident of ${root}`,
+  };
+}
+
+// The engine's incidents as event-log entries (live mode): opened, root named, closed.
+export function incidentLog(incidents) {
+  const L = [];
+  for (const i of incidents || []) {
+    const who = String(i.named || "").split(",")[0] || Object.keys(i.hit || {})[0] || "engine";
+    L.push({ t: i.t0_plant, sev: "warn", who, text: `incident ${i.id} opened` });
+    if (i.named_plant != null) L.push({ t: i.named_plant, sev: "alarm", who, text: `root cause named by the engine: ${who}` });
+    if (i.closed_plant != null) {
+      L.push({ t: i.closed_plant, sev: "info", who, text: i.merged_into ? `incident ${i.id} joined incident ${i.merged_into}, the same root` : `incident ${i.id} closed` });
+    }
+  }
+  return L;
+}
+
 export function applyOverlay(snap, tRel, on) {
   if (!on) return snap;
   const d = airDrop(tRel);
@@ -186,7 +230,7 @@ export function buildEventLog(rep, mock) {
 // ── the model ────────────────────────────────────────────────────────────────────────────────────
 export function createModel(rep, { mock = true } = {}) {
   const bands = makeBands(rep);
-  const log = buildEventLog(rep, mock);
+  let log = buildEventLog(rep, mock), logKey = `${rep.version}`;
   const mem = { out: {}, cards: {} };
 
   function station(name, snap, roles) {
@@ -205,10 +249,13 @@ export function createModel(rep, { mock = true } = {}) {
   }
 
   return {
-    bands, log,
-    step(snap, { acked = new Set() } = {}) {
+    bands, get log() { return log; },
+    // live mode: `verdict` comes from the engine (liveVerdict), `incidents` add to the event log
+    step(snap, { acked = new Set(), verdict: given = null, incidents = null } = {}) {
       const t = snap.t, tRel = t - rep.t0;
-      const verdict = mockVerdict(tRel, mock);
+      const key = `${rep.version}:${incidents?.length ?? 0}:${incidents?.at(-1)?.closed_plant ?? ""}:${incidents?.at(-1)?.named_plant ?? ""}`;
+      if (key !== logKey) { log = [...buildEventLog(rep, mock), ...incidentLog(incidents)].sort((a, b) => a.t - b.t); logKey = key; }
+      const verdict = given || mockVerdict(tRel, mock);
       const roles = {};
       if (verdict.state === "incident") { roles[verdict.root] = "root"; for (const a of verdict.affected) roles[a] = "affected"; }
       const stations = {};

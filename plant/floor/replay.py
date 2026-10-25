@@ -90,27 +90,14 @@ def states(p):
 
 def record(seed=3, hours=4.0, warmup_h=3.0, t_day0_h=4.0, day_of_year=None, progress=True):
     p = UtilitiesPlant(seed=seed, t_day0_h=t_day0_h, weather="site", day_of_year=day_of_year)
-    tr = Tracker(p)
     n_warm = int(round(warmup_h * 3600.0 / DT))
     n_all = n_warm + int(round(hours * 3600.0 / DT))
-    every = int(round(SAMPLE_S / DT))
-    st_prev, st_changes, rows = {}, [], []
-    tags_ok = None
+    fr = FloorRecorder(p, n_warm)
+    tr = fr.tr
     t_wall = time.time()
     for i in range(n_all):
         p.step(DT)
-        tr.step(p.t)
-        if i % 10 == 9:                      # states each second
-            s = states(p)
-            for k, v in s.items():
-                if st_prev.get(k) != v:
-                    st_changes.append([round(p.t, 1), k, v])
-                    st_prev[k] = v
-        if i >= n_warm and (i - n_warm) % every == every - 1:
-            tg = p.tags()
-            if tags_ok is None:
-                tags_ok = [k for k in VALUES if k in tg]
-            rows.append([_r(tg[k]) for k in tags_ok])
+        fr.step()
         if progress and i % 36000 == 35999:
             print(f"  sim {p.t / 3600.0:.1f} h, wall {time.time() - t_wall:.0f} s, events {len(tr.events)}",
                   flush=True)
@@ -121,11 +108,62 @@ def record(seed=3, hours=4.0, warmup_h=3.0, t_day0_h=4.0, day_of_year=None, prog
                  "frames_done": p.fflow.frames_done, "engines_done": p.eflow.engines_done,
                  "late_lifts": tr.late_lifts, "unmatched_lifts": tr.unmatched_lifts, "check": problems, "state_rules": STATE_RULES,
                  "made": time.strftime("%Y-%m-%d %H:%M")},
-        "states": st_changes,
-        "values": {"tags": tags_ok or [], "t0": round(n_warm * DT + SAMPLE_S, 1), "dt": SAMPLE_S, "rows": rows},
+        "states": fr.states,
+        "values": {"tags": fr.tags or [], "t0": fr.t0(), "dt": SAMPLE_S, "rows": fr.rows},
         "events": tr.events,
         "items": tr.items,
     }
+
+
+class FloorRecorder:
+    """The recording of one plant, built one plant step at a time (2026-10-22: record() and the live
+    plant service, live/plant_service.py, share it). Call `step()` after each plant step of DT: the
+    tracking table reads the flow, the station states are checked each second, and the values are
+    sampled every SAMPLE_S from step `n_from` on. `segment(since)` gives what came after plant time
+    `since` in the form of a recording, so a player can append it."""
+
+    def __init__(self, p, n_from=0):
+        self.p, self.tr = p, Tracker(p)
+        self.n_from, self.every = int(n_from), int(round(SAMPLE_S / DT))
+        self.i = 0
+        self.st_prev, self.states, self.rows, self.row_t = {}, [], [], []
+        self.tags = None
+
+    def step(self):
+        p, i = self.p, self.i
+        self.tr.step(p.t)
+        if i % 10 == 9:                      # states each second
+            s = states(p)
+            for k, v in s.items():
+                if self.st_prev.get(k) != v:
+                    self.states.append([round(p.t, 1), k, v])
+                    self.st_prev[k] = v
+        if i >= self.n_from and (i - self.n_from) % self.every == self.every - 1:
+            tg = p.tags()
+            if self.tags is None:
+                self.tags = [k for k in VALUES if k in tg]
+            self.rows.append([_r(tg[k]) for k in self.tags])
+            self.row_t.append(round(p.t, 1))
+        self.i += 1
+
+    def t0(self):
+        return round(self.n_from * DT + SAMPLE_S, 1)
+
+    def segment(self, since=None):
+        """The states, value rows and tracking events after plant time `since` (None: all), with the
+        items they name. The rows of a segment are the samples after `since`, in order from its "t0"."""
+        from bisect import bisect_right
+        tr = self.tr
+        cut = (lambda xs: 0) if since is None else (lambda xs: bisect_right(xs, since, key=lambda x: x[0]))
+        st = self.states[cut(self.states):]
+        k = 0 if since is None else bisect_right(self.row_t, since)
+        ev = tr.events[cut(tr.events):]
+        ids = {e[2] for e in ev}
+        return {"states": st,
+                "values": {"tags": self.tags or [], "t0": self.row_t[k] if k < len(self.row_t) else None,
+                           "dt": SAMPLE_S, "rows": self.rows[k:]},
+                "events": ev, "items": tr.items if since is None else {i: tr.items[i] for i in ids if i in tr.items},
+                "t_end": round(self.p.t, 1)}
 
 
 def _r(v):

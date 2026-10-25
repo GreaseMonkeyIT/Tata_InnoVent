@@ -26,6 +26,7 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 | `aggregator/` · `correlation/` | L2 telemetry window, L3 deterministic causal engine |
 | `api/` · `dashboard/` | L4 API (operator gate + audit ledger), VISR operator console |
 | `twin/` · `eval/` | The overhaul engine: one small model per machine, the twin, the counterfactual root, and the score harness |
+| `live/` | The overhaul in real time: the plant service on the wall clock and the streaming engine with its incidents (the next steps are in `live/README.md`) |
 | `scripts/` | Repository tools: `check_commit.py`, the guard that keeps data and credentials out of git |
 | `deploy/` | K3s manifests, Helm values, `skctl` bootstrap |
 | `soak/` | Soak recorder: cycles the PS set and builds an HTML evidence report with a false-positive count |

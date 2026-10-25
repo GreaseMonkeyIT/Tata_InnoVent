@@ -65,3 +65,29 @@ def test_read_column_matches_read_and_keeps_its_own_noise():
     x2 = Instruments(4).read_column("press-1.oil_c", [50.0] * 100, 9)
     assert x1 == x2 and len(set(x1)) > 1
     assert Instruments(4).read_column("press-1.oil_c", [50.0] * 100, 10) != x1
+
+
+@pytest.mark.parametrize("noise", [True, False])
+def test_stream_equals_read_column(monkeypatch, noise):
+    """The live reader (2026-10-21): sample by sample over many instruments, it gives the readings of
+    `read_column` bit for bit. The columns mix numbers, ints, gaps, nan, text and bools, one tag
+    appears late, and the noise blocks run out several times."""
+    import random
+    from model.instruments import Stream
+    monkeypatch.setattr(Stream, "BLOCK", 7)
+    tags = ["press-1.current_a", "press-1.oil_c", "ced-1.oven_c", "compressor-1.pressure_barg",
+            "ced-1.tank_gas_m3h", "pierce-1.hits", "x.late_kw"]
+    ranges = {"press-1.current_a": 72.0, "x.late_kw": 500.0}
+    r = random.Random(5)
+    pick = (lambda: None, lambda: float("nan"), lambda: True, lambda: "run", lambda: r.randint(0, 900),
+            lambda: r.uniform(-20.0, 900.0), lambda: r.gauss(0.0, 2.0))
+    n = 40
+    cols = {t: [r.choice(pick)() for _ in range(n)] for t in tags}
+    cols["x.late_kw"][:25] = [None] * 25
+    a = Instruments(2, noise=noise, ranges=ranges)
+    ref = {t: a.read_column(t, cols[t], 60001) for t in tags}
+    s = Instruments(2, noise=noise, ranges=ranges).stream(tags, 60001)
+    got = [s.read([cols[t][k] for t in tags]) for k in range(n)]
+    for i, t in enumerate(tags):
+        assert [repr(row[i]) for row in got] == [repr(v) for v in ref[t]]
+    assert Instruments(2).stream([], 1).read(["x", 1.0]) == ["x", 1.0]

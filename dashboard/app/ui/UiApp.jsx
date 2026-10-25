@@ -42,7 +42,8 @@ export default function UiApp() {
   const [areaFocus, setAreaFocus] = useState(null);
   const D = useReplayModel({ mock, speed, paused, startRel: Number(u.get("t") || 0) });
   const m = D.model, rep = D.rep;
-  const gf = useMemo(() => ({ on: !!D.server, theme }), [D.server, theme]);
+  const gf = useMemo(() => ({ on: !!D.server || !!D.live?.grafana, theme }), [D.server, D.live, theme]);
+  const mockOn = D.live ? false : D.server ? D.server.mock : mock;     // live: the engine's verdict, never a mock
   const scene = useRef(null);
   const seen = useRef({});
   const ov = overlay && m ? buildOverlay(overlay, m) : null;
@@ -91,7 +92,7 @@ export default function UiApp() {
   useEffect(() => { if (drawer && m) seen.current[drawer] = m.t; }, [drawer, m]);
   useEffect(() => { if (areaFocus && drawer === "stations") document.getElementById(`area-${areaFocus}`)?.scrollIntoView({ block: "start" }); }, [areaFocus, drawer]);
 
-  if (D.error) return <div className="floor-wait">Recording not found: {D.error}. Run plant/floor/replay.py first.</div>;
+  if (D.error) return <div className="floor-wait">{D.live ? `The live plant stopped: ${D.error}.` : `Recording not found: ${D.error}. Run plant/floor/replay.py first.`}</div>;
 
   const cards = m?.cards || [];
   const markers = cards.filter((c) => !c.leaving && BY_NAME[c.station] && (!show || show.ids.includes(c.station)) && (!ov || ov.members.includes(c.station))).map((c) => {
@@ -130,13 +131,13 @@ export default function UiApp() {
       )}
       <Tips />
       <Top m={m} rep={rep} theme={theme} setTheme={setTheme} drawer={drawer} toggle={toggle} follow={follow} setFollow={setFollow}
-        paused={paused} setPaused={setPaused} speed={speed} setSpeed={setSpeed} mock={D.server ? D.server.mock : mock} server={D.server} overlay={overlay} pickOverlay={pickOverlay} />
+        paused={paused} setPaused={setPaused} speed={speed} setSpeed={setSpeed} mock={mockOn} server={D.server} live={D.live} overlay={overlay} pickOverlay={pickOverlay} />
       {m && <Verdict m={m} inspect={inspect} pick={setSel} showOn={showOn} />}
       {m && !drawer && cards.length > 0 && (
         <section className="attn win" aria-label="attention">
           <div className="wh">Attention<span className="sp" /><span className="meta">{cards.filter((c) => c.state === "active").length} abnormal</span></div>
           <div className="wb">
-            {cards.slice(0, MAX_ITEMS).map((c) => <Item key={c.key} c={c} m={m} rep={rep} mock={D.server ? D.server.mock : mock} ack={D.ack} inspect={inspect} showOn={showOn} />)}
+            {cards.slice(0, MAX_ITEMS).map((c) => <Item key={c.key} c={c} m={m} rep={rep} mock={mockOn} ack={D.ack} inspect={inspect} showOn={showOn} />)}
             {cards.length > MAX_ITEMS && <button className="cmd more" onClick={() => toggle("events")}>{cards.length - MAX_ITEMS} more in Events</button>}
           </div>
         </section>
@@ -148,7 +149,7 @@ export default function UiApp() {
         </footer>
       )}
       {m && drawer && (
-        <Drawer kind={drawer} chamfer={ui.chamfer} m={m} rep={rep} mock={D.server ? D.server.mock : mock} server={D.server} sel={sel} pick={setSel}
+        <Drawer kind={drawer} chamfer={ui.chamfer} m={m} rep={rep} mock={mockOn} server={D.server} live={D.live} sel={sel} pick={setSel}
           inspect={inspect} showOn={showOn} ack={D.ack} close={() => setDrawer(null)} ui={ui} setUi={setUi} setMock={setMock} openEvents={() => toggle("events")} />
       )}
     </div>
@@ -229,27 +230,29 @@ function FloorMap({ D, sceneRef, floorTheme, onPick, onHover, onDown }) {
   }, []);                                                      // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const s = sceneRef.current; if (s && s.themeName !== floorTheme) s.setTheme(floorTheme); }, [floorTheme]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (D.rep && sceneRef.current) sceneRef.current.setRamMax(D.rep.ramMax); }, [D.rep]);   // eslint-disable-line react-hooks/exhaustive-deps
-  return <div className="floor" ref={el} onPointerDown={onDown}>{!D.model && <div className="floor-wait">Loading the plant recording…</div>}</div>;
+  return <div className="floor" ref={el} onPointerDown={onDown}>{!D.model && <div className="floor-wait">{D.live?.warming ? "The live plant warms up: 9 h of plant time at full speed, about a minute…" : "Loading the plant recording…"}</div>}</div>;
 }
 
 // ── top bar: a solid window, text controls ──────────────────────────────────────────────────────
-function Top({ m, rep, theme, setTheme, drawer, toggle, follow, setFollow, paused, setPaused, speed, setSpeed, mock, server, overlay, pickOverlay }) {
+function Top({ m, rep, theme, setTheme, drawer, toggle, follow, setFollow, paused, setPaused, speed, setSpeed, mock, server, live, overlay, pickOverlay }) {
+  const status = live ? (live.warming ? "Live plant, warming up" : `Live plant (day ${live.seed}), the engine's verdict`)
+    : `${server ? "Plant recording, replayed live" : "Plant recording, not live"}${mock ? ". Mock verdict" : ""}`;
   return (
     <header className="top win">
       <span className="brand">VISR</span>
       <Choice label="mode" items={[["live", "Live"], ["energy", "Energy"]]} value={drawer === "energy" ? "energy" : "live"} onChange={(k) => { if ((k === "energy") !== (drawer === "energy")) toggle("energy"); }} />
-      <span className="status">{server ? "Plant recording, replayed live" : "Plant recording, not live"}{mock ? ". Mock verdict" : ""}</span>
+      <span className="status">{status}</span>
       <span className="ovl"><span className="muted">Overlay</span><Choice label="overlay" items={OVERLAYS} value={overlay} onChange={pickOverlay} /></span>
       <span className="sp" />
       <label className="check"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />Follow alarms</label>
       <Choice label="theme" items={[["light", "Light"], ["dark", "Dark"]]} value={theme} onChange={setTheme} />
-      {!server && (
+      {!server && !live && (
         <span className="play">
           <button className="cmd" onClick={() => setPaused(!paused)}>{paused ? "Play" : "Pause"}</button>
           <Choice label="speed" items={[[1, "1×"], [20, "20×"], [60, "60×"]]} value={speed} onChange={setSpeed} />
         </span>
       )}
-      <span className="clock" data-hint={server ? "Time of day: the recording plays on the wall clock, as in Grafana" : "Plant time of the recording"}>{m && rep ? clockOf(rep, m.t) : "--:--:--"}</span>
+      <span className="clock" data-hint={live ? "Plant time of the newest sample of the live plant" : server ? "Time of day: the recording plays on the wall clock, as in Grafana" : "Plant time of the recording"}>{m && rep ? clockOf(rep, m.t) : "--:--:--"}</span>
       <button className={`icon${drawer === "settings" ? " on" : ""}`} data-hint="Settings" aria-label="Settings" onClick={() => toggle("settings")}><Sliders /></button>
     </header>
   );
@@ -366,7 +369,7 @@ function Dock({ drawer, toggle, ticks }) {
 }
 
 // ── drawers ─────────────────────────────────────────────────────────────────────────────────────
-function Drawer({ kind, chamfer, m, rep, mock, server, sel, pick, inspect, showOn, ack, close, ui, setUi, setMock, openEvents }) {
+function Drawer({ kind, chamfer, m, rep, mock, server, live, sel, pick, inspect, showOn, ack, close, ui, setUi, setMock, openEvents }) {
   const isPart = kind === "inspect" && !(BY_NAME[sel] || m.stations[sel]);
   const titles = { stations: "Stations", events: "Events", parts: "Parts", tags: "Tags", trends: "Trends", energy: "Energy", legend: "Legend", settings: "Settings", inspect: sel || "Inspect" };
   const st = kind === "inspect" && m.stations[sel];
@@ -386,7 +389,7 @@ function Drawer({ kind, chamfer, m, rep, mock, server, sel, pick, inspect, showO
         {kind === "trends" && <Trends m={m} rep={rep} mock={mock} sel={sel} />}
         {kind === "energy" && <Energy m={m} rep={rep} />}
         {kind === "legend" && <Legend />}
-        {kind === "settings" && <Settings ui={ui} setUi={setUi} mock={mock} setMock={setMock} server={server} />}
+        {kind === "settings" && <Settings ui={ui} setUi={setUi} mock={mock} setMock={setMock} server={server} live={live} />}
         {kind === "inspect" && (isPart ? <PartCard m={m} rep={rep} id={sel} inspect={inspect} /> : <Inspect key={sel} m={m} rep={rep} mock={mock} name={sel} showOn={showOn} />)}
       </div>
     </aside>
@@ -604,10 +607,12 @@ function Legend() {
   );
 }
 
-function Settings({ ui, setUi, mock, setMock, server }) {
+function Settings({ ui, setUi, mock, setMock, server, live }) {
   return (
     <div className="set">
-      {server
+      {live
+        ? <p>The verdict comes from the engine (live/engine_service.py): the newest open incident with a named root. The engine does not know the faults; the plant service keeps them for the operator.</p>
+        : server
         ? <p>Mock verdict {server.mock ? "on" : "off"}: an air header loss at compressor-1, 60 min into each {Math.round((server.t1 - server.t0) / 3600)} h loop of the recording, back after 60 min. The replay server sets it (VISR_MOCK).</p>
         : <label className="check"><input type="checkbox" checked={mock} onChange={(e) => setMock(e.target.checked)} />Mock verdict: an air header loss at compressor-1 from 08:00, back at 09:00</label>}
       <label className="check"><input type="checkbox" checked={ui.names} onChange={(e) => setUi({ ...ui, names: e.target.checked })} />Show the names of all stations on the floor</label>

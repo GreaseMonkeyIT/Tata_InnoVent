@@ -707,9 +707,15 @@ device has a calibration bias inside its class, drawn once per factory (the runs
 same plant), noise of a fifth of its accuracy and a resolution of 0.01 of the unit (0.1 °C). PLC
 states and commands stay exact. Project choices: the noise share, the resolution, the transmitter
 spans. Not yet in v0: refresh rates, deadbands, quality flags, drift and stuck failures, clocks.
-Verification (`test_part_instruments.py`, 7 checks): the accuracy of each class, the bias the same on
+Verification (`test_part_instruments.py`, 10 checks): the accuracy of each class, the bias the same on
 every day of one factory and different between factories, inside the class, noise of a fifth of the
-accuracy, digital values unchanged.
+accuracy, digital values unchanged, a whole column (`read_column`) equal to single readings, and the
+live reader equal to the column reader.
+
+The live reader (`Instruments.stream`, 2026-10-21, for `live/plant_service.py`) reads many
+instruments one sample at a time. `read_column` and the live reader share one rule (`_readings`), and
+each instrument draws its noise from the same stream, so sample k of a tag is element k of its
+column, bit for bit.
 
 ## Speed paths and the equivalence gate (2026-10-16)
 
@@ -740,3 +746,25 @@ that is not exact gives `--atol` and `--rtol`, and must also pass `verify_plant.
     python plant/equivalence.py --ref <folder with the reference model/> --hours 3 --seeds 40000,60001 --faults ,F9,F1
 
 Tests: `plant/tests/test_speed_paths.py` compares each speed path with the plain code.
+
+## The power quality analyzer at incomer-1 (2026-10-22)
+
+The instrument sheet (ideas.md 17.3) puts a power quality analyzer of IEC 61000-4-30 Class A at the
+11 kV metering of incomer-1: voltage, current, power and dips. Until 2026-10-22 the plant gave
+incomer-1 only P, Q and the power factor. `UtilitiesPlant` now keeps the 11 kV bus voltage of each
+step over the analyzer's last interval and gives two tags:
+
+| Tag | What |
+|---|---|
+| `incomer-1.voltage_v` | the 11 kV bus voltage, line to line, of the last step |
+| `incomer-1.v_min_v` | the lowest 11 kV bus voltage of the last `CLASS_A_WINDOW_S` (1 s) |
+
+IEC 61000-4-30 gives the residual voltage of a dip as the lowest r.m.s. value during the dip. A poll
+of the present value every 1 s misses a dip of a few cycles (the F11 levels of 0.5 s and shorter,
+IEC 61000-4-34 class 3). The lowest value of the interval does not. The interval equals the 1 s poll
+of the engine (a project choice). The analyzer only reads the bus voltage: every other tag of the
+plant is the same, value for value (checked over 20 min with a dip). The documents give incomer-1 the
+lowest voltage as a measure (`wiring.py`).
+
+Verification (`test_part_class_a.py`): a dip of one cycle between two polls shows in the next poll of
+`v_min_v` and not in `voltage_v`, and `v_min_v` never exceeds `voltage_v`.

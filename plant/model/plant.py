@@ -40,6 +40,7 @@ Each tick, in this order:
 Placeholders (marked): the electrical loads of the loop pump and the tower (fixed efficiencies,
 until their motor datasheets), and the plant air demand of the users without their own model.
 """
+import collections
 import math
 import random
 
@@ -130,6 +131,12 @@ class UtilitiesPlant:
     # the 42 Pa reject limit (0.75 K at about 28 Pa/K) at the coldest shop air of the site year (5.8 C)
     # for a block that leaves the washer at 65 C: 580 s / ln(59.2 / 0.75) = 133 s -> 130 s.
     PART_COOL_TAU_S = 130.0
+    # The power quality analyzer (IEC 61000-4-30 Class A) at the 11 kV metering of incomer-1 (the
+    # instrument sheet, ideas.md 17.3: V and dips; 2026-10-22). It reports the voltage and the lowest
+    # r.m.s. voltage over its last interval, the residual voltage of a dip in the standard. A poll of
+    # the present value every 1 s misses a dip of a few cycles; the lowest value of the interval does
+    # not. The interval equals the poll period of the engine (eval/nodes.py SAMPLE_S, a project choice).
+    CLASS_A_WINDOW_S = 1.0
     EXPORT_MARGIN_W = 20e3      # the export limiter keeps this much import (project choice)
     CED_BATH_SETPOINT_C = 29.0  # the chiller's tempering valve holds the bath circulation here (project choice)
 
@@ -311,6 +318,7 @@ class UtilitiesPlant:
         # healthy values of the parameters that the fault registry changes (faults.py)
         self._healthy = {"F7": None, "F10": self.gas.p_supply, "F15": None,
                          "F14": self.eflow.H_HOT if self.eflow else None}
+        self._mv_v = collections.deque()       # (t, 11 kV bus voltage) of the analyzer's last interval
         self.t = 0.0
 
     def t_day_h(self):
@@ -366,6 +374,9 @@ class UtilitiesPlant:
 
     def step(self, dt):
         self.net.step(dt)
+        self._mv_v.append((self.t, self.grid.bus.v_ll))         # the analyzer reads; it changes nothing
+        while self._mv_v[0][0] <= self.t - self.CLASS_A_WINDOW_S + 1e-9:
+            self._mv_v.popleft()
         for cb in self.apfc:
             cb.step(dt)
         self._weather()
@@ -459,7 +470,9 @@ class UtilitiesPlant:
                     "tr-1.load_pct": self.tr1.k * 100.0, "tr-1.oil_c": self.tr1.theta_o,
                     "tr-2.load_pct": self.tr2.k * 100.0, "tr-2.oil_c": self.tr2.theta_o,
                     "incomer-1.p_kw": s_in.real / 1000.0, "incomer-1.q_kvar": s_in.imag / 1000.0,
-                    "incomer-1.pf": s_in.real / abs(s_in) if abs(s_in) > 0 else 1.0})
+                    "incomer-1.pf": s_in.real / abs(s_in) if abs(s_in) > 0 else 1.0,
+                    "incomer-1.voltage_v": self.grid.bus.v_ll,
+                    "incomer-1.v_min_v": min((v for _, v in self._mv_v), default=self.grid.bus.v_ll)})
         if self.site_weather:
             w = self.wx.at(self.t)
             out.update({"site.dry_bulb_c": w.t_db, "site.wet_bulb_c": w.t_wb, "site.rh_pct": w.rh,

@@ -591,3 +591,65 @@ def test_cf_targets_and_scores():
     sig2 = {"a": np.array([1.0, 2.0]), "b": np.array([2.0]), "c": np.array([1.0])}
     sc = CF.target_scores(win, sig2, {"a", "b"}, {"a": "a", "b": "b", "c": "c"})
     assert sc == {"a": 4.0 + 1.0 + 3.0, "b": 0.5, "c": 0.0}
+
+
+def _counter_runs(seed=31):
+    """A machine like pierce-1: a PLC hit counter steps by one each second, except in the second of the
+    stroke (every 6 s), where the pressure peaks."""
+    rng = np.random.default_rng(seed)
+
+    def run(n):
+        phase = (np.arange(n) + rng.integers(6)) % 6
+        stroke = phase == 0
+        count = np.cumsum(~stroke).astype(float) + rng.integers(10_000, 20_000)
+        p = 10.0 + 140.0 * stroke + 0.5 * rng.normal(size=n)
+        return N.Run({"m.v": 400.0 + rng.normal(size=n), "m.count": count, "m.p": p}, lead=30)
+    return run
+
+
+def test_command_changes_carry_the_cycle():
+    """With cmd_delta a numeric command also enters as its change since the last sample: the counter's
+    pause marks the stroke, which its level and its filters do not resolve (2026-10-22)."""
+    run = _counter_runs()
+    doc = {"feeds": ["m.v"], "commands": ["m.count"], "measures": ["m.p"], "asset": "m", "loop_outputs": []}
+    fit, cal = [(i, run(1200)) for i in range(3)], [(9, run(1200)), (10, run(1200))]
+    plain = N.Node("m", doc, "cusumk").train(fit, cal)
+    nd = N.Node("m", doc, "cusumk")
+    nd.cmd_delta = True
+    nd.train(fit, cal)
+    assert nd.delta_in == ["m.count"] and nd.model.inputs[-1] == "d:m.count"
+    r = run(50)
+    U, _ = nd.matrices(r)
+    assert U[0, -1] == 0.0 and np.array_equal(U[1:, -1], np.diff(r["m.count"]))
+    assert nd.r2[0] > 0.95 > plain.r2[0]
+    back = N.Node.from_state(nd.state())
+    assert back.delta_in == ["m.count"] and (back.alarms(r) == nd.alarms(r)).all()
+    assert nd.coverage_columns(["m.v", "d:m.v"], 1) == [True, True, True, True]
+    own = N.Node("m", dict(doc, loop_outputs=["m.count"]))
+    assert own.coverage_columns(["m.count", "d:m.count"], 1) == [False, False, False, False]
+
+
+def test_counter_reset_enters_as_the_new_value():
+    """A counter that steps down was reset (a new electrode): its change is the new value, not the drop.
+    A node saved before the reset rule keeps the plain change (LOG-128)."""
+    doc = {"feeds": ["m.v"], "commands": ["m.count"], "measures": ["m.p"], "asset": "m", "loop_outputs": []}
+    nd = N.Node("m", doc, "cusumk")
+    nd.num_in, nd.delta_in = ["m.v"], ["m.count"]
+    r = N.Run({"m.v": np.zeros(7), "m.count": np.array([1366.0, 1367, 1368, 0, 1, 1, 2]), "m.p": np.zeros(7)})
+    U, _ = nd.matrices(r)
+    assert U[:, -1].tolist() == [0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0]
+    r["m.count"][3] = 1.0                                        # a start in the sample of the change
+    assert nd.matrices(r)[0][3, -1] == 1.0
+    old = N.Node.__new__(N.Node)
+    old.__dict__.update({k: v for k, v in nd.__dict__.items() if k != "counter_resets"})
+    assert old.matrices(r)[0][:, -1].tolist() == [0.0, 1.0, 1.0, -1367.0, 0.0, 0.0, 1.0]
+
+
+def test_is_counter():
+    """A counter steps up by whole numbers (a rare reset allowed); an on/off command and a setpoint
+    are not counters (E1, LOG-128)."""
+    count = np.r_[np.arange(5000, 7000), np.arange(0, 3000)]          # one reset (a new electrode)
+    assert N.is_counter([count.astype(float)])
+    assert not N.is_counter([np.tile([0.0, 0.0, 1.0, 1.0], 500)])      # a valve that opens and closes
+    assert not N.is_counter([np.r_[np.full(500, 250.0), np.full(500, 300.0), np.full(500, 0.0)]])  # a setpoint
+    assert not N.is_counter([np.linspace(0.0, 10.0, 100)])               # not whole numbers
