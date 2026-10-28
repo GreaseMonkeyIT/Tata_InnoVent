@@ -510,6 +510,9 @@ class InductionMotor:
         self.cooling = 1.0
         self.rotor_r_factor = 1.0
         self.locked = False      # a seized bearing or a jammed machine holds the shaft at rest
+        # the rotor sidebands of a current burst, dB under the fundamental (bursts.py, 2026-10-28):
+        # -60 for a healthy cage (project choice); broken bars sit higher. Read by the burst only
+        self.sideband_db = -60.0
         self._zero_outputs()
 
     def _zero_outputs(self):

@@ -141,6 +141,17 @@ class WeldingCell:
         self.parts = 0
         self.i = self.u = self.p_el = 0.0
         self.gated, self.go = False, False   # gated: the line loads each part (plant flow)
+        self.record = None           # per-part records: one per seam (plant.py, 2026-10-28)
+        self._acc = [0.0, 0.0, 0.0, 0.0, 0.0]    # seam time, the integrals of i, i^2, u and p
+
+    def _seam_done(self):
+        t, si, si2, su, sp = self._acc
+        if self.record is not None and t > 0.0:
+            m = si / t
+            self.record({"station": self.name, "kind": "seam", "seam": self.seam, "duration_s": t,
+                         "current_a": m, "current_sd_a": math.sqrt(max(si2 / t - m * m, 0.0)),
+                         "voltage_v": su / t, "energy_kj": sp / 1000.0})
+        self._acc = [0.0, 0.0, 0.0, 0.0, 0.0]
 
     def step(self, dt):
         self.t_state += dt
@@ -149,6 +160,8 @@ class WeldingCell:
             self.state, self.t_state, self.seam = "weld", 0.0, 0
         elif self.state == "weld" and self.t_state >= self.seam_s:
             self.seam += 1
+            if self.record is not None:
+                self._seam_done()
             self.state, self.t_state = ("move", 0.0) if self.seam < self.seams else ("change", 0.0)
             if self.seam >= self.seams:
                 self.parts += 1
@@ -159,6 +172,13 @@ class WeldingCell:
             self.i = max(0.0, self.r.i_weld * (1.0 + self.rng.gauss(0.0, ripple)))
             self.u = 14.0 + 0.05 * self.i                  # IEC 60974-1 conventional load voltage
             self.p_el = self.i * self.u / self.r.eff
+            if self.record is not None:
+                a = self._acc
+                a[0] += dt
+                a[1] += self.i * dt
+                a[2] += self.i * self.i * dt
+                a[3] += self.u * dt
+                a[4] += self.i * self.u * dt
         else:
             self.i, self.u, self.p_el = 0.0, 0.0, self.r.idle_w
 

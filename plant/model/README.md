@@ -77,7 +77,9 @@ in the datasheet starting time.
 - No harmonic torques: the torque at 300 rpm is 2.99 TN, the datasheet minimum is 2.1 TN. A start
   under heavy load is a little faster in the model than in a real motor.
 - The slip rise at 90 % voltage (+29 %) is above the IEEE 141 value for standard motors (+22 %).
-- No current sidebands from broken bars, and no supply unbalance yet.
+- No current sidebands from broken bars in the circuit, and no supply unbalance in the motor's own solve.
+  Since 2026-10-28 the waveform bursts carry rotor sidebands at `sideband_db` (`bursts.py`) and the
+  network has a negative sequence for a supply unbalance (`unbalance.py`), both outputs only.
 - The fit takes about 15 s per rating. `fits.json` keeps each fit (tracked in git), so a container
   never refits. Raise `FIT_VERSION` in `motor.py` when the circuit or the fit changes.
 - One step costs about 15 µs. Large steps (0.1 s) split into substeps: implicit on the stable
@@ -706,7 +708,9 @@ transmitter of ±0.075 % of span (Delval PTI40), a magnetic flowmeter of ±0.5 %
 device has a calibration bias inside its class, drawn once per factory (the runs are days of the
 same plant), noise of a fifth of its accuracy and a resolution of 0.01 of the unit (0.1 °C). PLC
 states and commands stay exact. Project choices: the noise share, the resolution, the transmitter
-spans. Not yet in v0: refresh rates, deadbands, quality flags, drift and stuck failures, clocks.
+spans. Not in v0: refresh rates, deadbands, quality flags, drift and stuck failures, clocks. Since
+2026-10-28 they exist, off by default: the front end below (`instruments.FrontEnd`) and the device
+clocks and links (`devices.py`).
 Verification (`test_part_instruments.py`, 10 checks): the accuracy of each class, the bias the same on
 every day of one factory and different between factories, inside the class, noise of a fifth of the
 accuracy, digital values unchanged, a whole column (`read_column`) equal to single readings, and the
@@ -874,3 +878,121 @@ Without omc the script writes the model, the script and motor.py's reference val
 2. `test_crosscheck_om.py` checks the parameter mapping, the reference's rated point (41.5 A, 141.8 N m
 at the rated slip) and that the committed model is the generated one; it runs the comparison where omc is
 installed.
+
+## The instrument layer finished (task 24, 2026-10-28)
+
+The true status before this task, from the code:
+
+| Item | Status before | Now |
+|---|---|---|
+| Three-phase phasors | missing: power.py carries one phase-to-neutral phasor per bus, the positive sequence | `unbalance.py`: the negative sequence, each phase, V2, I2, Z2 (off by default) |
+| Waveform bursts | missing: a motor gives its RMS current, power, power factor and slip | `bursts.py` (off by default) |
+| Per-part records | partial: leak-1 and cold-1 kept (result, verdict) lists in memory without time stamps, tight-1 its final torques, the weld cells nothing per seam; the tags hold the last result | event records with time stamps (off by default) |
+| The rest of each instrument | version 0: bias, noise, resolution and the low end of the range. `sensors.py` (drift, stuck, a sample period) is a part that no plant model uses | `instruments.FrontEnd` (off by default) |
+
+### Three phases (`unbalance.py`)
+
+`UtilitiesPlant(three_phase=True, supply_unbalance=u, supply_unbalance_deg=angle)`. After each load flow
+the negative sequence is solved on the same radial network: a source EMF of u times the positive
+sequence at the grid, the grid, cable and transformer impedances as in the positive sequence (static
+devices), an induction motor as its own circuit at slip 2 - s (the negative-sequence rotor resistance goes
+with 1 / (2 - s), near the locked-rotor value: SEL, as cited in a Control.com thread; US patent
+4,025,834), and every other load as a constant impedance at its present power (project choice; a load
+that feeds power back draws none: hot-1's active front end controls its currents). There is no zero
+sequence: the motors are three-wire, and the Dyn11 transformers do not pass it. Each phase is built
+from the two sequences (Fortescue), and u2 = |V2| / |V1| (EN 50160 and IEC 61000-4-30; EN 50160: 95 % of
+the 10 min values under 2 % on LV and MV, Schneider Electric's PM8000 EN 50160 note).
+
+| Tag | What |
+|---|---|
+| `incomer-1`, `psu-a` to `psu-d`: `va_v`, `vb_v`, `vc_v`, `va_deg`, `vb_deg`, `vc_deg` | each phase to neutral, magnitude and angle |
+| the same buses: `v2_v`, `unbalance_pct` | the negative sequence and u2 |
+| `incomer-1`: `ia_a`, `ib_a`, `ic_a`, `i2_a` | the 11 kV line currents and I2 |
+| `compressor-1`, `press-1`, `press-2`, `lmp-1`: `ia_a`, `ib_a`, `ic_a`, `i2_a`, `z2_ohm`, `z2_deg` | each motor feeder's line currents, I2, and the measured Z2 = V2 / I2 |
+
+The instruments read u2 to ±0.15 points (IEC 61000-4-30 Class A over 0.5 to 5 %, as Schneider
+Electric's ION note on the standard gives it) and the angles to 1 degree (project choice).
+
+A balanced supply gives today's values: V2 = I2 = 0, the phases are the positive sequence turned by 0,
+-120 and +120 degrees, and every existing tag is the same. The negative sequence does not act back on the
+plant (a known limit): the extra losses of I2 do not heat the motors (DOE tip sheet 7: the rise grows by
+2 u2² per cent), and its braking torque is left out. So every existing tag is the same at any unbalance.
+
+Verification (`test_part_instrument_layer.py`): with a balanced supply every existing tag the same,
+equal phases 120 degrees apart, V2 and I2 zero; with 1 % at the source, the 11 kV bus near 1 % and the
+MCC buses lower (the motors draw the negative sequence), compressor-1's current unbalance 6 to 10 times
+the voltage unbalance at its terminals, its Z2 within 30 % of its locked-rotor impedance, V1 and V2 back
+from the phase tags (Fortescue), every existing tag the same.
+
+### Waveform bursts (`bursts.py`)
+
+A burst is 10 s at 10 kHz of the three phase currents and voltages (the research check of 2026-10-15):
+0.1 Hz of resolution, the reciprocal of its length (Reliability Magazine, load effects on ESA/MCSA). The
+plant steps every 0.1 s and a motor's electrical state is quasi-static, so a burst is built on demand
+from the motor's state when it starts: the phase phasors of its current and voltage (with the negative
+sequence when the plant runs three phases) and its slip, plus the rotor sidebands at (1 ∓ 2s) f (Iris
+Power, PCIC 2015) at `InductionMotor.sideband_db` under the fundamental: -60 dB for a healthy cage
+(project choice, under the -54 dB of the healthiest band of the industry guideline as the Fabrico blog
+gives it, a secondary source; the same guideline puts one or two broken bars at -45 to -35 dB), and the
+acquisition noise (1e-4 of the channel's range, project choice). The parameter changes only the burst.
+
+`UtilitiesPlant(bursts={"period_s": 600})` (a timer) or `{"trigger": f}` (on each rise of `f(plant)`)
+records bursts of the steady-load motors; `plant.bursts.get(k)` builds burst k. A burst is valid only if
+the motor's load state held to its end. Steady load: compressor-1 while loaded or unloaded. The cool-1
+pump, the tower fans and the roof fans are power loads without a motor model (`PumpDrive`, `TowerLoads`,
+`RoofExtractors`), so they give no burst until they have one.
+
+Verification: the RMS of each phase equals its line current tag, the sidebands sit at (1 ∓ 2s) f at -60
+dB and at a set -40 dB (to 1 dB), the recorder keeps only bursts whose state held.
+
+### Per-part records
+
+`UtilitiesPlant(records=True)` keeps `plant.part_records`: one record per event, apart from the time
+series, stamped with the plant time of the step in which it ended.
+
+| Kind | Station | Fields |
+|---|---|---|
+| `bolt` | tight-1, tight-2 | spindle, final torque, final angle |
+| `leak` | leak-1 | pressure decay, verdict, fill reached, the part's temperature at the test |
+| `cold` | cold-1 | mean torque, verdict, test speed |
+| `seam` | weld-1, weld-2 | seam, duration, mean current, its ripple (1 sigma), mean voltage, arc energy |
+
+The angle of a torque-plus-angle tightening: a target of 90 degrees (project choice, no engine maker's
+value found), scattered with the tool's capability: Desoutter gives ±5 degrees at a 40 degree target and
+±10 at 180 for its angle-head electric nutrunners (product capability document 6159992450), ±6.8 at 90,
+read as 3 sigma (project choice). It draws from its own stream, so the torques and every other draw stay
+the same. The qa-scanner verdict and any reject path are left out (the operator decides them).
+
+Verification: every existing tag the same with the records on, the bolt torques the station's own, the
+angles about their target with the set scatter, the leak and cold records equal to the stations'
+results, a seam's energy its current times voltage times time.
+
+### The rest of each instrument (`instruments.FrontEnd`)
+
+`front_end(readings, spec)` takes a column of readings (`read_column`) through the rest of an instrument,
+in order: the failures (drift per hour from a time; stuck: the reading freezes; dropout: no reading),
+the damping (first order) and an averaging window, the register refresh (the value held between
+refreshes), the deadband with a maximum time between records, and an OPC UA quality per sample (OPC UA
+Part 8: Good; Uncertain_EngineeringUnitsExceeded over 120 % of the range, IEC 61869-2's limit for a CT;
+Bad_SensorFailure in a dropout). A stuck reading stays Good: the instrument does not know.
+`default_front_end(tag)` gives the defaults of the tag's instrument class:
+
+| Class | Default | Source |
+|---|---|---|
+| temperature transmitter | damping 5 s | Rosemount 644 configuration data sheet |
+| pressure transmitter | damping 0.4 s | Rosemount 3051 configuration data sheet |
+| magnetic flowmeter | damping 2.0 s | Rosemount 8700 configuration data sheet (its example value; project choice) |
+| feeder meter | register refresh 1 s | research check of 2026-10-15 (project choice) |
+| deadband, maximum time between records | none | Kepware OPC UA client (none, percent or absolute); Ignition tag history |
+
+Off by default: `read_column` and `Stream` give the readings of version 0, value for value. The failure
+modes are instrument settings, not plant faults, and are not in the fault registry.
+
+Verification: the damping's step (63 % after one time constant), the averaging, the refresh, the
+deadband and the maximum time between records, drift, stuck and dropout, the qualities, the defaults by
+class, and the accuracy of the new unbalance and angle tags.
+
+Equivalence (2026-10-28, after the four parts): `plant/equivalence.py` against the `overhaul` branch with
+every switch off, 1 h after a 30 min warm-up, seeds 40000 and 60001, a normal day and F9, F1 and F11:
+658,800 values per case, all equal at zero tolerance. With the switches on, the tests above show every
+existing tag the same.

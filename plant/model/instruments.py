@@ -24,6 +24,7 @@ PLC states and commands are digital and exact.
 """
 import math
 import random
+from dataclasses import dataclass
 
 SPAN = {"bar": 400.0, "barg": 10.0, "kpa": 100.0}     # pressure transmitter spans (project choice)
 
@@ -41,6 +42,13 @@ def _accuracy(tag, value, rng=None):
         return max(1.5, 0.004 * v), 0.1                       # type K class 1
     if unit.endswith(("_a", "_v", "_kw", "_w", "_kvar")) or unit in ("p_kw", "q_kvar"):
         return 0.005 * v, 0.01                                # PMD class 0.5
+    # the three-phase tags (unbalance.py, 2026-10-28): the Class A analyzer's voltage unbalance
+    # (+-0.15 points over 0.5 to 5 %, IEC 61000-4-30 Class A as Schneider Electric's ION note gives it),
+    # phase angles to 1 degree (project choice)
+    if unit == "unbalance_pct":
+        return 0.15, 0.01
+    if unit.endswith("_deg"):
+        return 1.0, 0.1
     for suf, span in SPAN.items():
         if unit.endswith("_" + suf) or unit == suf:
             return 0.00075 * span, 0.01                       # pressure transmitter
@@ -169,3 +177,115 @@ class Stream:
         x = np.array([float(v) if ok else 0.0 for v, ok in zip(vals, num)])
         y = _readings(x, z, *self._c)
         return [float(a) if ok else b for a, b, ok in zip(y.tolist(), vals, num)]
+
+
+# ------------------------------------------------------------------------- the front end --
+# The rest of an instrument (task 24, 2026-10-28): what happens to a reading between the sensing element
+# and the SCADA. Off by default: `read_column` and `Stream` give the readings of version 0, and nothing
+# here runs unless a front end is asked for (`front_end`, `default_front_end`). The failure modes are
+# instrument settings, not plant faults: they are not in the fault registry (faults.py).
+#
+# | Item | Default when on | Source |
+# |---|---|---|
+# | damping of a temperature transmitter | 5 s, first order | Rosemount 644 configuration data sheet (5 s default) |
+# | damping of a pressure transmitter | 0.4 s | Rosemount 3051 configuration data sheet (0.40 s default) |
+# | damping of a magnetic flowmeter | 2.0 s | Rosemount 8700 configuration data sheet (its example value; project choice) |
+# | refresh of a feeder meter's registers | 1 s | research check of 2026-10-15 (a project choice) |
+# | deadband | none (absolute or a share of the range when set) | Kepware OPC UA client: none, percent or absolute |
+# | maximum time between records | none (when set: a record at least this often) | Ignition tag history |
+# | quality | Good; Uncertain_EngineeringUnitsExceeded over 120 % of the range; Bad_SensorFailure in a dropout | OPC UA Part 8 (Data Access); IEC 61869-2 (a CT to 120 % of rated current) |
+#
+# Project choices: the averaging window as a trailing mean of whole samples (a meter's own 200 ms
+# averaging is under the 1 s sample), the order of the steps below, a stuck reading that keeps the last
+# good one and stays Good (the instrument does not know).
+GOOD, UNCERTAIN_EGU, BAD_SENSOR = "Good", "Uncertain_EngineeringUnitsExceeded", "Bad_SensorFailure"
+EGU_LIMIT = 1.2
+
+
+@dataclass(frozen=True)
+class FrontEnd:
+    """The settings of one instrument's front end. Times in seconds of the run (0 = the first sample).
+    drift_per_h: the reading drifts by this much per hour from drift_from_s (failure). stuck: (start,
+    end): the reading freezes at its last value (failure). dropout: (start, end): no reading, quality
+    bad (failure). range_hi: the instrument's range (the 120 % limit of the quality)."""
+    damping_s: float = 0.0
+    avg_s: float = 0.0
+    refresh_s: float = 0.0
+    deadband: float = 0.0
+    deadband_pct: float = 0.0
+    max_hold_s: float = 0.0
+    drift_per_h: float = 0.0
+    drift_from_s: float = 0.0
+    stuck: tuple = ()
+    dropout: tuple = ()
+    range_hi: float = None
+
+
+def default_front_end(tag, range_hi=None):
+    """The front end of a tag's instrument by the rule of `_accuracy` (the class of the quantity)."""
+    unit = tag.rsplit(".", 1)[-1]
+    if unit.endswith("_c"):
+        return FrontEnd(damping_s=5.0, range_hi=range_hi)
+    if any(unit.endswith("_" + s) or unit == s for s in SPAN):
+        return FrontEnd(damping_s=0.4, range_hi=range_hi)
+    if unit.endswith(("_m3h", "_kgs")):
+        return FrontEnd(damping_s=2.0, range_hi=range_hi)
+    if unit.endswith(("_a", "_v", "_kw", "_w", "_kvar")) or unit in ("p_kw", "q_kvar", "pf"):
+        return FrontEnd(refresh_s=1.0, range_hi=range_hi)
+    return FrontEnd(range_hi=range_hi)
+
+
+def _inside(t, span):
+    return bool(span) and span[0] <= t < span[1]
+
+
+def front_end(values, spec, sample_s=1.0):
+    """A column of readings (from `read_column`) through a front end: (values, quality), one per sample.
+    In order: the failures (drift, stuck, dropout), the damping and the averaging, the register refresh,
+    the deadband with the maximum time between records, and the quality. A value that is not a finite
+    number passes through (quality Good: a state or a command is digital)."""
+    import numpy as np
+    vals = list(values)
+    num = _numbers(vals)
+    out, qual = [], []
+    damp = 1.0 - math.exp(-sample_s / spec.damping_s) if spec.damping_s > 0.0 else 1.0
+    n_avg = max(1, int(round(spec.avg_s / sample_s))) if spec.avg_s > 0.0 else 1
+    window = []
+    y = None                  # the damped value
+    held = None               # the value of the stuck sensor
+    reg, reg_t = None, None   # the register and when it was refreshed
+    rep, rep_t = None, None   # the last reported value and when
+    db = spec.deadband + (spec.deadband_pct / 100.0 * spec.range_hi if spec.deadband_pct and spec.range_hi else 0.0)
+    for k, (v, ok) in enumerate(zip(vals, num)):
+        t = k * sample_s
+        if not ok:
+            out.append(v)
+            qual.append(GOOD)
+            continue
+        if _inside(t, spec.dropout):
+            out.append(None)
+            qual.append(BAD_SENSOR)
+            continue
+        x = float(v)
+        if spec.drift_per_h and t >= spec.drift_from_s:
+            x += spec.drift_per_h * (t - spec.drift_from_s) / 3600.0
+        if _inside(t, spec.stuck):
+            held = x if held is None else held
+            x = held
+        else:
+            held = None
+        y = x if y is None else y + damp * (x - y)
+        window = (window + [y])[-n_avg:]
+        a = float(np.mean(window)) if n_avg > 1 else y
+        if spec.refresh_s > 0.0 and reg_t is not None and t - reg_t < spec.refresh_s - 1e-9:
+            a = reg
+        else:
+            reg, reg_t = a, t
+        if db > 0.0 and rep is not None and abs(a - rep) <= db and not (
+                spec.max_hold_s and t - rep_t >= spec.max_hold_s - 1e-9):
+            a = rep
+        else:
+            rep, rep_t = a, t
+        out.append(a)
+        qual.append(UNCERTAIN_EGU if (spec.range_hi and abs(a) > EGU_LIMIT * spec.range_hi) else GOOD)
+    return out, qual

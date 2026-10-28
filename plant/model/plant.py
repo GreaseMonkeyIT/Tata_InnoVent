@@ -143,7 +143,8 @@ class UtilitiesPlant:
     def __init__(self, machine_heat_w=0.0, air_demand_frac=0.5, t_amb_c=35.0, with_press=True,
                  cooling="tower", t_wb_c=None, with_fab=True, with_assembly=True,
                  with_building=True, t_day0_h=8.0, seed=0, material_spread=True, tr_fab=None, tr_asm=None,
-                 with_apfc=True, weather="fixed", flow=True, day_of_year=None, devices=None):
+                 with_apfc=True, weather="fixed", flow=True, day_of_year=None, devices=None,
+                 three_phase=False, supply_unbalance=0.0, supply_unbalance_deg=0.0, records=False, bursts=None):
         mv = Bus("mv-11kv", 11000.0)
         self.grid = Grid("incomer-1", mv, C.GRID_11KV)
         self.net = Network(self.grid)
@@ -320,6 +321,26 @@ class UtilitiesPlant:
                          "F14": self.eflow.H_HOT if self.eflow else None}
         self._mv_v = collections.deque()       # (t, 11 kV bus voltage) of the analyzer's last interval
         self.t = 0.0
+        # three phases (unbalance.py, 2026-10-28): the negative sequence of the network for a supply
+        # unbalance, and the phase phasors as tags. Off by default; on, it only reads the network
+        self.neg = None
+        if three_phase:
+            from .unbalance import NegativeSequence
+            self.neg = NegativeSequence(self.net, supply_unbalance, supply_unbalance_deg)
+        # per-part records (2026-10-28): one event record per bolt, leak test, cold test and weld seam,
+        # apart from the time series. Off by default (no list grows); the records draw from their own
+        # streams, so the plant's values stay the same
+        self.part_records = None
+        if records:
+            self.part_records = []
+            for st in ([*self.tight, self.leak, self.cold] if self.asm else []) + (list(self.welders) if self.fab else []):
+                st.record = self._record
+        # waveform bursts of the steady-load motors (bursts.py, 2026-10-28): off by default; on, a dict
+        # of BurstRecorder settings (period_s, trigger, spec, motors) or True for a burst every 10 min
+        self.bursts = None
+        if bursts:
+            from .bursts import BurstRecorder
+            self.bursts = BurstRecorder(self, **({"period_s": 600.0} if bursts is True else bursts))
         # the devices in time (devices.py, 2026-10-28): clocks, links, PLC scans and the SCADA's view.
         # Off by default; on, they only read the plant, so its tags stay the same
         self.devices = None
@@ -380,6 +401,8 @@ class UtilitiesPlant:
 
     def step(self, dt):
         self.net.step(dt)
+        if self.neg is not None:
+            self.neg.solve()
         self._mv_v.append((self.t, self.grid.bus.v_ll))         # the analyzer reads; it changes nothing
         while self._mv_v[0][0] <= self.t - self.CLASS_A_WINDOW_S + 1e-9:
             self._mv_v.popleft()
@@ -446,8 +469,14 @@ class UtilitiesPlant:
             self.hot.step(dt)
         self.loop.step(dt)
         self.t += dt
+        if self.bursts is not None:
+            self.bursts.step()
         if self.devices is not None:
             self.devices.step(dt)
+
+    def _record(self, rec):
+        """Keep one per-part record, stamped with the plant time of the step in which it ended."""
+        self.part_records.append({"t": self.t, **rec})
 
     def check(self):
         out = self.net.check() + self.comp.check() + self.loop.check() + self.loop.chiller.check()
@@ -497,4 +526,26 @@ class UtilitiesPlant:
             for m in (self.pierce, self.lmp, self.press2, self.conv, self.plasma, self.scanner, self.blast,
                       self.ced, self.rivet, *self.welders):
                 out.update({f"{m.name}.{k}": v for k, v in m.tags().items()})
+        if self.neg is not None:
+            out.update(self.phase_tags())
+        return out
+
+    def phase_tags(self):
+        """The three-phase tags (unbalance.py): the phases, V2 and u2 of the 11 kV bus and the MCC buses,
+        the line currents and I2 at incomer-1, and the line currents, I2 and Z2 of each motor feeder."""
+        from . import unbalance as U
+        neg, out = self.neg, {}
+        if not neg.v2:
+            return out
+        mv = self.grid.bus
+        out.update(U.bus_tags("incomer-1", mv, neg.v2[id(mv)]))
+        i1 = (mv.s_down / (3.0 * mv.v)).conjugate() if abs(mv.v) > 1e-6 else 0j
+        out.update(U.current_tags("incomer-1", i1, neg.i2_source))
+        for n, b in self.psu.items():
+            out.update(U.bus_tags(n, b, neg.v2[id(b)]))
+            for ld in b.loads:
+                if isinstance(ld, MotorLoad):
+                    i1 = (ld.s_va() / (3.0 * b.v)).conjugate() if abs(b.v) > 1e-6 else 0j
+                    out.update(U.current_tags(ld.model.name.removesuffix("-motor"), i1, neg.i2_load[id(ld)],
+                                              neg.v2[id(b)]))
         return out

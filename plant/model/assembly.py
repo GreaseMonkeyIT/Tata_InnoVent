@@ -22,6 +22,13 @@ import random
 from dataclasses import dataclass
 
 P_ATM_PA = 101325.0
+# The per-part records (2026-10-28, `record`): a tightening's final angle. Torque + angle: a snug torque,
+# then a set angle (90 degrees: project choice, no engine maker's value found). The angle scatters with
+# the tool's capability: Desoutter gives +-5 degrees at a 40 degree target and +-10 at 180 for its
+# angle-head electric nutrunners (product capability document 6159992450), +-6.8 at 90 between them,
+# read as 3 sigma (project choice).
+ANGLE_TARGET_DEG = 90.0
+ANGLE_SIGMA_DEG = (5.0 + (ANGLE_TARGET_DEG - 40.0) / (180.0 - 40.0) * 5.0) / 3.0
 
 
 # ------------------------------------------------------------------------------ pallet conveyor --
@@ -96,6 +103,8 @@ class TighteningStation:
         self.name, self.r = name, r
         self.bolts, self.spindles = bolts, spindles
         self.rng = random.Random(f"nut:{name}:{seed}")
+        self.record = None            # per-part records: a function that takes one record (plant.py)
+        self._angle_rng = random.Random(f"angle:{name}:{seed}")    # its own stream: the torques stay the same
         self.socket_wear = 0.0        # fault: widens the scatter (0 .. 1)
         self.t_bolt = 0.0
         self.done = 0
@@ -128,10 +137,13 @@ class TighteningStation:
         self.p_el = self.spindles * (r.peak_w if peak else r.mean_w)
         if self.t_bolt >= r.bolt_s:
             self.t_bolt = 0.0
-            for _ in range(self.spindles):
+            for k in range(self.spindles):
                 sd = r.sigma_frac * (1.0 + 3.0 * self.socket_wear)
                 self.torques.append(r.target_nm * (1.0 + self.rng.gauss(0.0, sd)))
                 self.done += 1
+                if self.record is not None:
+                    self.record({"station": self.name, "kind": "bolt", "spindle": k + 1, "torque_nm": self.torques[-1],
+                                 "angle_deg": ANGLE_TARGET_DEG + self._angle_rng.gauss(0.0, ANGLE_SIGMA_DEG)})
             if self.gated:
                 self.cycles_left -= 1
                 if self.cycles_left == 0:
@@ -265,6 +277,7 @@ class LeakTester:
         self.air_bar = 7.0
         self.results = []             # (decay Pa, passed)
         self.rng = random.Random(f"leak:{name}:{seed}")
+        self.record = None            # per-part records (plant.py)
         self.part_spread = part_spread
         self.part_leak_sccm = 0.0
         self.tested = self.rejects = 0
@@ -287,6 +300,9 @@ class LeakTester:
             self.results.append((float("nan"), False))
             self.rejects += 1
             self.last_decay_pa, self.last_ok = float("nan"), False
+            if self.record is not None:
+                self.record({"station": self.name, "kind": "leak", "decay_pa": float("nan"), "ok": False,
+                             "fill_ok": False, "part_c": t_part_c})
             return float("nan"), False, False
         p_abs = r.p_test_bar * 1e5 + P_ATM_PA
         v = r.volume_l / 1000.0
@@ -305,6 +321,9 @@ class LeakTester:
         self.results.append((decay, ok))
         self.rejects += 0 if ok else 1
         self.last_decay_pa, self.last_ok = decay, ok
+        if self.record is not None:
+            self.record({"station": self.name, "kind": "leak", "decay_pa": decay, "ok": ok, "fill_ok": True,
+                         "part_c": t_part_c})
         return decay, ok, True
 
     def tags(self):
@@ -351,6 +370,7 @@ class ColdTest:
         self.results = []              # (mean torque, passed)
         self._acc = []
         self.rng = random.Random(f"cold:{name}:{seed}")
+        self.record = None             # per-part records (plant.py)
         self.engine_spread = engine_spread
         self.engine_factor = 1.0
         self._testing = False
@@ -397,6 +417,9 @@ class ColdTest:
                 ok = abs(m / self.reference_nm() - 1.0) <= 0.20
                 self.results.append((m, ok))
                 self.last_torque_nm, self.last_ok = m, ok
+                if self.record is not None:
+                    self.record({"station": self.name, "kind": "cold", "torque_nm": m, "ok": ok,
+                                 "rpm": self.test_rpm})
                 self.rejects += 0 if ok else 1
                 self._acc = []
             self.torque, self.p_el = 0.0, 0.0
