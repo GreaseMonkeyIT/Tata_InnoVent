@@ -1038,3 +1038,45 @@ Equivalence (2026-10-28): `plant/equivalence.py --new-tags` against the `overhau
 at zero tolerance; 12 tags only in the new run (pallet-1's state, 8 sections and count, cold-1's state and
 speed). `--new-tags` (2026-10-28) lets a change add tags: every tag of the reference must still be there
 and equal.
+
+## Energy and flow tags (`meters.py`, task 28, 2026-10-28)
+
+The plant gave power per machine and no energy. A real site counts energy: a feeder meter (IEC 61557-12,
+energy class 0.5S of IEC 62053-22) on each outgoing feeder, the incomer's tariff meter, and the utilities'
+flowmeters. `Meters` reads the plant each step and gives new tags only; every existing tag keeps its value.
+
+| Tag | What |
+|---|---|
+| `<load>.energy_kwh` | the energy register of each feeder meter: the load's power as the load flow took it (scaled as a constant impedance under 0.7 pu, nothing in an interruption), integrated each step |
+| `hot-1.energy_export_kwh` | the energy hot-1's dyno fed back |
+| `incomer-1.energy_kwh`, `energy_export_kwh`, `energy_kvarh`, `energy_lead_kvarh`, `energy_kvah` | the tariff meter: active import and export, reactive lagging and leading, apparent. MSEDCL bills HT consumers in kVAh since 1 April 2020 and counts the leading kVArh (MERC order, as summarized by AISSMS IOIT's PQ cell; MSEDCL's kVAh billing presentation) |
+| `feeder-a` to `feeder-d`: `p_kw`, `q_kvar`, `energy_kwh` | each LV cable feeder at its LV main: the MCC's power and the cable loss |
+| `tr-1`, `tr-2`: `load_loss_kw`, `no_load_loss_kw`, `loss_kw` | the transformer losses of the load flow: the series loss and the no-load loss at the primary voltage |
+| `compressor-1.air_m3min`, `compressor-1.header_m3min` | the free air delivered, and the air that leaves the receiver (users, leaks, the safety valve) |
+| `cool-1.<branch>_m3h` | the water through each user branch of cool-1 (compressor-1, machines, press-1, lmp-1) |
+| `gas-1.flow_m3h`, `gas-1.volume_m3` | the site gas meter (`GasSupply.flow_m3h`, not exported before) and its register |
+| `hot-1.fuel_l_h`, `hot-1.fuel_l` | the fuel flow of the engine under test and its register; at rated power the spec sheet's 89.1 l/h |
+
+The registers count from the start of the plant run, warm-up included (project choice). No frame verdict
+and no reject path. The tags are not in the documents (wiring.py), so the engine does not read them.
+The meters cost about 10 % of the plant's step time (an hour of plant in 7.3 s against 6.6 s).
+
+Verification (`test_part_meters.py`): over 20 min the loads' registers, less hot-1's export, plus the
+network losses equal the incomer's register to 1e-6, the site never exports and the registers only count
+up; each feeder's power is its MCC's power and its cable loss; the no-load loss is the IS 1180 value at
+the primary voltage and the load loss the rated one times the load factor squared; the branches add up to
+the loop flow; the gas and fuel registers grow with their flows; hot-1 at rated power burns 89.1 l/h; no
+meter tag is in the documents.
+
+## What these changes do to the plant output and the cache key (2026-10-28)
+
+The day cache of `eval/nodes.py` keys a run on a hash of every file in `plant/model/` except
+`instruments.py` and `wiring.py`, which it applies at load time (and hashes into the key of the engine
+view). So every task here changes the plant's cache key, and every campaign simulates its days again once.
+
+| Task | Plant output (every tag of a run) | Cache key | Engine view |
+|---|---|---|---|
+| 23, device time and links | the same: the layer is off by default and only reads | changes (timing.py, devices.py, plant.py) | the same values |
+| 24, the instrument layer | the same: every part is off by default | changes (unbalance.py, bursts.py, plant.py, assembly.py, fab_stations.py, motor.py) | new key (instruments.py), the same values |
+| 25, pallet-1 and cold-1 | 12 new tags; the others the same | changes (assembly.py, flow.py, plant.py) | new key (wiring.py): two more nodes and their tags |
+| 28, energy and flows | about 80 new tags; the others the same | changes (meters.py, plant.py, assembly.py) | the same: the new tags are not in the documents |

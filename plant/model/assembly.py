@@ -466,6 +466,7 @@ class HotTest:
         # dyno at a site without an export permit).
         self.regen_cap_w = float("inf")
         self.p_resistor = 0.0
+        self.fuel_l_h = 0.0           # the engine's fuel flow (2026-10-28: the site's fuel meter, meters.py)
         self.gated, self.test_t = False, -1.0      # gated: the schedule starts when an engine is rigged
 
     def begin(self):
@@ -514,6 +515,7 @@ class HotTest:
         if running:
             eta = self.efficiency(max(self.load, 0.05))
             fuel = max(self.p_brake, 0.05 * e.rated_kw * 1000.0) / eta
+            self.fuel_l_h = fuel * 3600.0 / (e.lhv_mj_kg * 1e6 * e.fuel_kg_l)
             # coolant share: rated value from the spec sheet, more at part load (Gao 2019: over half of
             # the fuel energy at low load) -> linear in the unloading (project choice for the shape)
             share_r = e.coolant_kw_rated / (e.rated_kw / self.efficiency(1.0))
@@ -522,6 +524,7 @@ class HotTest:
                                  - e.ambient_kw_rated * 1000.0 * max(self.load, 0.1))
         else:
             self.q_coolant = self.q_exhaust = 0.0
+            self.fuel_l_h = 0.0
         # the regenerative dyno feeds the brake power back: a negative electrical load
         regen = self.p_brake * self.regen_eta
         fed = min(regen, max(0.0, self.regen_cap_w))

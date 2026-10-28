@@ -327,6 +327,10 @@ class UtilitiesPlant:
         if three_phase:
             from .unbalance import NegativeSequence
             self.neg = NegativeSequence(self.net, supply_unbalance, supply_unbalance_deg)
+        # the site's meters (meters.py, 2026-10-28): energy registers, feeder and transformer powers and
+        # losses, air, water, gas and fuel flows, as new tags; they only read the plant
+        from .meters import Meters
+        self.meters = Meters(self)
         # per-part records (2026-10-28): one event record per bolt, leak test, cold test and weld seam,
         # apart from the time series. Off by default (no list grows); the records draw from their own
         # streams, so the plant's values stay the same
@@ -400,9 +404,11 @@ class UtilitiesPlant:
         self.leak.test(t_arr)
 
     def step(self, dt):
+        self.meters.begin(self)
         self.net.step(dt)
         if self.neg is not None:
             self.neg.solve()
+        self.meters.electric(self, dt)
         self._mv_v.append((self.t, self.grid.bus.v_ll))         # the analyzer reads; it changes nothing
         while self._mv_v[0][0] <= self.t - self.CLASS_A_WINDOW_S + 1e-9:
             self._mv_v.popleft()
@@ -468,6 +474,7 @@ class UtilitiesPlant:
             self.hot.regen_cap_w = others + 5000.0 - self.EXPORT_MARGIN_W
             self.hot.step(dt)
         self.loop.step(dt)
+        self.meters.flows(self, dt)
         self.t += dt
         if self.bursts is not None:
             self.bursts.step()
@@ -533,6 +540,7 @@ class UtilitiesPlant:
             for m in (self.pierce, self.lmp, self.press2, self.conv, self.plasma, self.scanner, self.blast,
                       self.ced, self.rivet, *self.welders):
                 out.update({f"{m.name}.{k}": v for k, v in m.tags().items()})
+        out.update(self.meters.tags(self))
         if self.neg is not None:
             out.update(self.phase_tags())
         return out
