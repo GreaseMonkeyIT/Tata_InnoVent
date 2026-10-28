@@ -209,9 +209,9 @@ def plant_version():
     if os.path.exists(wpath):
         with open(wpath, "rb") as fh:
             h.update(fh.read())
-    for fn in (simulate, new_plant, split_of, split_days, day_of_year):    # the plant a seed gets
+    for fn in (simulate, new_plant, split_of, split_days, day_of_year, fault_plan, fault_step):   # the plant a seed gets
         h.update(inspect.getsource(fn).encode())
-    h.update(repr((DT, SAMPLE_S, WARMUP_S, LEAD_S, SEED_BASE, BLOCK_D, MONTHS)).encode())
+    h.update(repr((DT, SAMPLE_S, WARMUP_S, LEAD_S, SEED_BASE, BLOCK_D, MONTHS, FAULT_TOL_S, FAULT_INFO)).encode())
     _VERSION.append(h.hexdigest()[:16])
     return _VERSION[0]
 
@@ -255,36 +255,87 @@ def new_plant(seed):
                           day_of_year=day_of_year(seed))
 
 
+# The fault clock (2026-10-28). A fault goes on at the start of the first step at or after its onset (at
+# most DT late; the poll is SAMPLE_S). A transient fault (F11, a dip of 0.5 to 250 cycles) clears its
+# duration after it went on. Before, the clearing was tested at the start of a step too, so a fault
+# shorter than DT (the dips of 0.5 and 1 cycle, 10 and 20 ms) went on and off with no step between,
+# unless its onset fell less than its duration before a step: in the last campaign that rule predicted
+# the missing dips in 10 of 10 F11 runs. Now, when the clearing time falls inside a step, the plant
+# steps to it, the fault clears, and the plant steps the rest of DT (a sub-step).
+# The plant takes a short dt (checked 2026-10-28): its integrators scale with dt (the motor speed in
+# adaptive substeps, backward Euler for the heat, exact exponentials for the relays and the tanks), its
+# events and timers count seconds, a cycle event is found as a crossing within the last dt (so two
+# sub-steps count it once), and the compiled kernels (_jit.py) solve the circuit and the network with no
+# dt. Two things change with a sub-step, both inside the rules of the plant: the network solves once
+# more (with the loads of the sub-step before), and a weld cell in a seam draws its current ripple once
+# more, so its noise after the dip is another draw of the same distribution. From the same state, two
+# sub-steps of 0.02 s and 0.08 s against one step of 0.1 s moved the plant's readings by at most 3 %
+# (lmp-1 in a bend: the ram's explicit step) and passed the plant's checks. A clearing time within
+# FAULT_TOL_S of a step clears at that step, so the rounding of the step sum never asks for a sub-step
+# of 1e-12 s, and the plant clock comes back to the time of whole steps after a sub-step.
+FAULT_TOL_S = 1e-6
+FAULT_INFO = ("fid", "severity", "magnitude", "onset_s", "root", "control")    # what a run's info keeps of a fault
+
+
+def fault_plan(fid, severity, onset_s, ends=None):
+    """A planned fault of a run: the magnitude by the range rule of every fault (fault_ranges.py, from the
+    table `ends`; binary faults are on, 1), the duration of a transient fault ("_d", None: it stays) and
+    the plant time of the onset ("_on", onset_s after the warm-up). `fault_step` sets the rest."""
+    mag = 1.0 if fid in FR.BINARY else RANGES.magnitude(fid, severity, ends)
+    return {"fid": fid, "severity": severity, "magnitude": mag, "onset_s": onset_s,
+            "root": FR.FAULTS[fid].node, "control": FR.FAULTS[fid].control, "state": "planned",
+            "on_t": None, "off_t": None, "_on": WARMUP_S + onset_s, "_d": FR.duration_s(fid, mag) or None,
+            "_off": None}
+
+
+def fault_step(p, faults, dt=DT):
+    """One step of a run with faults (`fault_plan` entries): the faults due at the start go on ("on_t"),
+    then the plant steps dt. A transient fault clears at "on_t" plus its duration ("off_t"): at the
+    start of the step when that time is there (within FAULT_TOL_S), else by a sub-step inside it. A fault
+    the operator cleared or cancelled ("state") is left alone."""
+    t0, t_end = p.t, p.t + dt
+    for f in faults:
+        if f["state"] == "planned" and p.t >= f["_on"]:
+            FR.inject(p, f["fid"], f["magnitude"])
+            f["state"], f["on_t"] = "on", p.t
+            f["_off"] = None if f["_d"] is None else p.t + f["_d"]
+    while True:
+        due = [f for f in faults if f["state"] == "on" and f["_off"] is not None]
+        for f in due:
+            if f["_off"] <= p.t + FAULT_TOL_S:
+                FR.clear(p, f["fid"])
+                f["state"], f["off_t"] = "cleared", p.t
+        nxt = min((f["_off"] for f in due if f["state"] == "on"), default=None)
+        if nxt is None or nxt >= t_end - FAULT_TOL_S:
+            break
+        p.step(nxt - p.t)                       # to the clearing time
+    if p.t == t0:
+        p.step(dt)
+    else:
+        p.step(t_end - p.t)                     # the rest of the step
+        p.t = t_end                             # on the clock of whole steps (the sum can differ in the last bit)
+
+
 def simulate(seed, hours, fault=None):
     """The plant part of a run: ({tag: list of exact values}, info), every tag sampled every SAMPLE_S
     after the warm-up. fault: (fid, severity, onset_s after the warm-up) or None. The magnitude comes
-    from the registry's range rule (fault_ranges.py); binary faults are on at the onset."""
+    from the registry's range rule (fault_ranges.py); binary faults are on at the onset. A transient
+    fault acts for its duration (`fault_step`)."""
     p = new_plant(seed)
     raw = {}
     every = int(round(SAMPLE_S / DT))
     n = int((hours * 3600.0 + WARMUP_S) / DT)
     info = {"seed": seed}
-    on_at = off_at = None
+    plan = []
     if fault:
         fid, sev, onset = fault
-        mag = 1.0 if fid in FR.BINARY else RANGES.magnitude(fid, sev, RANGES.ends(p))
-        on_at = WARMUP_S + onset
-        d = FR.duration_s(fid, mag)
-        off_at = on_at + d if d else None
-        info.update({"fid": fid, "severity": sev, "magnitude": mag, "onset_s": onset,
-                     "root": FR.FAULTS[fid].node, "control": FR.FAULTS[fid].control})
-    applied = cleared = False
+        plan.append(fault_plan(fid, sev, onset, None if fid in FR.BINARY else RANGES.ends(p)))
+        info.update({k: plan[0][k] for k in FAULT_INFO})
     m = 0                                       # samples taken
     lead = 0                                    # of them before the warm-up ends
     rec_from = WARMUP_S - min(LEAD_S, WARMUP_S)
     for k in range(n):
-        if on_at is not None and not applied and p.t >= on_at:
-            FR.inject(p, fault[0], mag)
-            applied = True
-        if off_at is not None and applied and not cleared and p.t >= off_at:
-            FR.clear(p, fault[0])
-            cleared = True
-        p.step(DT)
+        fault_step(p, plan)
         if p.t >= rec_from and k % every == 0:
             tags = p.tags()
             for t in tags.keys() - raw.keys():  # a tag that appears late: absent before
@@ -300,33 +351,20 @@ def simulate(seed, hours, fault=None):
 def simulate_multi(seed, hours, faults):
     """`simulate` with several faults at once (a fault pair, ideas.md 11.9): faults is a tuple of
     (fid, severity, onset_s after the warm-up). Each fault is injected at its own onset and, for a
-    transient fault, cleared after its duration. info lists every fault; "onset_s" is the first."""
+    transient fault, cleared after its duration (`fault_step`). info lists every fault; "onset_s" is the
+    first."""
     p = new_plant(seed)
     raw = {}
     every = int(round(SAMPLE_S / DT))
     n = int((hours * 3600.0 + WARMUP_S) / DT)
     ends = RANGES.ends(p)
-    plan = []
-    for fid, sev, onset in faults:
-        mag = 1.0 if fid in FR.BINARY else RANGES.magnitude(fid, sev, ends)
-        d = FR.duration_s(fid, mag)
-        plan.append({"fid": fid, "severity": sev, "magnitude": mag, "onset_s": onset,
-                     "root": FR.FAULTS[fid].node, "control": FR.FAULTS[fid].control,
-                     "_on": WARMUP_S + onset, "_off": WARMUP_S + onset + d if d else None})
+    plan = [fault_plan(fid, sev, onset, ends) for fid, sev, onset in faults]
     info = {"seed": seed, "fid": "+".join(f["fid"] for f in plan), "onset_s": min(f["onset_s"] for f in plan),
             "root": None, "control": False}
-    applied, cleared = set(), set()
     m = lead = 0
     rec_from = WARMUP_S - min(LEAD_S, WARMUP_S)
     for k in range(n):
-        for i, f in enumerate(plan):
-            if i not in applied and p.t >= f["_on"]:
-                FR.inject(p, f["fid"], f["magnitude"])
-                applied.add(i)
-            if f["_off"] is not None and i in applied and i not in cleared and p.t >= f["_off"]:
-                FR.clear(p, f["fid"])
-                cleared.add(i)
-        p.step(DT)
+        fault_step(p, plan)
         if p.t >= rec_from and k % every == 0:
             tags = p.tags()
             for t in tags.keys() - raw.keys():
@@ -335,7 +373,7 @@ def simulate_multi(seed, hours, faults):
                 col.append(tags.get(t))
             m += 1
             lead += p.t < WARMUP_S
-    info["faults"] = [{k: v for k, v in f.items() if not k.startswith("_")} for f in plan]
+    info["faults"] = [{k: f[k] for k in FAULT_INFO} for f in plan]
     info["lead"] = lead
     return raw, info
 

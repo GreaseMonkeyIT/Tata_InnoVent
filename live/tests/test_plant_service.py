@@ -32,6 +32,7 @@ def short(monkeypatch):
     [("F6", 0.5, 60.0)],                           # the range rule runs on the batch plant first
     [("F3", 0.7, 30.0)],                           # a binary fault: no range rule
     [("F11", 0.3, 50.0)],                          # a sag: injected, then cleared after its duration
+    [("F11", 0.9, 50.05)],                         # a dip of one cycle: cleared by a sub-step (N.fault_step)
     [("F6", 0.5, 60.0), ("F13", 0.5, 90.0)],      # a pair, as `simulate_multi` runs it
 ])
 def test_live_plant_equals_record(short, faults):

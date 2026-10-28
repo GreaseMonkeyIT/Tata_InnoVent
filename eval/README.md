@@ -185,6 +185,27 @@ root (not the control cases F14 to F16) is named and has alarmed for its own fau
 after its onset, or, when the other fault already holds the machine in alarm, a single CUSUM sum of
 the machine that crosses its limit with a change that began after the onset (`crossings`).
 
+Fault timing (`fault_step`, 2026-10-28). The plant steps every 0.1 s (`DT`). A fault goes on at the
+start of the first step at or after its onset (at most 0.1 s late, inside one poll). A transient fault
+(F11, a dip of the IEC 61000-4-11 class 3 durations) clears its duration after it went on. When that
+time falls inside a step, the plant steps to it, the fault clears, and the plant steps the rest of the
+0.1 s (a sub-step). Before, the clearing was tested only at the start of a step, so a dip shorter than
+a step (level 0, one cycle, 20 ms) went on and off with no step between, unless its onset fell less
+than 20 ms before a step: in the last campaign that rule predicted the missing dips in 10 of 10 F11
+runs. The other levels last 10, 25 and 250 cycles, whole steps, and their runs are the same as before,
+value for value. `simulate`, `simulate_multi` and the live plant (`live/plant_service.py`) step the
+faults with the same function.
+
+The plant takes a short step (checked 2026-10-28). Its integrators scale with the step (the motor speed
+in adaptive substeps, backward Euler for the heat, exact exponentials for the relays), its events and
+timers count seconds, a cycle event (a punch hit, a conveyor move) is found as a crossing in the last
+step, so two sub-steps count it once, and the compiled kernels (`plant/model/_jit.py`) solve the motor
+circuit and the network with no step. From the same state, two sub-steps of 0.02 s and 0.08 s against
+one step of 0.1 s moved the readings by at most 3 % (lmp-1 in a bend, the ram's explicit step) and
+passed the plant's checks. Two things differ after a sub-step, both inside the plant's own rules: the
+network solves once more, and a weld cell in a seam draws its current ripple once more, so its noise
+after the dip is another draw of the same distribution.
+
 LOG-115 and LOG-118 have the scores of the rules.
 
 Switches for experiments (LOG-118).
@@ -269,7 +290,8 @@ These changes make an engine iteration faster. They do not change the method.
   seed, the length and the fault. `record()` saves every tag of a run, before the instruments, to
   `eval/cache/<seed>-<key>.npz`. A later campaign loads the run when the key matches. The key holds
   a hash of the files in `plant/model/` (except `wiring.py` and `instruments.py`), the weather file
-  and the source of `simulate()`. A change to the plant makes new keys, so a stale day never loads.
+  and the source of `simulate()` and of the fault timing (`fault_plan`, `fault_step`, since
+  2026-10-28). A change to the plant makes new keys, so a stale day never loads.
   The documents (`wiring.py`) and the instruments are applied at load time, in the same order as
   before, so their noise is the same. A 2.7 h day takes about 2.7 MB. `VISR_CACHE=0` turns the
   cache off and `VISR_CACHE_DIR` moves it. The folder is in `.gitignore` and in `.stignore`, so

@@ -495,6 +495,56 @@ def test_simulate_multi_applies_both_faults(monkeypatch):
     assert len(raw["press-1.oil_c"]) == 30 + 72
 
 
+@pytest.mark.parametrize("multi", [False, True])
+def test_one_cycle_dip_shows_for_any_onset(monkeypatch, multi):
+    """A level-0 F11 dip lasts one cycle (20 ms, IEC 61000-4-11 class 3). It shows in incomer-1.v_min_v,
+    the lowest 11 kV voltage of the last second, in one poll, wherever its onset falls in a step of
+    0.1 s: the plant steps to the clearing time (fault_step). Before 2026-10-28 it showed only when the
+    onset fell less than 20 ms before a step."""
+    monkeypatch.setattr(N, "WARMUP_S", 60.0)
+    monkeypatch.setattr(N, "_VERSION", [])
+    for frac in (0.0, 0.004, 0.019, 0.021, 0.05, 0.079, 0.081, 0.099):
+        fault = ("F11", 0.9, 20.0 + frac)                      # severity 0.9: the level 0 pu
+        raw, info = N.simulate_multi(40000, 0.01, (fault,)) if multi else N.simulate(40000, 0.01, fault)
+        assert (info["faults"][0] if multi else info)["magnitude"] == 0.0
+        v = np.asarray(raw["incomer-1.v_min_v"])
+        low = np.flatnonzero(v < 0.5 * 11000.0)
+        assert len(low) == 1 and info["lead"] + 20 <= low[0] <= info["lead"] + 21, (frac, low)
+        assert v[low[0]] < 100.0 and min(raw["incomer-1.voltage_v"]) > 10_000.0   # the present value misses it
+
+
+def test_fault_step_clears_inside_a_step():
+    """fault_step: a fault goes on at the start of the first step at or after its onset and clears its
+    duration later, inside the step by a sub-step; the plant clock stays on whole steps. A clearing time
+    within FAULT_TOL_S of a step clears at that step (no sub-step)."""
+    log = []
+
+    class Grid:
+        def dip(self, m):
+            log.append(("dip", m))
+
+        def clear(self):
+            log.append(("clear",))
+
+    class Plant:                                                  # a stand-in: the step and the grid only
+        t, grid = 0.0, Grid()
+
+        def step(self, dt):
+            log.append(("step", dt))
+            self.t += dt
+    p = Plant()
+    ends = {"F11": (1.0, 0.0, "IEC levels")}
+    f = N.fault_plan("F11", 0.9, 0.25 - N.WARMUP_S, ends)        # level 0 pu, 1 cycle: on at 0.3 s
+    g = N.fault_plan("F11", 0.6, 0.5 - N.WARMUP_S, ends)         # level 0.4 pu, 10 cycles: on at 0.5 s
+    for _ in range(9):
+        N.fault_step(p, [f, g], 0.1)
+    assert f["on_t"] == pytest.approx(0.3) and f["off_t"] == pytest.approx(0.32) and f["state"] == "cleared"
+    assert g["on_t"] == pytest.approx(0.5) and g["off_t"] == pytest.approx(0.7) and g["state"] == "cleared"
+    kinds = [x[0] if x[0] != "step" else ("step" if abs(x[1] - 0.1) < 1e-9 else round(x[1], 6)) for x in log]
+    assert kinds == ["step"] * 3 + ["dip", 0.02, "clear", 0.08] + ["step", "dip", "step", "step", "clear"] + ["step"] * 2
+    assert p.t == sum([0.1] * 9)                                  # the clock of whole steps
+
+
 def test_crossings_and_a_second_fault_on_an_alarmed_machine():
     """Sum 0 passes its limit early (the first fault); sum 1 starts at 60 and passes later (a second
     fault). crossings() reports both, each with its own change point; score_pair counts the second

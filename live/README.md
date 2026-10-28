@@ -57,7 +57,10 @@ so a value goes through unchanged to a Python client.
 
 A fault takes its magnitude from the range rule of every fault (`plant/model/fault_ranges.py`) and its
 duration from the fault registry, as in a harness run. Only the faults of the registry (F1 to F16)
-exist.
+exist. The plant steps its faults with the harness's `fault_step` (`eval/nodes.py`, 2026-10-28): a
+fault goes on at the first step at or after its onset, and a transient fault clears its duration later.
+A dip shorter than a step (F11 level 0, one cycle) clears by a sub-step inside the step, so it acts for
+its 20 ms, and the fault log's `off_t` is that time.
 
 ### The equivalence with the batch run
 
@@ -68,6 +71,7 @@ the documents, the lead and the fault magnitudes.
 | Check | Runs | Result (2026-10-21, laptop) |
 |---|---|---|
 | `live/tests/test_plant_service.py`, 2 min warm-up | no fault, F6, F3, F11, the pair F6 + F13 | equal |
+| `live/tests/test_plant_service.py`, 2 min warm-up (2026-10-28) | F11 level 0, a dip of one cycle cleared by a sub-step | equal |
 | `--check 1`, the full 9 h warm-up, seed 60000 (10,800 samples) | no fault, F6, the pair F11 + F8 | equal |
 
 The per-sample instrument reader (`Instruments.stream` in `plant/model/instruments.py`) gives the

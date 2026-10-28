@@ -112,17 +112,9 @@ class LivePlant:
             onset_s = max(0.0, self.p.t - self.warmup_s)
         if isinstance(onset_s, bool) or not isinstance(onset_s, (int, float)) or not 0.0 <= onset_s < math.inf:
             raise ValueError("onset_s must be a number of seconds from 0")
-        if fid in FR.BINARY:
-            mag = 1.0
-        else:
-            if self._ends is None:
-                self._ends = RANGES.ends(N.new_plant(self.seed))     # never on the running plant
-            mag = RANGES.magnitude(fid, float(severity), self._ends)
-        d = FR.duration_s(fid, mag)
-        on = self.warmup_s + float(onset_s)
-        f = {"fid": fid, "severity": float(severity), "magnitude": mag, "onset_s": float(onset_s),
-             "root": FR.FAULTS[fid].node, "control": FR.FAULTS[fid].control, "state": "planned",
-             "on_t": None, "off_t": None, "_on": on, "_off": on + d if d else None}
+        if fid not in FR.BINARY and self._ends is None:
+            self._ends = RANGES.ends(N.new_plant(self.seed))         # never on the running plant
+        f = N.fault_plan(fid, float(severity), float(onset_s), self._ends)
         self.faults.append(f)
         return f
 
@@ -143,17 +135,11 @@ class LivePlant:
         return changed
 
     def step(self):
-        """One plant step of DT, in the order of `N.simulate_multi`: the faults that are due, the step,
-        then a sample every SAMPLE_S from the start of the lead."""
+        """One plant step of DT, as `N.simulate_multi` steps it (`N.fault_step`: the faults that are due,
+        the step, and a fault that clears inside the step by a sub-step), then a sample every SAMPLE_S
+        from the start of the lead."""
         p = self.p
-        for f in self.faults:
-            if f["state"] == "planned" and p.t >= f["_on"]:
-                FR.inject(p, f["fid"], f["magnitude"])
-                f["state"], f["on_t"] = "on", p.t
-            if f["state"] == "on" and f["_off"] is not None and p.t >= f["_off"]:
-                FR.clear(p, f["fid"])
-                f["state"], f["off_t"] = "cleared", p.t
-        p.step(self.dt)
+        N.fault_step(p, self.faults, self.dt)
         if self.floor is not None:
             self.floor.step()
             if len(self.floor.rows) > self.keep_rows + 600:           # trim in blocks, not every row
