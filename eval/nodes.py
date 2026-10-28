@@ -647,7 +647,7 @@ class Node:
         self.sd = {}
         self.sd_all = None
         self.state_cmd = None
-        self.cmd_delta = False          # numeric commands also enter as their change since the last sample
+        self.cmd_delta = True           # a PLC counter command also enters as its change (the default since 2026-10-28)
         self.delta_in = []
         self.counter_resets = True      # a counter that steps down was reset: its change is the new value
         self.spike = False              # the spike rule (--spike): one sample past h_spike alarms
@@ -661,7 +661,8 @@ class Node:
         longer) do not resolve (2026-10-22). A counter is found in the training runs (`is_counter`); an
         on/off command or a setpoint is not one (E1, LOG-128: their changes raised the limits). A step
         down is a reset (a new electrode): the change is then the new value, as a counter rate takes it,
-        not a drop of about 1,368 in one sample (LOG-128)."""
+        not a drop of about 1,368 in one sample (LOG-128). cmd_delta is on by default since 2026-10-28
+        (--no-cmd-delta); a trained node keeps the inputs it was trained with (`delta_in`)."""
         self.num_in = []
         for t in self.doc["feeds"] + self.doc["commands"]:
             if any(is_text(r[t]) for _, r in runs):
@@ -672,7 +673,7 @@ class Node:
             else:
                 self.num_in.append(t)
         self.delta_in = ([t for t in self.doc["commands"] if t in self.num_in and is_counter([r[t] for _, r in runs])]
-                         if self.cmd_delta else [])
+                         if getattr(self, "cmd_delta", False) else [])
         names = (list(self.num_in) + [f"{t}={c}" for t, cs in self.cats.items() for c in cs]
                  + [f"d:{t}" for t in self.delta_in])
         # a categorical output (a controller's state): one output per category, 1 where it holds
@@ -1127,7 +1128,7 @@ def first_alarm(alarm, start):
 
 
 def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE, alpha=None, limit="conformal",
-             onsets=None, clip=None, confirm_s=0.0, keep=False, cmd_delta=False, spike=False):
+             onsets=None, clip=None, confirm_s=0.0, keep=False, cmd_delta=True, spike=False):
     """One node in a worker process: train it, then its alarms and coverage on every scored run
     ({key: view path} -> {key: (alarm, covered)}), and what the report needs of the model. fit and
     calib: [(seed, view path)]. The node loads only its own tags, and a scored run only while it
@@ -1313,7 +1314,8 @@ def score_fault(al, info, asset=None, cps=None, reach=None):
     return rec
 
 
-def main(argv=None):
+def parser():
+    """The switches of a campaign (eval/README.md has the table)."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--hours", type=float, default=6.0)
     ap.add_argument("--train", type=int, default=DEFAULT_TRAIN,
@@ -1343,8 +1345,14 @@ def main(argv=None):
                     help="an alarm counts once it has lasted this many seconds (default 0: at once)")
     ap.add_argument("--no-feedback-rule", action="store_true",
                     help="count feedback inputs for coverage, as before LOG-118 (feedback_inputs)")
-    ap.add_argument("--cmd-delta", action="store_true",
-                    help="each numeric PLC command also enters as its change since the last sample (Node.design)")
+    # the counter changes (LOG-128) are on by default since 2026-10-28; --cmd-delta stays so that older
+    # command lines run
+    cd = ap.add_mutually_exclusive_group()
+    cd.add_argument("--cmd-delta", dest="cmd_delta", action="store_true", default=True,
+                    help="a PLC counter among a node's commands also enters as its change since the last sample, "
+                         "a step down as a reset (Node.design; the default)")
+    cd.add_argument("--no-cmd-delta", dest="cmd_delta", action="store_false",
+                    help="leave the counter changes out, as before 2026-10-28")
     ap.add_argument("--spike", action="store_true",
                     help="the spike rule: a sample whose largest |z| passes a limit per node from the calibration "
                          "days alarms, a sample outside the training range only when it is the first one "
@@ -1361,6 +1369,11 @@ def main(argv=None):
                          "eval/cf.py, the twin and the counterfactual root")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--out", default=os.path.join(ROOT, "eval", "results"))
+    return ap
+
+
+def main(argv=None):
+    ap = parser()
     a = ap.parse_args(argv)
     splits = [s.strip() for s in a.splits.split(",") if s.strip()]
     fids = [f.strip() for f in a.faults.split(",") if f.strip()]

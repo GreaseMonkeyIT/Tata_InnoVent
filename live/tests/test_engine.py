@@ -186,6 +186,28 @@ def test_stream_node_with_command_changes():
     assert np.array_equal(np.array(got), alarm) and alarm[900 - r.lead:].any()
 
 
+def test_stream_node_from_a_state_before_the_defaults():
+    """A pack node trained without the counter changes, saved before 2026-10-22 (no cmd_delta, delta_in or
+    counter_resets) and before the spike rule (no spike, h_spike): the stream takes the inputs it was
+    trained with and alarms as the batch does."""
+    from eval.tests.test_nodes import _counter_runs
+    run = _counter_runs(9)
+    doc = {"feeds": ["m.v"], "commands": ["m.count"], "measures": ["m.p"], "asset": "m", "loop_outputs": []}
+    nd = N.Node("m", doc, "cusumkv")
+    nd.cmd_delta = False
+    nd.train([(i, run(1200)) for i in range(3)], [(9, run(1200)), (10, run(1200))])
+    old = N.Node.from_state({k: v for k, v in nd.state().items()
+                             if k not in ("cmd_delta", "delta_in", "counter_resets", "spike", "h_spike")})
+    r = run(1500)
+    r["m.p"] = r["m.p"] + np.where(np.arange(1500) >= 900, 60.0, 0.0)
+    alarm = nd.alarms(r)
+    sn = E.StreamNode(old)
+    sn.reset(r.lead)
+    got = [a for a in (sn.step(s) for s in E.samples_of(r)) if a is not None]
+    assert len(sn._uy(next(E.samples_of(r)))[0]) == 2
+    assert np.array_equal(np.array(got), alarm) and alarm[900 - r.lead:].any()
+
+
 @pytest.mark.parametrize("rule,clip,confirm_s", [("cusumkv", None, 0.0), ("cusumk", 4.0, 5.0)])
 def test_stream_node_with_the_spike_rule(rule, clip, confirm_s):
     """A node trained with the spike rule (eval/nodes.py --spike): the stream alarms as the batch does on

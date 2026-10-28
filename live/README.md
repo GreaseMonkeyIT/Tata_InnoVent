@@ -100,7 +100,10 @@ residual spread. The rules `cusum`, `cusumk` and `cusumkv` (the default) stream.
 A node trained with the spike rule (`eval/nodes.py --spike`, 2026-10-28) streams it too: the largest |z|
 of the sample before the clip against the node's `h_spike`, on a covered sample or the first sample
 outside the training range, with its change point at its sample. A pack from a campaign without
-`--spike`, or from before the rule, has no spike rule.
+`--spike`, or from before the rule, has no spike rule. A node takes its inputs as its campaign trained
+it: with the change of each PLC counter command (`eval/nodes.py --cmd-delta`, the default since
+2026-10-28; the stream takes the change from its own last value, a step down as a reset), or without
+it (a campaign with `--no-cmd-delta`, or a pack from before).
 
 The batch scores a run from the true onset of its fault. The live engine does not know the onset, so
 it works with incidents. Each machine (a machine alarms when one of its nodes does) that starts to
@@ -263,8 +266,9 @@ python -m pytest live/tests -q
   refusal of a test-split seed.
 - `test_engine.py`: a trained node streamed against `Node.alarms` (both CUSUM rules, a confirmation
   time, a gap in a meter, a text command and a text output, with command changes across a
-  counter reset, and with the spike rule on a far sample in range, in the first second outside the
-  range and inside the excursion, with a clip and a confirmation time), with the same
+  counter reset, with the spike rule on a far sample in range, in the first second outside the
+  range and inside the excursion, with a clip and a confirmation time, and a node saved before the
+  counter changes and the spike rule), with the same
   change points; the incidents with scripted alarms (a candidate, a victim, new roots, the closing
   times, the same-root merge, the cycle victim); the kept samples against the run, also past the cap;
   the refusal of the gate rule.

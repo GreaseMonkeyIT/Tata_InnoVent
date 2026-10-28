@@ -187,6 +187,17 @@ them out of range: an output of the asset's own control loops (LOG-117), and a f
 whose node can be reached from this node's outputs through the documents (`feedback_inputs`,
 LOG-118: a failing cooling pump heats the water the compressor returns to cool-1).
 
+Counter changes (`--cmd-delta`, the default since 2026-10-28). A PLC counter among a node's commands
+(`is_counter` on the training runs: whole numbers that step up, mostly by one) also enters as its change
+since the last sample (`d:<tag>`). A counter that steps by one at a cycle event carries the phase of the
+cycle, which its level and its filters do not resolve. A step down is a reset (a new electrode), and
+its change is then the new value. On the validation split (LOG-128, 30 runs per case) the changes left
+detection the same, raised the root named from 300 to 305 of 390, and raised pierce-1's R2 from 0.17 to
+0.80. The reset rule came after that campaign and is not measured yet. `--no-cmd-delta` turns the
+changes off. A saved node keeps the inputs it was trained with (`delta_in`), so the models of a
+campaign before the change, and a live pack made from them, work as before: a node from before
+2026-10-22 has no change inputs, and one from before the reset rule takes the plain change.
+
 Root naming (`score_fault`): "root first" is the strict count, the first machine to alarm and no
 tie. The engine's rule ("root named", the graph rule, `top1_g120`): of the machines that alarm
 within 120 s of the first, those downstream of another candidate in the documents drop out
@@ -251,7 +262,8 @@ Switches for experiments (LOG-118).
 | `--limit` | `conformal` (default), `gumbel` | `gumbel`: the limit from a Gumbel fit to the day maxima |
 | `--clip` | none (default) | robust CUSUM: \|z\| is capped at this value before it enters a sum |
 | `--confirm` | 0 (default) | an alarm counts once it has lasted this many seconds |
-| `--cmd-delta` | off (default) | a PLC counter among a node's commands also enters as its change since the last sample, and a step down counts as a reset (LOG-128) |
+| `--cmd-delta` | on (default since 2026-10-28) | a PLC counter among a node's commands also enters as its change since the last sample, and a step down counts as a reset (LOG-128); the switch stays so that older command lines run |
+| `--no-cmd-delta` | off (default) | leave the counter changes out, as before 2026-10-28 |
 | `--spike` | off (default) | the spike rule: one sample whose largest \|z\| passes a limit per node from the calibration days alarms; outside the training range only the first sample counts (2026-10-28) |
 | `--no-feedback-rule` | off (default) | count feedback inputs for coverage, as before LOG-118 |
 | `--no-added-loop-inputs` | off (default) | leave out the loop outputs that `wiring.py` adds to a machine's own node |

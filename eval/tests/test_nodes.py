@@ -677,16 +677,18 @@ def _counter_runs(seed=31):
 
 
 def test_command_changes_carry_the_cycle():
-    """With cmd_delta a numeric command also enters as its change since the last sample: the counter's
-    pause marks the stroke, which its level and its filters do not resolve (2026-10-22)."""
+    """With cmd_delta (the default since 2026-10-28) a PLC counter among the commands also enters as its
+    change since the last sample: the counter's pause marks the stroke, which its level and its filters do
+    not resolve (2026-10-22). Without it (--no-cmd-delta) the node has no change input."""
     run = _counter_runs()
     doc = {"feeds": ["m.v"], "commands": ["m.count"], "measures": ["m.p"], "asset": "m", "loop_outputs": []}
     fit, cal = [(i, run(1200)) for i in range(3)], [(9, run(1200)), (10, run(1200))]
-    plain = N.Node("m", doc, "cusumk").train(fit, cal)
-    nd = N.Node("m", doc, "cusumk")
-    nd.cmd_delta = True
-    nd.train(fit, cal)
-    assert nd.delta_in == ["m.count"] and nd.model.inputs[-1] == "d:m.count"
+    plain = N.Node("m", doc, "cusumk")
+    plain.cmd_delta = False
+    plain.train(fit, cal)
+    assert plain.delta_in == [] and plain.model.inputs == ["m.v", "m.count"]
+    nd = N.Node("m", doc, "cusumk").train(fit, cal)
+    assert nd.cmd_delta and nd.delta_in == ["m.count"] and nd.model.inputs[-1] == "d:m.count"
     r = run(50)
     U, _ = nd.matrices(r)
     assert U[0, -1] == 0.0 and np.array_equal(U[1:, -1], np.diff(r["m.count"]))
@@ -696,6 +698,38 @@ def test_command_changes_carry_the_cycle():
     assert nd.coverage_columns(["m.v", "d:m.v"], 1) == [True, True, True, True]
     own = N.Node("m", dict(doc, loop_outputs=["m.count"]))
     assert own.coverage_columns(["m.count", "d:m.count"], 1) == [False, False, False, False]
+
+
+def test_cmd_delta_is_the_default_and_can_be_turned_off():
+    """The counter changes are on by default since 2026-10-28; --no-cmd-delta turns them off, and
+    --cmd-delta (older command lines) keeps them on."""
+    ap = N.parser()
+    assert ap.parse_args([]).cmd_delta and ap.parse_args(["--cmd-delta"]).cmd_delta
+    assert not ap.parse_args(["--no-cmd-delta"]).cmd_delta
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--cmd-delta", "--no-cmd-delta"])
+    assert N.Node("m", {"feeds": [], "commands": [], "measures": ["m.p"]}).cmd_delta
+
+
+def test_nodes_saved_before_the_default_keep_their_inputs():
+    """A node trained without the counter changes, saved as plain data, loads with the inputs it was
+    trained with and alarms as before, also as a state from before 2026-10-22 (no cmd_delta, delta_in or
+    counter_resets) and before the spike rule (no spike, h_spike)."""
+    import pickle
+    run = _counter_runs(5)
+    doc = {"feeds": ["m.v"], "commands": ["m.count"], "measures": ["m.p"], "asset": "m", "loop_outputs": []}
+    off = N.Node("m", doc, "cusumkv")
+    off.cmd_delta = False
+    off.train([(i, run(1200)) for i in range(3)], [(9, run(1200)), (10, run(1200))])
+    r = run(900)
+    r["m.p"] = r["m.p"] + np.where(np.arange(900) >= 500, 60.0, 0.0)
+    want = off.alarms(r)
+    assert want.any()
+    state = off.state()
+    old = {k: v for k, v in state.items() if k not in ("cmd_delta", "delta_in", "counter_resets", "spike", "h_spike")}
+    for s in (state, old):
+        nd = N.Node.from_state(pickle.loads(pickle.dumps(s)))
+        assert nd.matrices(r)[0].shape[1] == 2 and np.array_equal(nd.alarms(r), want)
 
 
 def test_counter_reset_enters_as_the_new_value():
