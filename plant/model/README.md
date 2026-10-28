@@ -996,3 +996,45 @@ Equivalence (2026-10-28, after the four parts): `plant/equivalence.py` against t
 every switch off, 1 h after a 30 min warm-up, seeds 40000 and 60001, a normal day and F9, F1 and F11:
 658,800 values per case, all equal at zero tolerance. With the switches on, the tests above show every
 existing tag the same.
+
+## PLC state tags of pallet-1 and cold-1 (task 25, 2026-10-28)
+
+`wiring.py` said: pallet-1 and cold-1 give no PLC state tag yet, and a model with no input can only
+predict a mean, so they are not nodes. The instrument sheet (ideas.md 17.3) gives them: pallet-1, a pallet
+transfer of the TS 5 class (8 sections of 0.37 kW), with PLC section states and an engine count; cold-1, a
+cold test stand on a non-regenerative drive, with the drive's speed and torque and a result per engine.
+
+| Tag | What |
+|---|---|
+| `pallet-1.state` | the line's PLC state: `move` (a transfer in this step), `idle`, `jam`. The same flag sets the drives' power (0.8 of rated moving, 0.3 idle, 0.9 against a jammed pallet), so the state explains the power |
+| `pallet-1.section_1` to `section_8` | each section: `move` (a pallet travels on it), `hold` (a pallet at its stop gate), `free`, `jam`. Layout (project choice): 1 loading after leak-1, 2 tight-1, 3 tight-2, 4 cold-1, 5 hot-1, 6 unloading, 7 and 8 the return of the empty pallets; the plant flow gives the positions |
+| `pallet-1.engines` | the engines unloaded at the end of the line |
+| `cold-1.state` | `idle`, `rig` (an engine on the stand, being rigged: the flow's handling time), `test` (turned at the test speed) |
+| `cold-1.speed_rpm` | the drive's speed: the test speed while testing, 0 otherwise |
+
+cold-1 already gave the drive torque (`torque_nm`), its power and the result per engine (`last_torque_nm`,
+`last_ok`, `tested`, `rejects`). Both are now nodes of the documents: pallet-1 (`psu-c.voltage_v` in,
+`pallet-1.state` as its PLC input, `pallet-1.power_kw` out) and cold-1 (`psu-c.voltage_v`, `cold-1.state`;
+`cold-1.power_kw`, `cold-1.torque_nm`, `cold-1.speed_rpm` out). The section states do not change the
+power of the model (its drives run together), so they are PLC tags, not node inputs. The instrument ranges
+(project choices where no rating is given): pallet-1 its 8 section drives, 2.96 kW; cold-1 twice its
+reference torque and the power of it.
+
+Consequences for the engine. The documents have two more nodes, so a campaign trains them, and the live
+engine service refuses a plant whose documents differ from the models of its pack: a pack made before
+2026-10-28 needs a new campaign. F16 (a tight engine at cold-1) is a control case of the registry (a
+product fault, no machine root), and cold-1's drive torque now shows it: an alarm of the cold-1 node in an
+F16 run counts as a false alarm in the score.
+
+Every existing tag keeps its values: the new states read flags the models already had (`pallet-1.moving`
+is the flag of the power), and the flow only marks the rigging. Verification (`test_part_plc_states.py`):
+the line state pairs with its power in every sample of an hour; a move shows on its sections and an idle
+line has none moving; a jam holds the line and its sections; the engine count; cold-1's state, speed and
+power together, an engine rigged before it is turned; the two nodes in the documents, their tags in the
+plant, the ranges.
+
+Equivalence (2026-10-28): `plant/equivalence.py --new-tags` against the `overhaul` branch, 1 h after a
+30 min warm-up, seeds 40000 and 60001, a normal day and F9, F1 and F11: 658,800 values per case, all equal
+at zero tolerance; 12 tags only in the new run (pallet-1's state, 8 sections and count, cold-1's state and
+speed). `--new-tags` (2026-10-28) lets a change add tags: every tag of the reference must still be there
+and equal.

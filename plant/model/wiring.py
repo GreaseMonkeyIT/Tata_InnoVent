@@ -17,6 +17,7 @@ Since 2026-10-18 a machine can have more than one node: "<asset>:loop" for its P
 (the measured variable in, the controller output out, `loops`) and "compressor-1:air" for the air
 header. A node's name before the colon is its asset.
 """
+import math
 
 
 def wiring(p):
@@ -65,8 +66,12 @@ def wiring(p):
         # the export limiter is a PLC function: its output, the braking resistor's share, decides how
         # much of the dyno power goes back to the supply (plant.py, the no-export rule)
         add("hot-1", ["hot-1.resistor_kw"], ["hot-1.state", "hot-1.load_pct"], ["hot-1.coolant_kw", "hot-1.power_kw"])
-        # pallet-1 and cold-1 give no PLC state tag yet (week 2, ideas.md 17.2): a model with no input
-        # can only predict a mean, so they are not nodes until then
+        # pallet-1 and cold-1 have their PLC states since 2026-10-28 (the instrument sheet, ideas.md 17.3):
+        # the transfer's line state (move, idle, jam: what sets its drives' power) and the test stand's
+        # state (idle, rig, test). pallet-1's 8 section states and its engine count are PLC tags too; the
+        # section states do not change the power of the model, so they are not the node's inputs
+        add("pallet-1", ["psu-c.voltage_v"], ["pallet-1.state"], ["pallet-1.power_kw"])
+        add("cold-1", ["psu-c.voltage_v"], ["cold-1.state"], ["cold-1.power_kw", "cold-1.torque_nm", "cold-1.speed_rpm"])
     # incomer-1: the grid and the transformers; the site load explains the bus voltages. The Class A
     # analyzer at the 11 kV metering (2026-10-22) adds the lowest voltage of its last interval (dips)
     add("incomer-1", ["incomer-1.p_kw", "incomer-1.q_kvar", "tr-1.load_pct", "tr-2.load_pct"], [],
@@ -151,6 +156,13 @@ def instrument_ranges(p):
             r[f"weld-{k}.weld_a"] = C.TPS500I.i_weld
             r[f"weld-{k}.power_kw"] = C.TPS500I.i_weld * (14.0 + 0.05 * C.TPS500I.i_weld) / C.TPS500I.eff / 1000.0
     if p.asm:
+        # pallet-1: its 8 section drives; cold-1: twice the reference torque of the test and its power
+        # (project choice: the drive's rating is not given)
+        t_ref = p.cold.reference_nm()
+        r.update({"pallet-1.power_kw": C.TS5_LINE.sections * C.TS5_LINE.section_kw,
+                  "cold-1.torque_nm": 2.0 * t_ref,
+                  "cold-1.power_kw": 2.0 * t_ref * p.cold.test_rpm * math.pi / 30.0 / p.cold.eta / 1000.0,
+                  "cold-1.speed_rpm": p.cold.test_rpm})
         r.update({"washer-1.power_kw": C.MECWASH.heater_kw + C.MECWASH.hp_pump_kw + C.MECWASH.lp_pump_kw + C.MECWASH.dryer_kw,
                   "hot-1.power_kw": C.QSL9_F85.rated_kw, "hot-1.coolant_kw": C.QSL9_F85.coolant_kw_rated,
                   "hot-1.resistor_kw": C.QSL9_F85.rated_kw})

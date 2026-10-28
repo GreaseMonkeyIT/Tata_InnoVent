@@ -519,6 +519,13 @@ class UtilitiesPlant:
         if self.asm:
             for m in (self.pallet, *self.tight, self.washer, self.leak, self.cold, self.hot):
                 out.update({f"{m.name}.{k}": v for k, v in m.tags().items()})
+            # pallet-1's PLC (2026-10-28): its 8 section states and the engines unloaded (with the flow)
+            if self.eflow:
+                out.update({f"pallet-1.section_{k}": s for k, s in enumerate(self.eflow.sections(), 1)})
+                out["pallet-1.engines"] = self.eflow.engines_done
+            else:
+                out.update({f"pallet-1.section_{k}": self.pallet.state.replace("idle", "free") for k in range(1, 9)})
+                out["pallet-1.engines"] = self.pallet.moved
         if self.press is not None:
             out.update({f"press-1.{k}": v for k, v in self.press.tags().items()})
         out["gas-1.header_kpa"] = self.gas.p_out

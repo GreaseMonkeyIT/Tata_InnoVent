@@ -11,7 +11,8 @@ compares every tag at every sample.
 Each case runs in its own process (the two copies share the package name `model`). The default
 tolerance is zero: every value equal, bit for bit (NaN equal to NaN). A change that is not exact
 (multi-rate stepping, a tolerance in a solver) gives --atol and --rtol, and the report states the
-largest differences per tag; such a change must also pass plant/verify_plant.py.
+largest differences per tag; such a change must also pass plant/verify_plant.py. A change that adds
+tags gives --new-tags: every tag of the reference must still be there and equal.
 
 The runs are those of eval/nodes.py: the site weather, the day of the year from the seed, a 30 min
 warm-up, one sample per second, a fault from the registry at a severity and onset from the seed.
@@ -89,7 +90,7 @@ def compare(ref, new, atol, rtol):
         B = json.load(fh)
     ra, rb = A["rows"], B["rows"]
     out = {"n": 0, "bad": 0, "first": {}, "maxdiff": {}, "tags_only_in_one": sorted(ra.keys() ^ rb.keys()),
-           "wall_ref": A["wall_s"], "wall_new": B["wall_s"]}
+           "ref_tags": set(ra), "wall_ref": A["wall_s"], "wall_new": B["wall_s"]}
     for t in sorted(ra.keys() & rb.keys()):
         xa, xb = ra[t], rb[t]
         if len(xa) != len(xb):
@@ -117,6 +118,9 @@ def main(argv=None):
     ap.add_argument("--faults", default=",F9", help="fault ids per case, empty for a normal day")
     ap.add_argument("--atol", type=float, default=0.0)
     ap.add_argument("--rtol", type=float, default=0.0)
+    ap.add_argument("--new-tags", action="store_true",
+                    help="allow tags that only the new run has (a change that adds tags and keeps the old ones): "
+                         "they are listed, and every tag both runs have must still be equal")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--tmp", default=os.path.join(HERE, "verify_results", "equivalence"))
     a = ap.parse_args(argv)
@@ -135,7 +139,8 @@ def main(argv=None):
         w_ref += r["wall_ref"]
         w_new += r["wall_new"]
         worst = sorted(r["maxdiff"].items(), key=lambda kv: -kv[1])[:5]
-        ok = r["bad"] == 0 and not r["tags_only_in_one"]
+        only_ref = [t for t in r["tags_only_in_one"] if t in r["ref_tags"]]
+        ok = r["bad"] == 0 and (not r["tags_only_in_one"] if not a.new_tags else not only_ref)
         ok_all &= ok
         print(f"seed {seed} {fid or 'normal'}: {r['n']} values, {r['bad']} outside tolerance, "
               f"sim {r['wall_ref']:.0f} s -> {r['wall_new']:.0f} s; {'PASS' if ok else 'FAIL'}")
@@ -144,7 +149,8 @@ def main(argv=None):
         for t, f in list(r["first"].items())[:8]:
             print(f"  first mismatch {t}: {f}")
         if r["tags_only_in_one"]:
-            print(f"  tags in one run only: {r['tags_only_in_one']}")
+            print(f"  tags in one run only: {r['tags_only_in_one']}" if not a.new_tags else
+                  f"  tags only in the new run: {len(r['tags_only_in_one']) - len(only_ref)}; only in the reference: {only_ref}")
     print(f"{'PASS' if ok_all else 'FAIL'}: tolerance atol {a.atol} rtol {a.rtol}; "
           f"plant time {w_ref:.0f} s -> {w_new:.0f} s ({w_ref / max(w_new, 1e-9):.2f} x)")
     return 0 if ok_all else 1

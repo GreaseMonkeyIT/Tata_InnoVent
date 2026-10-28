@@ -328,4 +328,28 @@ class EngineFlow(_Flow):
             m.begin()
             return
         self.waiting[s] = True
+        if s == "cold-1":
+            m.rigging = True                   # the PLC sees the engine on the stand while it is rigged
         self.after(h, lambda: (m.begin(), self.waiting.__setitem__(s, False)))
+
+    # The sections of pallet-1 (2026-10-28): 8 sections of a TS 5 loop (TS5_LINE). Project choice for the
+    # layout: 1 loading (after leak-1), 2 tight-1, 3 tight-2, 4 cold-1, 5 hot-1, 6 unloading, 7 and 8 the
+    # return of the empty pallets. A section's PLC state: move (a pallet travels on it), hold (a pallet
+    # waits at its stop gate), free, or jam (the drive slips under a stuck pallet).
+    SECTION_OF = {None: 1, "tight-1": 2, "tight-2": 3, "cold-1": 4, "hot-1": 5}
+
+    def sections(self):
+        """The state of each of pallet-1's 8 sections."""
+        p, out = self.p, ["free"] * 8
+        if self.on_pallet > 0:
+            out[0] = "hold"
+        for s, k in self.SECTION_OF.items():
+            if s is not None and self.at[s]:
+                out[k - 1] = "hold"
+        if self._moving is not None and (p.pallet.moving or p.pallet.jam):
+            src, dst = self._moving
+            a = self.SECTION_OF[src]
+            b = self.SECTION_OF[dst] if dst is not None else 8
+            for k in range(a, b + 1):
+                out[k - 1] = "jam" if p.pallet.jam else "move"
+        return out

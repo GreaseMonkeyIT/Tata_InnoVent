@@ -51,6 +51,9 @@ class PalletConveyor:
         # gated (plant flow): a pallet moves when the next station is free (`move()`), the TS 5 is a
         # free-flow (non-synchronous) transfer; ungated: one move per takt
         self.gated, self.move_left = False, 0.0
+        # the PLC's line state (2026-10-28): a transfer in this step, a jam, or idle: the same flag that
+        # sets the drives' power. The plant flow gives the section states (flow.EngineFlow.sections)
+        self.moving = False
 
     @property
     def move_s(self):
@@ -73,6 +76,7 @@ class PalletConveyor:
                     self.moved += 1
         else:
             moving = phase < move_s and not self.jam
+        self.moving = moving
         if self.jam:
             # the drives keep running against the friction clutches (the TS 5 roller clutch)
             self.p_el = 1000.0 * self.r.section_kw * self.r.sections * 0.9
@@ -81,8 +85,13 @@ class PalletConveyor:
         if not self.gated and not self.jam and phase < dt:
             self.moved += 1
 
+    @property
+    def state(self):
+        return "jam" if self.jam else ("move" if self.moving else "idle")
+
     def tags(self):
-        return {"power_kw": self.p_el / 1000.0, "engines_moved": self.moved, "jam": float(self.jam)}
+        return {"power_kw": self.p_el / 1000.0, "engines_moved": self.moved, "jam": float(self.jam),
+                "state": self.state}
 
 
 # ------------------------------------------------------------------------------- tightening --
@@ -378,8 +387,13 @@ class ColdTest:
         self.last_ok = True
         self.rejects = 0
         self.gated, self.test_t = False, -1.0      # gated: a test starts when an engine is loaded
+        # the PLC's state and the drive's speed (2026-10-28): idle, rig (an engine on the stand, being
+        # rigged: the plant flow sets `rigging`) or test (turned at the test speed)
+        self.rigging = False
+        self.state, self.speed_rpm = "idle", 0.0
 
     def begin(self):
+        self.rigging = False
         if self.test_t < 0.0:
             self.test_t = 0.0
 
@@ -410,7 +424,9 @@ class ColdTest:
             w = self.test_rpm * math.pi / 30.0
             self.p_el = self.torque * w / self.eta
             self._acc.append(self.torque)
+            self.state, self.speed_rpm = "test", self.test_rpm
         else:
+            self.state, self.speed_rpm = ("rig" if (self.rigging or not self.gated) else "idle"), 0.0
             self._testing = False
             if self._acc:
                 m = sum(self._acc) / len(self._acc)
@@ -426,7 +442,8 @@ class ColdTest:
 
     def tags(self):
         return {"torque_nm": self.torque, "power_kw": self.p_el / 1000.0, "last_torque_nm": self.last_torque_nm,
-                "last_ok": float(self.last_ok), "tested": len(self.results), "rejects": self.rejects}
+                "last_ok": float(self.last_ok), "tested": len(self.results), "rejects": self.rejects,
+                "state": self.state, "speed_rpm": self.speed_rpm}
 
 
 class HotTest:
