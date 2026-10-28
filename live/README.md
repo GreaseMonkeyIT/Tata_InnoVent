@@ -72,6 +72,7 @@ the documents, the lead and the fault magnitudes.
 |---|---|---|
 | `live/tests/test_plant_service.py`, 2 min warm-up | no fault, F6, F3, F11, the pair F6 + F13 | equal |
 | `live/tests/test_plant_service.py`, 2 min warm-up (2026-10-28) | F11 level 0, a dip of one cycle cleared by a sub-step | equal |
+| `--check 1`, the full 9 h warm-up, seed 60000 (10,800 samples, 82 tags), 2026-10-28, after the sub-step and the separate range plant | no fault, F11 level 0 at 600.05 s, the pair F6 + F11 level 0 | equal |
 | `--check 1`, the full 9 h warm-up, seed 60000 (10,800 samples) | no fault, F6, the pair F11 + F8 | equal |
 
 The per-sample instrument reader (`Instruments.stream` in `plant/model/instruments.py`) gives the
