@@ -143,7 +143,7 @@ class UtilitiesPlant:
     def __init__(self, machine_heat_w=0.0, air_demand_frac=0.5, t_amb_c=35.0, with_press=True,
                  cooling="tower", t_wb_c=None, with_fab=True, with_assembly=True,
                  with_building=True, t_day0_h=8.0, seed=0, material_spread=True, tr_fab=None, tr_asm=None,
-                 with_apfc=True, weather="fixed", flow=True, day_of_year=None):
+                 with_apfc=True, weather="fixed", flow=True, day_of_year=None, devices=None):
         mv = Bus("mv-11kv", 11000.0)
         self.grid = Grid("incomer-1", mv, C.GRID_11KV)
         self.net = Network(self.grid)
@@ -320,6 +320,12 @@ class UtilitiesPlant:
                          "F14": self.eflow.H_HOT if self.eflow else None}
         self._mv_v = collections.deque()       # (t, 11 kV bus voltage) of the analyzer's last interval
         self.t = 0.0
+        # the devices in time (devices.py, 2026-10-28): clocks, links, PLC scans and the SCADA's view.
+        # Off by default; on, they only read the plant, so its tags stay the same
+        self.devices = None
+        if devices is not None:
+            from .devices import DeviceConfig, DeviceLayer
+            self.devices = DeviceLayer(self, DeviceConfig() if devices is True else devices)
 
     def t_day_h(self):
         return (self.t_day0_h + self.t / 3600.0) % 24.0
@@ -440,6 +446,8 @@ class UtilitiesPlant:
             self.hot.step(dt)
         self.loop.step(dt)
         self.t += dt
+        if self.devices is not None:
+            self.devices.step(dt)
 
     def check(self):
         out = self.net.check() + self.comp.check() + self.loop.check() + self.loop.chiller.check()

@@ -768,3 +768,109 @@ lowest voltage as a measure (`wiring.py`).
 
 Verification (`test_part_class_a.py`): a dip of one cycle between two polls shows in the next poll of
 `v_min_v` and not in `voltage_v`, and `v_min_v` never exceeds `voltage_v`.
+
+## Device time and links (`timing.py`, `devices.py`, 2026-10-28, task 23)
+
+A real plant has no single clock. Each device that stamps data keeps time on its own quartz crystal, a
+sync client pulls it back to the reference, and data and sync travel over links that delay, lose and
+fail. `timing.py` has the models; `devices.py` puts them on the plant's devices. Off by default:
+`UtilitiesPlant(devices=None)` builds nothing, and the plant runs the code it ran before.
+`UtilitiesPlant(devices=DeviceConfig(...))` (or `devices=True`) adds a `DeviceLayer` that steps after
+each plant step. It only reads the plant's tags and draws from its own random streams, so every plant tag
+stays the same, value for value (`test_device_layer_leaves_the_plant_as_it_was`).
+
+| Item | Value | Source |
+|---|---|---|
+| Quartz crystal at 25 °C | ±20 ppm, about 1.7 s per day | Silicon Labs, RTC drift management; Schneider Electric FAQ FA12099 (a PLC's quartz) |
+| Crystal over 0 to 70 °C | -101 to +20 ppm (-8.7 to +1.7 s per day); as a parabola about 25 °C, -0.04 ppm/K² | Schneider Electric FAQ FA12099 (-101 ppm at 70 °C less the -20 ppm tolerance, over 45 K squared) |
+| NTP | millisecond range, sub-millisecond on a LAN at best; poll 64 s (minpoll 6) to 1024 s (maxpoll 10) | OMICRON (Baumgartner, Riesch, Rudigier, IMEKO TC4 2014); Wikipedia "Network Time Protocol" (RFC 5905); ntp.conf defaults quoted by Red Hat |
+| PTP, power profile IEEE C37.238 | 1 µs across up to 16 switches; sync, announce and peer delay once a second | Trystar / Cyber Sciences PTP presentation; Nokia documentation of C37.238-2017; research check of 2026-10-15 (under 100 µs with hardware stamps) |
+| IRIG-B | many devices reach 1 ms | OMICRON paper on IEEE 1588 (research check of 2026-10-15) |
+| SER | 1 ms resolution; PTP or IRIG-B sync | Cyber Sciences CyTime brochure and press release PR-SER-09 (Trystar) |
+| Modbus RTU | 11 bits per character; 3.5 characters between frames: 2.0 ms at 19,200 baud | Modbus over Serial Line v1.02, as summarized by Industrial Monitor Direct |
+| PROFINET RT | send clock 1 ms × a reduction ratio; a drive recommended at 4 ms | ABB PLC help (PROFINET IO device); Nanotec PROFINET drive manual |
+| OPC UA subscription | publishing 1000 ms, sampling 500 ms (half of it), deadband none, percent or absolute, keep-alive after 5 intervals | Kepware OPC UA Client driver help (PTC) |
+| Historian | on change past a deadband, with a maximum time between records | Ignition tag history documentation (Inductive Automation) |
+| PLC scan | 8 to 12 ms for a modest program; a scan of 7 ms grew to 12 to 18 ms under online polling | research check of 2026-10-15; Industrial Monitor Direct (a secondary source) |
+| PLC watchdog | maximum cycle time 150 ms, the CPU stops past it | the S7-1500 default as Industrial Monitor Direct gives it (secondary; to confirm in the Siemens manual) |
+| Class A analyzer | basic interval of 10 cycles (200 ms at 50 Hz), aligned to the time reference | IEC 61000-4-30 |
+
+Project choices: the link delays, jitters and losses of `timing.LINKS` (a meter answers in 20 ms; the
+plant Ethernet 0.5 ms and 0.1 ms of jitter; no loss unless set), the meters' register refresh of 1 s
+(the research check calls it a project choice), the device temperatures (the shop air for the PLCs
+and meters in the bays, 25 °C in the air-conditioned electrical and control rooms), a hand-set start
+offset of up to ±1 s for a clock with no sync, a sync's residual as a normal draw, the uniform scan
+time, the spike rate.
+
+The device rule (`devices.device_of`, one rule for every tag): `incomer-1.*` is read by the Class A
+analyzer (`incomer-1-pqa`: Ethernet, PTP, stamped on its own clock at its last 200 ms interval); an
+asset's current, voltage, power, kVAr and power factor by its feeder meter (`<asset>-pmd`: Modbus RTU,
+no sync, stamped by the SCADA at the poll); every other tag by the asset's PLC (`<asset>-plc`: Ethernet,
+NTP, stamped by the SCADA at the poll, its image written by its scans). The SER (`ser-1`, PTP) logs every
+change of the documents' state commands to 1 ms on its own clock; it keeps its log through an outage. The
+SCADA (NTP) polls every device every second and keeps, per tag, the value, its stamp and a quality:
+`good`, `bad` (no answer: the last good value held), or `uncertain` (a PLC whose watchdog stopped it).
+
+`DeviceConfig` switches each part: `clocks` (off: every device on true time), `links` (off: instant and
+lossless), `scan` (off: a PLC answers with the plant's value of the last step); `outages` by device or by
+link kind (`{"ethernet": [(300, 360)]}` stops the PLCs, the analyzer, the SER's sync and the SCADA's sync,
+while the meters on RS-485 keep answering), `spike_p` for scans under communication load.
+
+The plant steps every 0.1 s, so the layer sees it at the end of each step: a scan or a meter refresh
+between two steps reads the state of the step before, and the SER stamps a change at the step in which
+the plant made it (the plant's own resolution).
+
+The PLC scan. Today every PLC function of the plant (the compressor's load and unload, the cooler valves,
+the tower fans, the washer heater, the burners, the export limiter) runs inside its machine model, once
+per plant step of 0.1 s. A modelled scan of 8 to 12 ms cannot run that logic without taking it out of the
+machine models into the separate PLC layer (`plc/`, `vplc/`, outside `plant/`). So the scan stops at a
+model with tests: `timing.ScanCycle` reads its inputs once at the start of each scan (a pulse shorter
+than a scan can fall between two reads), writes its outputs at the end (an output follows an input
+within two scans), grows under communication load and stops the CPU past its watchdog. In the device
+layer it sets when each PLC's image was written and gives the readings of a stopped CPU quality
+`uncertain`.
+
+The tc netem setup of the forge containers (the links of the real network) comes later; it is not built
+here.
+
+Verification (`test_part_timing.py`, 10 checks): 20 ppm is 1.728 s a day; 200 crystals stay inside -101
+to +20 ppm from 0 to 70 °C, a crystal at 70 °C drifts 7 s a day from the curve alone; NTP holds a clock
+inside 6 ms, PTP inside 30 µs, IRIG-B inside 5 ms, with no sync it drifts 0.72 s in 10 h, and an outage of
+its link lets it drift until the link is back; the Modbus wire time and gap, the jitter's mean, the loss
+share, nothing through an outage; the scan time, the input image read once per scan, an output within two
+scans, the spikes and the watchdog stop; on the plant, every tag the same with the layer on, the stamps,
+the qualities through an Ethernet outage, and the SER log; with clocks and links off, every stamp is the
+true poll time.
+
+Equivalence (2026-10-28): `plant/equivalence.py` against the `overhaul` branch, the layer off, 1 h after a
+30 min warm-up, seeds 40000 and 60001, a normal day and F9, F1 and F11: 658,800 values per case, all
+equal at zero tolerance.
+
+### Cross-check of the motor with OpenModelica (`plant/crosscheck/`)
+
+The reference is the induction machine of the Modelica Standard Library 4.0.0
+(`Modelica.Electrical.Machines.BasicMachines.InductionMachines.IM_SquirrelCage`): a dynamic space-phasor
+model with the electrical transients. The library machine has one cage, motor.py two in parallel. Two
+library cage components on the same rotor space phasor are that circuit (their currents add at the same
+rotor voltage), so `IM_DoubleCage` extends the library machine with a second cage. Known differences:
+the library has no leakage saturation (the check sets motor.py's `sat`, which acts above 1.5 × rated
+current, to 0) and puts its core-loss conductance before the stator leakage, motor.py after it.
+
+`motor_om.py` writes the model (`VisrMotorCheck.mo`, generated for the ABB M3BP 180MLB 4, 22 kW, per
+phase of a delta connection) and an OpenModelica script: the steady state at 15 slips from standstill to
+a quarter of the rated slip, with and without the losses (line current, P, Q, and the air-gap or shaft
+torque; tolerance 0.5 % without the losses, 2 % with them), and a direct-on-line start against the rated
+torque of a quadratic load (the time to 90 % of the rated speed within 10 %, the final speed within
+0.5 %).
+
+Status (2026-10-28): OpenModelica could not be installed in the cloud session. Its hosts are not on the
+allowed list: `build.openmodelica.org` (the apt repository) and `libraries.openmodelica.org` (the
+package index that installs the Modelica Standard Library). No Modelica compiler has checked the
+generated model yet. With those hosts allowed, or on a machine with OpenModelica:
+
+    python plant/crosscheck/motor_om.py --out /tmp/om          # writes, runs omc, compares; exit 0 on PASS
+
+Without omc the script writes the model, the script and motor.py's reference values and exits with code
+2. `test_crosscheck_om.py` checks the parameter mapping, the reference's rated point (41.5 A, 141.8 N m
+at the rated slip) and that the committed model is the generated one; it runs the comparison where omc is
+installed.
