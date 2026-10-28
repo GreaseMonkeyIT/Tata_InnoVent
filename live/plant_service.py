@@ -87,14 +87,7 @@ class LivePlant:
         self.n = 0                                        # samples taken
         self.samples = deque(maxlen=max(1, int(keep_s / N.SAMPLE_S)))    # (i, plant s, values)
         self.faults = []                                  # the fault log, in the order given
-        self._ends = None
-        # The batch run applies the range rule to the plant that it runs, before the first step
-        # (`N.simulate` for a fault that is not binary, `N.simulate_multi` always). The rule moves the
-        # cooling pump's operating point, which gives a small start transient that dies out in the
-        # warm-up (LOG-125). Faults planned at the start do the same here, so the run equals the batch
-        # run. A fault added later takes the rule from a separate plant.
-        if len(faults) > 1 or (faults and faults[0][0] not in FR.BINARY):
-            self._ends = RANGES.ends(self.p)
+        self._ends = None                                 # the range rule's table, from a separate plant (add_fault)
         for f in faults:
             self.add_fault(*f)
         self.floor = FloorRecorder(self.p, int(round(self.rec_from / self.dt))) if floor else None
@@ -103,7 +96,8 @@ class LivePlant:
     def add_fault(self, fid, severity, onset_s=None):
         """Plan fault `fid` at `severity` (0 to 1), `onset_s` after the end of the warm-up. None: now,
         or the end of the warm-up while the plant warms up. The magnitude and the duration follow
-        `N.simulate`: one range rule for every fault (fault_ranges.py)."""
+        `N.simulate`: one range rule for every fault (fault_ranges.py), on a separate plant of the seed,
+        so the running plant is the normal run of its seed until the onset."""
         if fid not in FR.FAULTS:
             raise ValueError(f"unknown fault {fid!r}: the faults are {', '.join(FR.FAULTS)}")
         if isinstance(severity, bool) or not isinstance(severity, (int, float)) or not 0.0 <= severity <= 1.0:

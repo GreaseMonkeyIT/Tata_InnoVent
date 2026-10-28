@@ -78,12 +78,14 @@ The per-sample instrument reader (`Instruments.stream` in `plant/model/instrumen
 readings of `read_column` bit for bit. It shares the instrument rule with `read_column`, and it draws
 each instrument's noise from the same stream in blocks.
 
-One batch detail is copied on purpose. `simulate` applies the range rule to the plant that it runs,
-before the first step, and the rule moves the cooling pump's operating point. This gives a small
-start transient: up to 2.5 kW on the incomer in the first seconds, under 1e-9 kW after 5 min, and at
-most 1e-10 of a value after the 9 h warm-up, far under the instruments' resolution. A fault
-that is planned at the start does the same here, so the run equals the batch run. A fault that the
-operator adds during a run takes the rule from a separate plant and leaves the running plant alone.
+The range rule runs on a separate plant of the seed (`N.new_plant(seed)`), in the batch and here, for
+a fault planned at the start and for a fault that the operator adds during a run (2026-10-28). So the
+running plant is the normal run of its seed until the first onset, value for value
+(`test_planned_faults_leave_the_plant_before_their_onset`). Before, `simulate` applied the rule to the
+plant that it ran, and the rule moved the cooling pump's operating point: a start transient of up to
+2.5 kW on the incomer in the first seconds and at most 1e-10 of a value after the 9 h warm-up
+(LOG-125). The service copied it for a fault planned at the start, to equal the batch run. The copy is
+gone.
 
 ## The streaming engine (`engine.py`)
 
@@ -247,7 +249,9 @@ of the two services.
 python -m pytest live/tests -q
 ```
 
-- `test_plant_service.py`: the equivalence of the plant service above, a fault added during the run
+- `test_plant_service.py`: the equivalence of the plant service above (a dip of one cycle cleared by a
+  sub-step among the faults), faults planned at the start (the plant is the normal run of its seed
+  until the onset), a fault added during the run
   (the plant before the onset stays as it was, clear and cancel work, bad requests fail), the HTTP
   service on a free port at 200 times real time (the served readings equal an offline run), the floor
   recording (the readings stay the same, the appended segments give the whole recording), and the

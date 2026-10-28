@@ -495,6 +495,25 @@ def test_simulate_multi_applies_both_faults(monkeypatch):
     assert len(raw["press-1.oil_c"]) == 30 + 72
 
 
+@pytest.mark.parametrize("fault", [("F6", 0.5, 60.0), ("F11", 0.9, 60.05), ("F3", 0.7, 60.0),
+                                   (("F8", 0.5, 60.0), ("F13", 0.5, 90.0))])
+def test_fault_run_equals_the_normal_run_before_its_onset(monkeypatch, fault):
+    """Before its onset a fault run is the normal run of its seed, value for value: the range rule runs
+    on a separate plant (2026-10-28). On the plant that runs, it moved the cooling pump's operating point
+    and gave a start transient (LOG-125). A short run: 2 min warm-up, the onset 60 s after it."""
+    monkeypatch.setattr(N, "WARMUP_S", 120.0)
+    monkeypatch.setattr(N, "_VERSION", [])
+    normal, _ = N.simulate(40000, 0.05)
+    multi = isinstance(fault[0], tuple)
+    raw, info = N.simulate_multi(40000, 0.05, fault) if multi else N.simulate(40000, 0.05, fault)
+    before = info["lead"] + 60                                    # the samples before the first onset
+    assert set(raw) == set(normal)
+    for t, col in normal.items():
+        assert [repr(v) for v in raw[t][:before]] == [repr(v) for v in col[:before]], t
+    if fault[0] != "F3":                                          # (a jam acts only when the conveyor moves)
+        assert any(raw[t][before + 30:] != normal[t][before + 30:] for t in normal)    # and the fault acts
+
+
 @pytest.mark.parametrize("multi", [False, True])
 def test_one_cycle_dip_shows_for_any_onset(monkeypatch, multi):
     """A level-0 F11 dip lasts one cycle (20 ms, IEC 61000-4-11 class 3). It shows in incomer-1.v_min_v,

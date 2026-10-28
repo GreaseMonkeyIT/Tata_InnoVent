@@ -42,6 +42,18 @@ def test_live_plant_equals_record(short, faults):
     assert [f["state"] for f in r["plant"].faults] == ["cleared" if f[0] == "F11" else "on" for f in faults]
 
 
+def test_planned_faults_leave_the_plant_before_their_onset(short):
+    """Faults planned at the start leave the plant as the normal run of the seed until the first onset,
+    value for value: the range rule runs on a separate plant, as in the batch run (2026-10-28)."""
+    a = S.LivePlant(40000)
+    b = S.LivePlant(40000, [("F6", 0.5, 60.0), ("F11", 0.9, 90.05)])
+    while b.p.t < N.WARMUP_S + 60.0:
+        a.step()
+        b.step()
+    assert b.n > 150 and [repr(s) for s in b.samples] == [repr(s) for s in a.samples]
+    assert [f["state"] for f in b.faults] == ["planned", "planned"]
+
+
 def test_fault_added_during_the_run(short):
     """A fault added while the plant runs starts at its onset and leaves the plant before it as it was
     (the range rule runs on a separate plant). The operator can clear an active fault and cancel a

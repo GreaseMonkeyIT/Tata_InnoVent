@@ -196,6 +196,13 @@ runs. The other levels last 10, 25 and 250 cycles, whole steps, and their runs a
 value for value. `simulate`, `simulate_multi` and the live plant (`live/plant_service.py`) step the
 faults with the same function.
 
+The range rule (`fault_ranges.ends`) runs on a separate plant of the seed (`new_plant(seed)`, since
+2026-10-28), so a fault run is the normal run of its seed until the onset, value for value. Before,
+`simulate` ran it on the plant of the run for every fault that is not binary, and `simulate_multi`
+always. It moved the cooling pump's operating point and gave a start transient that the normal run of
+the same seed has not (at most 1e-10 of a value after the warm-up, LOG-125). The magnitudes are the
+same: the separate plant is the plant of the run before its first step.
+
 The plant takes a short step (checked 2026-10-28). Its integrators scale with the step (the motor speed
 in adaptive substeps, backward Euler for the heat, exact exponentials for the relays), its events and
 timers count seconds, a cycle event (a punch hit, a conveyor move) is found as a crossing in the last

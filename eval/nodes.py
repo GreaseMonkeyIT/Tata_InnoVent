@@ -320,7 +320,9 @@ def simulate(seed, hours, fault=None):
     """The plant part of a run: ({tag: list of exact values}, info), every tag sampled every SAMPLE_S
     after the warm-up. fault: (fid, severity, onset_s after the warm-up) or None. The magnitude comes
     from the registry's range rule (fault_ranges.py); binary faults are on at the onset. A transient
-    fault acts for its duration (`fault_step`)."""
+    fault acts for its duration (`fault_step`). The range rule runs on a separate plant of the seed: on
+    the plant that runs, it moved the cooling pump's operating point and gave a start transient that the
+    normal run of the seed has not (LOG-125; 2026-10-28)."""
     p = new_plant(seed)
     raw = {}
     every = int(round(SAMPLE_S / DT))
@@ -329,7 +331,7 @@ def simulate(seed, hours, fault=None):
     plan = []
     if fault:
         fid, sev, onset = fault
-        plan.append(fault_plan(fid, sev, onset, None if fid in FR.BINARY else RANGES.ends(p)))
+        plan.append(fault_plan(fid, sev, onset, None if fid in FR.BINARY else RANGES.ends(new_plant(seed))))
         info.update({k: plan[0][k] for k in FAULT_INFO})
     m = 0                                       # samples taken
     lead = 0                                    # of them before the warm-up ends
@@ -352,12 +354,12 @@ def simulate_multi(seed, hours, faults):
     """`simulate` with several faults at once (a fault pair, ideas.md 11.9): faults is a tuple of
     (fid, severity, onset_s after the warm-up). Each fault is injected at its own onset and, for a
     transient fault, cleared after its duration (`fault_step`). info lists every fault; "onset_s" is the
-    first."""
+    first. The range rule runs on a separate plant, as in `simulate`."""
     p = new_plant(seed)
     raw = {}
     every = int(round(SAMPLE_S / DT))
     n = int((hours * 3600.0 + WARMUP_S) / DT)
-    ends = RANGES.ends(p)
+    ends = RANGES.ends(new_plant(seed)) if any(f[0] not in FR.BINARY for f in faults) else None
     plan = [fault_plan(fid, sev, onset, ends) for fid, sev, onset in faults]
     info = {"seed": seed, "fid": "+".join(f["fid"] for f in plan), "onset_s": min(f["onset_s"] for f in plan),
             "root": None, "control": False}
