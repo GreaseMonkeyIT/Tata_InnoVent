@@ -1059,7 +1059,12 @@ flowmeters. `Meters` reads the plant each step and gives new tags only; every ex
 
 The registers count from the start of the plant run, warm-up included (project choice). No frame verdict
 and no reject path. The tags are not in the documents (wiring.py), so the engine does not read them.
-The meters cost about 10 % of the plant's step time (an hour of plant in 7.3 s against 6.6 s).
+The meters cost 10 to 16 % of the plant's step time (an hour of plant in 7.3 s against 6.6 s alone;
+94 s against 81 s for the 8 runs of the equivalence gate).
+
+Equivalence (2026-10-28): `plant/equivalence.py --new-tags` against the `overhaul` branch, 1 h after a
+30 min warm-up, seeds 40000 and 60001, a normal day and F9, F1 and F11: 658,800 values per case, all equal
+at zero tolerance; 83 tags only in the new run (the 12 of task 25 and 71 of the meters).
 
 Verification (`test_part_meters.py`): over 20 min the loads' registers, less hot-1's export, plus the
 network losses equal the incomer's register to 1e-6, the site never exports and the registers only count
@@ -1079,4 +1084,4 @@ view). So every task here changes the plant's cache key, and every campaign simu
 | 23, device time and links | the same: the layer is off by default and only reads | changes (timing.py, devices.py, plant.py) | the same values |
 | 24, the instrument layer | the same: every part is off by default | changes (unbalance.py, bursts.py, plant.py, assembly.py, fab_stations.py, motor.py) | new key (instruments.py), the same values |
 | 25, pallet-1 and cold-1 | 12 new tags; the others the same | changes (assembly.py, flow.py, plant.py) | new key (wiring.py): two more nodes and their tags |
-| 28, energy and flows | about 80 new tags; the others the same | changes (meters.py, plant.py, assembly.py) | the same: the new tags are not in the documents |
+| 28, energy and flows | 71 new tags; the others the same | changes (meters.py, plant.py, assembly.py) | the same: the new tags are not in the documents |
