@@ -150,6 +150,32 @@ work on the standardized residuals z (the residual divided by its spread for the
   asset's own control loops, such as an on/off valve): their residual is a switching error.
 - `both`: the gate or plain CUSUM (the combined Shewhart-CUSUM scheme).
 
+The spike rule (`--spike`, off by default, 2026-10-28), with any rule. The CUSUM cannot see an event
+that lasts one poll: its limit is the largest sum of the calibration days, which a slow bias builds
+over hours. In the last campaign a dip of 0.2 s (F11 level 0.4) showed in incomer-1.v_min_v in one
+poll, with z about -598 (seed 51006), and the node's sums reached 156 (seed 51006, a sample outside the
+training range) and 598 (seed 51005, covered) against its limit of 2,266.
+The spike rule is the Shewhart part of the combined Shewhart-CUSUM scheme (Lucas, 1982): a sample
+alarms when its largest |z| over the node's outputs passes `h_spike`. The limit is per node, from the
+calibration days by the rule of the CUSUM limit (`cusum_limit` on the day maxima of that statistic:
+the largest by default, `--alpha` and `--limit` as for h), never below 3 (the Shewhart limit). It reads
+z before `--clip`, and `--confirm` does not hold it back. An alarm of the rule lasts its sample, and its
+change point is its sample. Nothing in it is set for a node, an output or a fault.
+
+Coverage and the spike rule: a sample outside the training range counts for the rule when the sample
+before it was covered (`spike_judged`: the first second outside). An event of one poll that reaches
+the node's inputs in the same poll takes them out of range in that second, and the coverage rule hid
+exactly that sample (seed 51006). A node that stays outside its range keeps its "don't know" after the
+first second, so a long excursion (a hot day, a fault upstream) gives the rule one sample, not hours.
+The limit is taken over the same samples of the calibration days, so it holds their first seconds
+outside the range too. The cost: a victim whose inputs leave their range in one second can pass the
+limit in that second, by an extrapolation error larger than any of the calibration days. The root
+rules then weigh it as any victim alarm.
+
+To measure it, a campaign with `--spike` against the same campaign without it, on the tuning split,
+then the validation split (`--splits tuning`, `--splits validation`). The report's node rows give
+`h_spike` (set for every campaign, used only with `--spike`), and its `meta` records `spike`.
+
 Limits: each node takes h from its calibration days. The default (`--alpha` not set) is the largest
 calibration-day maximum, so with 96 spread days a node passes it on about 1 normal day in 97. With
 `--alpha`, the split-conformal quantile of the day maxima at that alpha, and with `--limit gumbel` a
@@ -226,6 +252,7 @@ Switches for experiments (LOG-118).
 | `--clip` | none (default) | robust CUSUM: \|z\| is capped at this value before it enters a sum |
 | `--confirm` | 0 (default) | an alarm counts once it has lasted this many seconds |
 | `--cmd-delta` | off (default) | a PLC counter among a node's commands also enters as its change since the last sample, and a step down counts as a reset (LOG-128) |
+| `--spike` | off (default) | the spike rule: one sample whose largest \|z\| passes a limit per node from the calibration days alarms; outside the training range only the first sample counts (2026-10-28) |
 | `--no-feedback-rule` | off (default) | count feedback inputs for coverage, as before LOG-118 |
 | `--no-added-loop-inputs` | off (default) | leave out the loop outputs that `wiring.py` adds to a machine's own node |
 | `VISR_FACTORY` (environment) | 0 (default) | another factory: other calibration biases of the instruments |

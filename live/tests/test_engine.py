@@ -186,6 +186,37 @@ def test_stream_node_with_command_changes():
     assert np.array_equal(np.array(got), alarm) and alarm[900 - r.lead:].any()
 
 
+@pytest.mark.parametrize("rule,clip,confirm_s", [("cusumkv", None, 0.0), ("cusumk", 4.0, 5.0)])
+def test_stream_node_with_the_spike_rule(rule, clip, confirm_s):
+    """A node trained with the spike rule (eval/nodes.py --spike): the stream alarms as the batch does on
+    one far sample in range, one in the first second outside the training range and one inside the
+    excursion (not judged), with the same change points, also with a clip (the rule reads z before it)
+    and a confirmation time (which does not hold a spike back)."""
+    from eval.tests.test_nodes import SPIKE_DOC, _swing_runs
+    run = _swing_runs(43)
+    nd = N.Node("a", SPIKE_DOC, rule)
+    nd.spike = True
+    nd.train([(i, run(1500)) for i in range(3)], [(9 + i, run(1500)) for i in range(3)])
+    nd.clip, nd.confirm_s = clip, confirm_s
+    r = run(2400, swing=0.0, out_at=1500)
+    for at in (900, 1500, 1505):
+        r["a.y"][at] += 200.0 * nd.sd_all[0]
+    alarm = nd.alarms(r)
+    assert alarm[900 - r.lead] and alarm[1500 - r.lead] and not alarm[1505 - r.lead]
+    sn = E.StreamNode(nd)
+    sn.reset(r.lead)
+    got, cps = [], {}
+    for s in E.samples_of(r):
+        a = sn.step(s)
+        if a is None:
+            continue
+        got.append(a)
+        if a and (len(got) < 2 or not got[-2]):
+            cps[sn.t] = sn.change_point()
+    assert np.array_equal(np.array(got), alarm)
+    assert cps and all(c == N.change_point(nd._stats, t) for t, c in cps.items())
+
+
 def test_rules_without_a_stream_are_refused(trained):
     nodes, _ = trained
     nd = N.Node.from_state(nodes["cusumk"].state())

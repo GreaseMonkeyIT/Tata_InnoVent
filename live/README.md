@@ -97,6 +97,10 @@ latches and the change points. After the residual, every step is the batch arith
 order. The residual equals the batch residual to rounding only (the batch filters run as a block scan,
 and the batch model multiplies whole matrices): the largest difference on the V30 runs is 2e-9 of a
 residual spread. The rules `cusum`, `cusumk` and `cusumkv` (the default) stream. The gate rule does not.
+A node trained with the spike rule (`eval/nodes.py --spike`, 2026-10-28) streams it too: the largest |z|
+of the sample before the clip against the node's `h_spike`, on a covered sample or the first sample
+outside the training range, with its change point at its sample. A pack from a campaign without
+`--spike`, or from before the rule, has no spike rule.
 
 The batch scores a run from the true onset of its fault. The live engine does not know the onset, so
 it works with incidents. Each machine (a machine alarms when one of its nodes does) that starts to
@@ -258,8 +262,9 @@ python -m pytest live/tests -q
   recording (the readings stay the same, the appended segments give the whole recording), and the
   refusal of a test-split seed.
 - `test_engine.py`: a trained node streamed against `Node.alarms` (both CUSUM rules, a confirmation
-  time, a gap in a meter, a text command and a text output, and with command changes across a
-  counter reset), with the same
+  time, a gap in a meter, a text command and a text output, with command changes across a
+  counter reset, and with the spike rule on a far sample in range, in the first second outside the
+  range and inside the excursion, with a clip and a confirmation time), with the same
   change points; the incidents with scripted alarms (a candidate, a victim, new roots, the closing
   times, the same-root merge, the cycle victim); the kept samples against the run, also past the cap;
   the refusal of the gate rule.

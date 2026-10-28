@@ -4,10 +4,10 @@
 The engine of eval/nodes.py, one sample at a time. Each node (`StreamNode`) takes the trained node of
 a campaign and keeps the state that `Node.alarms` builds over a whole run: the filters of its inputs,
 the standardized residual of its model, the two-sided CUSUM sums on the mean, the CUSUM on the
-variance, the alarm latches and the change points. After the residual every step is the batch
-arithmetic in the same order, so the sums equal the batch sums. The residual itself equals the batch
-residual to rounding only (about 1e-14 of the signal): the batch filters run as a block scan and the
-model multiplies whole matrices.
+variance, the spike rule (a node trained with --spike), the alarm latches and the change points.
+After the residual every step is the batch arithmetic in the same order, so the sums equal the batch
+sums. The residual itself equals the batch residual to rounding only (about 1e-14 of the signal): the
+batch filters run as a block scan and the model multiplies whole matrices.
 
 The batch scores a run from the true onset of its fault. The live engine does not know the onset, so
 it opens an incident at an alarm when no incident is open. When the incident is POST_S old, it names
@@ -59,6 +59,7 @@ class StreamNode:
         self.a = np.exp(-N.SAMPLE_S / np.asarray(nd.model.taus, float))     # as twin/node_model.py FilterBank
         self.n_out = len(nd.out_names)
         self.var = nd.rule == "cusumkv"
+        self.spike = bool(getattr(nd, "spike", False))          # the spike rule (eval/nodes.py; older nodes have none)
         self.w = int(N.VAR_WIN_S / N.SAMPLE_S)
         self.reset(0)
 
@@ -74,12 +75,14 @@ class StreamNode:
         self.on_m = self.on_v = False
         self.run_len = 0
         self.prev_bin, self.last_change = None, None
-        # per sum: the last sample at or below 0, and whether it passed its limit since then (change_point)
-        self.lz = [np.full(2 * n, -1), np.full(n, -1)]
-        self.up = [np.zeros(2 * n, bool), np.zeros(n, bool)]
-        self.above = [np.zeros(2 * n, bool), np.zeros(n, bool)]
+        # per sum: the last sample at or below 0, and whether it passed its limit since then (change_point);
+        # the CUSUM on the mean, the CUSUM on the variance, the spike statistic
+        self.lz = [np.full(2 * n, -1), np.full(n, -1), np.full(1, -1)]
+        self.up = [np.zeros(2 * n, bool), np.zeros(n, bool), np.zeros(1, bool)]
+        self.above = [np.zeros(2 * n, bool), np.zeros(n, bool), np.zeros(1, bool)]
         self.crossings = []                               # (sample, change point) of the sums that crossed at this sample
-        self.s_m, self.s_v = np.zeros(2 * n), np.zeros(n)
+        self.s_m, self.s_v, self.s_s = np.zeros(2 * n), np.zeros(n), np.zeros(1)
+        self.prev_cover = False                           # the coverage of the last scored sample (the spike rule)
         self.alarm = self.cover = False
         self.z = None
         self.prev = {}                                    # the last value of each command that enters as a change
@@ -124,9 +127,8 @@ class StreamNode:
         if nd.state_cmd is not None:
             v = s.get(nd.state_cmd)
             g = nd.cats[nd.state_cmd].index(v) if v in nd.cats[nd.state_cmd] else -1
-        z = res / nd.sd.get(int(g), nd.sd_all)
-        if nd.clip:
-            z = np.clip(z, -nd.clip, nd.clip)
+        zr = res / nd.sd.get(int(g), nd.sd_all)
+        z = np.clip(zr, -nd.clip, nd.clip) if nd.clip else zr
         self.z, self.cover = z, cov
         # the CUSUM on the mean (eval/nodes.py cusum): cumulative sum less its running minimum
         ok = cov & np.isfinite(z)
@@ -161,6 +163,16 @@ class StreamNode:
         if nd.confirm_s:
             self.run_len = self.run_len + 1 if out else 0
             out = self.run_len >= int(nd.confirm_s / N.SAMPLE_S)
+        if self.spike:
+            # the spike rule (eval/nodes.py Node.alarms): the largest |z| before the clip, on a covered sample
+            # or the first one outside the training range; a sum that is 0 where it does not alarm
+            a = np.abs(zr)
+            st = float(np.where(np.isfinite(a), a, 0.0).max(initial=0.0))
+            hit = (cov or self.prev_cover) and st > nd.h_spike
+            self.s_s = np.array([st if hit else 0.0])
+            self._track(2, self.s_s, nd.h_spike)
+            out = out or hit
+        self.prev_cover = cov
         self.alarm = out
         return out
 
@@ -187,7 +199,7 @@ class StreamNode:
     def change_point(self):
         """Page's estimate of when the change behind the present alarm began (eval/nodes.py change_point)."""
         best = None
-        for i, s in enumerate((self.s_m, self.s_v)):
+        for i, s in enumerate((self.s_m, self.s_v, self.s_s)):
             hit = (s > 0.0) & self.up[i]
             if hit.any():
                 c = int(self.lz[i][hit].min()) + 1

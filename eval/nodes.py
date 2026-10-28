@@ -17,7 +17,8 @@ and phase input per machine, written by hand). Here nothing is per machine:
     k per output from the slow bias of the calibration days and a limit per node from the same days.
     The options: `gate`, today's engine gate (the 35th percentile of |z| in the last 120 s above
     3.5, so 79 of the 120 samples), as in eval/machines.py; `cusum` (k = 0.5); `both` (the gate or
-    `cusum`).
+    `cusum`). --spike (off by default, 2026-10-28) adds a limit on one sample's |z| per node from the
+    same days, for an event that lasts one poll (SPIKE_H_MIN).
 
 Data: whole-plant runs with the site weather and the material flow (plant/verify_plant.py checks
 that plant). Training runs, tuning runs, validation runs and test runs use separate seed ranges
@@ -84,6 +85,21 @@ VAR_WIN_S = 60.0
 # the variance statistic leaves out this many seconds after a change of the node's PLC state
 # (VISR_VAR_STEADY_S; 0, the default, keeps every sample: a 60 s mask hid the 45 s welds, LOG-118)
 VAR_STEADY_S = float(os.environ.get("VISR_VAR_STEADY_S", "0"))
+# The spike rule (2026-10-28, --spike, off by default). The CUSUM cannot see an event that lasts one poll:
+# its limit is the largest sum of the calibration days, which a slow bias builds over hours, so one
+# sample of z about -598 (a dip of 0.2 s in a Class A minimum, seed 51006) cannot pass a limit of
+# 2,266 (the sums reached 156 and 598 in seeds 51006 and 51005). The spike rule is the Shewhart part of
+# the combined Shewhart-CUSUM scheme (Lucas, 1982): a sample alarms when its largest |z| over the node's
+# outputs passes h_spike, a limit per node from the calibration days by the rule of the CUSUM limit
+# (cusum_limit: the day maxima, by default the largest), never below the Shewhart 3 (Montgomery). It
+# reads z before --clip.
+# Coverage (`spike_judged`): a sample outside the training range counts when the sample before it was
+# covered, the first second outside. An event of one poll that reaches the node's inputs in the same
+# poll takes them out of range in that second, and the coverage rule hid exactly that sample (seed
+# 51006). A node that stays outside keeps its "don't know" after that second, so a long excursion (a
+# hot day, a fault upstream) gives the rule one sample, not hours. The limit is taken over the same
+# samples of the calibration days, so it holds their first seconds outside the range too.
+SPIKE_H_MIN = 3.0
 HIDDEN = tuple(int(x) for x in os.environ.get("VISR_HIDDEN", "32,32").split(","))   # one size for every node
 RULES = ("gate", "cusum", "cusumk", "both", "cusumkv")
 DEFAULT_RULE = "cusumkv"    # since 2026-10-18 (LOG-118; cusumk from LOG-115): it held on the validation split
@@ -634,6 +650,8 @@ class Node:
         self.cmd_delta = False          # numeric commands also enter as their change since the last sample
         self.delta_in = []
         self.counter_resets = True      # a counter that steps down was reset: its change is the new value
+        self.spike = False              # the spike rule (--spike): one sample past h_spike alarms
+        self.h_spike = None             # its limit, from the calibration days (set for every rule)
 
     def design(self, runs):
         """Input names from the documents: numeric feeds and commands as they are, categorical
@@ -741,9 +759,13 @@ class Node:
         self.r2 = [float(1.0 - res[:, j].var() / max(ys[:, j].var(), 1e-12)) for j in range(ys.shape[1])]
         if not np.all(np.isfinite(self.sd_all)):
             raise ValueError(f"{self.name}: no finite residual spread from the calibration days")
+        zr = [self.z(r, clip=False) for _, r in calib]
+        # the spike limit from the same days: the largest |z| of each day on the samples the rule judges
+        self.h_spike = cusum_limit([spike_stat(z)[spike_judged(cv)].max(initial=0.0) for z, cv in zr], self.alpha,
+                                   SPIKE_H_MIN, method=self.limit)
         if self.rule != "gate":
             # k and the limit from the same calibration days, with the spreads just set
-            zs = [self.z(r) for _, r in calib]
+            zs = [(self._clip(z), cv) for z, cv in zr]
             self.k = slow_bias_k(zs) if self.rule in ("cusumk", "cusumkv") else CUSUM_K
             self.h = cusum_limit([cusum(z, cv, self.k).max(initial=0.0) for z, cv in zs], self.alpha,
                                  method=self.limit)
@@ -830,21 +852,24 @@ class Node:
         nd.model.__dict__.update(s["model"])
         return nd
 
-    def z(self, r):
+    def z(self, r, clip=True):
         """The standardized residuals of a run after its lead (T x outputs) and the covered mask (T),
-        capped at +-clip when the node has a clip (the CUSUM rules only; the gate keeps them)."""
+        capped at +-clip when the node has a clip (the CUSUM rules only; the gate keeps them) and `clip`."""
         res, cov, _, b = self._residuals(r)
         self._bins = b                  # the PLC state per sample, for the variance statistic
         sd = np.stack([self.sd.get(int(g), self.sd_all) for g in b])
         z = res / sd
-        if self.clip and self.rule != "gate":
-            z = np.clip(z, -self.clip, self.clip)
-        return z, cov
+        return (self._clip(z) if clip else z), cov
+
+    def _clip(self, z):
+        return np.clip(z, -self.clip, self.clip) if self.clip and self.rule != "gate" else z
 
     def alarms(self, r, with_cover=False):
         """Alarms per sample, by the node's rule. Outside the training range (with a 10 % margin) the
-        node does not know: no alarm there; `with_cover` also returns the covered mask."""
-        z, cov = self.z(r)
+        node does not know: no alarm there; `with_cover` also returns the covered mask. With the spike
+        rule, also one sample whose largest |z| passes h_spike, on the samples it judges (`spike_judged`)."""
+        zr, cov = self.z(r, clip=False)
+        z = self._clip(zr)
         self._stats = []                # the CUSUM statistics and their limits, for change_point
         if self.rule == "gate":
             out = gate(np.abs(z))
@@ -861,6 +886,13 @@ class Node:
         out &= cov
         if self.confirm_s:
             out = confirm(out, int(self.confirm_s / SAMPLE_S))
+        if getattr(self, "spike", False):               # (a node saved before 2026-10-28 has no spike rule)
+            # the statistic joins the stats as a sum that is 0 where it does not alarm, so a spike's change
+            # point is its own sample (change_point, crossings); --confirm does not hold it back
+            s = np.where(spike_judged(cov), spike_stat(zr), 0.0)
+            s = np.where(s > self.h_spike, s, 0.0)
+            self._stats.append((s, self.h_spike))
+            out = out | (s > self.h_spike)
         return (out, cov) if with_cover else out
 
 
@@ -1022,6 +1054,23 @@ def slow_bias_k(zs, window_s=CUSUM_BIAS_S, q=CUSUM_BIAS_Q, k_min=CUSUM_K):
     return np.maximum(k, k_min)
 
 
+def spike_stat(z):
+    """The spike statistic: the largest |z| over the outputs per sample (T); an output with no finite z
+    adds nothing."""
+    a = np.abs(np.asarray(z, float))
+    a = a.reshape(len(a), -1) if a.ndim != 2 else a
+    return np.where(np.isfinite(a), a, 0.0).max(axis=1, initial=0.0)
+
+
+def spike_judged(cov):
+    """The samples the spike rule judges: the covered ones, and the first sample outside the training
+    range after a covered one (the first scored sample counts only when covered)."""
+    cov = np.asarray(cov, bool)
+    prev = np.zeros_like(cov)
+    prev[1:] = cov[:-1]
+    return cov | prev
+
+
 def cusum_alarm(s, h):
     """The alarm per sample: on when the statistic passes h, off again when it falls back to 0."""
     idx = np.arange(len(s))
@@ -1078,17 +1127,19 @@ def first_alarm(alarm, start):
 
 
 def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE, alpha=None, limit="conformal",
-             onsets=None, clip=None, confirm_s=0.0, keep=False, cmd_delta=False):
+             onsets=None, clip=None, confirm_s=0.0, keep=False, cmd_delta=False, spike=False):
     """One node in a worker process: train it, then its alarms and coverage on every scored run
     ({key: view path} -> {key: (alarm, covered)}), and what the report needs of the model. fit and
     calib: [(seed, view path)]. The node loads only its own tags, and a scored run only while it
     scores that run. onsets {key: sample}: for a fault run, the change point of the node's first
-    alarm after the onset ("cp"). keep: also return the trained node as plain data ("state")."""
+    alarm after the onset ("cp"). keep: also return the trained node as plain data ("state").
+    spike: the spike rule on (Node.alarms)."""
     t1 = time.time()
     tags = doc["feeds"] + doc["commands"] + doc["measures"]
     nd = Node(name, doc, rule, alpha, limit, clip)
     nd.confirm_s = confirm_s
     nd.cmd_delta = cmd_delta
+    nd.spike = spike
     nd = nd.train([(sd, load_view(p, tags)) for sd, p in fit],
                                      [(sd, load_view(p, tags)) for sd, p in calib])
     alarms, cps, events = {}, {}, {}
@@ -1102,6 +1153,7 @@ def node_job(name, doc, fit, calib, scored, rule=DEFAULT_RULE, alpha=None, limit
                 events[k] = [(t, c) for t, c in crossings(nd._stats, onsets[k]) if cov[t]]
     return {"inputs": nd.model.inputs, "outputs": nd.model.outputs, "weights": nd.model.n_weights(),
             "r2": nd.r2, "calib_covered": nd.calib_covered, "h": nd.h, "hv": getattr(nd, "hv", None),
+            "h_spike": nd.h_spike,
             "k": None if nd.k is None else np.atleast_1d(nd.k).astype(float).tolist(),
             "alarms": alarms, "cp": cps, "events": events, "wall_s": time.time() - t1,
             "state": nd.state() if keep else None}
@@ -1293,6 +1345,10 @@ def main(argv=None):
                     help="count feedback inputs for coverage, as before LOG-118 (feedback_inputs)")
     ap.add_argument("--cmd-delta", action="store_true",
                     help="each numeric PLC command also enters as its change since the last sample (Node.design)")
+    ap.add_argument("--spike", action="store_true",
+                    help="the spike rule: a sample whose largest |z| passes a limit per node from the calibration "
+                         "days alarms, a sample outside the training range only when it is the first one "
+                         "(Node.alarms; off by default)")
     ap.add_argument("--no-added-loop-inputs", action="store_true",
                     help="leave out the loop outputs that wiring.py adds to a machine's own node")
     ap.add_argument("--root", choices=("cf", "graph"), default=DEFAULT_ROOT,
@@ -1363,7 +1419,7 @@ def main(argv=None):
         futs = {}
         for name, doc in w.items():
             futs[ex.submit(node_job, name, doc, fit, calib, scored, a.rule, a.alpha, a.limit, onsets, a.clip,
-                           a.confirm, a.save_models, a.cmd_delta)] = name
+                           a.confirm, a.save_models, a.cmd_delta, a.spike)] = name
         for f in cf.as_completed(futs):
             fitted[futs[f]] = f.result()
             print(f"trained and scored {futs[f]}: {fitted[futs[f]]['weights']} weights, "
@@ -1373,13 +1429,13 @@ def main(argv=None):
                        "hidden": list(HIDDEN), "factory_seed": FACTORY_SEED, "instruments": INSTRUMENTS,
                        "no_added_loop_inputs": a.no_added_loop_inputs, "alpha": a.alpha, "limit": a.limit, "clip": a.clip,
                        "feedback_rule": not a.no_feedback_rule, "confirm_s": a.confirm, "var_steady_s": VAR_STEADY_S,
-                       "cmd_delta": a.cmd_delta,
+                       "cmd_delta": a.cmd_delta, "spike": a.spike,
                        "root_rule": a.root,
                        "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")},
               "nodes": {}, "faults": {}}
     for name in w:
         fn = fitted[name]
-        row = {k: fn[k] for k in ("inputs", "outputs", "weights", "r2", "calib_covered", "h", "k", "hv")}
+        row = {k: fn[k] for k in ("inputs", "outputs", "weights", "r2", "calib_covered", "h", "k", "hv", "h_spike")}
         for sp in splits:
             eps, covs = [], []
             for sd, _, _ in data.get((sp, "normal"), []):

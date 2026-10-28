@@ -722,3 +722,90 @@ def test_is_counter():
     assert not N.is_counter([np.tile([0.0, 0.0, 1.0, 1.0], 500)])      # a valve that opens and closes
     assert not N.is_counter([np.r_[np.full(500, 250.0), np.full(500, 300.0), np.full(500, 0.0)]])  # a setpoint
     assert not N.is_counter([np.linspace(0.0, 10.0, 100)])               # not whole numbers
+
+
+def _swing_runs(seed=41):
+    """A node y = 2 u + noise. Its calibration days carry a slow swing that the model cannot explain, so
+    the CUSUM limit is the sum of a swing (hundreds), while one sample's |z| stays a few units. A scored
+    run without the swing has no CUSUM alarm of its own. out_at: the input leaves its training range for
+    10 samples there (u = 8, y = 16). Every run starts at u = 0, so the slow filters, which start at the
+    first sample, stay in the range of the fit days."""
+    rng = np.random.default_rng(seed)
+
+    def run(n, swing=0.6, out_at=None):
+        u = rng.normal(size=n)
+        u[0] = 0.0
+        y = (2.0 * u + swing * np.sin(2.0 * np.pi * np.arange(n) / 700.0 + rng.uniform(0.0, 6.3))
+             + 0.1 * rng.standard_t(4, size=n))
+        if out_at is not None:
+            u[out_at:out_at + 10] = 8.0
+            y[out_at:out_at + 10] = 16.0
+        return N.Run({"a.u": u, "a.y": y}, lead=60)
+    return run
+
+
+SPIKE_DOC = {"feeds": ["a.u"], "commands": [], "measures": ["a.y"], "asset": "a", "loop_outputs": []}
+
+
+@pytest.fixture(scope="module")
+def swing_node():
+    run = _swing_runs()
+    fit, cal = [(i, run(1500)) for i in range(3)], [(9 + i, run(1500)) for i in range(3)]
+    return N.Node("a", SPIKE_DOC, "cusumk").train(fit, cal), cal, run
+
+
+def test_spike_rule_sees_one_far_sample(swing_node):
+    """One far sample (z about 30) alarms with the spike rule and not without it: the CUSUM limit of the
+    calibration days (their slow swing) is far above one sample. The spike limit comes from the same days
+    by the rule of the CUSUM limit, on the samples the rule judges. Its change point is its own sample, it
+    reads z before the clip, and a node saved before the rule (no `spike`) keeps its alarms."""
+    nd, cal, run = swing_node
+    zs = [nd.z(r, clip=False) for _, r in cal]
+    assert nd.h_spike == N.cusum_limit([N.spike_stat(z)[N.spike_judged(c)].max() for z, c in zs], None, N.SPIKE_H_MIN)
+    r = run(1500, swing=0.0)
+    i = 800 - r.lead
+    r["a.y"][800] += 30.0 * nd.sd_all[0]
+    assert nd.z(r)[0][i, 0] > 25.0 and nd.h_spike < 25.0 < 30.0 < nd.h
+    try:
+        assert not nd.alarms(r).any()
+        nd.spike = True
+        al = nd.alarms(r)
+        assert np.flatnonzero(al).tolist() == [i] and N.change_point(nd._stats, i) == i
+        assert N.crossings(nd._stats, 0) == [(i, i)]
+        back = N.Node.from_state(nd.state())
+        assert np.array_equal(back.alarms(r), al)
+        nd.clip = 4.0                                             # the CUSUM's cap: the spike rule reads z before it
+        assert np.array_equal(nd.alarms(r), al)
+        old = N.Node.__new__(N.Node)
+        old.__dict__.update({k: v for k, v in nd.__dict__.items() if k not in ("spike", "h_spike")})
+        assert not old.alarms(r).any()
+    finally:
+        nd.spike, nd.clip = False, None
+
+
+def test_spike_rule_judges_the_first_sample_outside_the_range(swing_node):
+    """The input leaves its training range for 10 samples. A far sample in the first of them alarms (the
+    event that takes the inputs out of range in its own poll); one inside the excursion does not (the
+    node does not know there), and the CUSUM holds through it."""
+    nd, _, run = swing_node
+    r = run(1500, swing=0.0, out_at=800)
+    for at in (800, 805):
+        r["a.y"][at] += 200.0 * nd.sd_all[0]
+    i = 800 - r.lead
+    _, cov = nd.z(r)
+    assert cov[i - 1] and not cov[i:i + 10].any()
+    assert N.spike_judged(cov)[i] and not N.spike_judged(cov)[i + 1:i + 10].any()
+    try:
+        assert not nd.alarms(r).any()
+        nd.spike = True
+        assert np.flatnonzero(nd.alarms(r)).tolist() == [i]
+    finally:
+        nd.spike = False
+
+
+def test_spike_statistic_and_judged_samples():
+    z = np.array([[1.0, -4.0], [np.nan, 2.0], [np.nan, np.nan], [0.5, 0.2]])
+    assert N.spike_stat(z).tolist() == [4.0, 2.0, 0.0, 0.5]
+    assert N.spike_stat(np.zeros((3, 0))).tolist() == [0.0, 0.0, 0.0]
+    cov = np.array([False, True, False, False, True, True, False])
+    assert N.spike_judged(cov).tolist() == [False, True, True, False, True, True, True]
