@@ -1,0 +1,12 @@
+# The build context of live/Dockerfile (BuildKit reads this file for that Dockerfile only): the
+# pins and the code that the two services import. The campaigns (eval/results), the day cache
+# (eval/cache), data/, the console's node_modules and the numba caches in __pycache__ stay out.
+*
+!correlation/requirements.txt
+!live/*.py
+!eval/*.py
+!twin/*.py
+!plant/model/
+!plant/floor/
+**/__pycache__
+plant/model/*.md

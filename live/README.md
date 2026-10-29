@@ -9,7 +9,7 @@ between them. The PLC layer comes after this path works.
 | 1 | The plant service: the plant on the wall clock, its readings over HTTP | Done (`plant_service.py`) |
 | 2 | The streaming engine: the node models one sample at a time, the same alarms and roots as the batch engine | Done (`engine.py`, `engine_service.py`) |
 | 3 | The console in live mode, with Grafana on the live readings | Done (the console's live mode, the floor recording of the plant service, the replay exporter's live mode) |
-| 4 | Containers on forge, apart from the proof-of-concept stack | Partly done: the console, Grafana and the exporter run as containers (`LIVE=1 deploy/console-preview.sh`); the plant and engine services run from forge's venv, because a service image needs numpy and numba from PyPI (the operator's call) |
+| 4 | Containers on forge, apart from the proof-of-concept stack | Ready, not yet run on forge: `LIVE=1 deploy/console-preview.sh` runs the console, Grafana, the exporter and the plant and engine services as containers on `visr-preview`; the two services share one image, `visr-overhaul/live:<tag>` (`live/Dockerfile`: Python 3.11, numpy, scipy, networkx and numba from PyPI, pinned; a non-root user). Tested in a sandbox (2026-10-29): `live/tests` in the image, `--check` in the image equal, the plant at 1,000 times real time, the engine on a synthetic pack. `LIVE_VENV=1` runs the services from forge's venv, as before |
 | 5 | The soak: 24 h of normal running, then one live run per fault | Started: the live score of the incidents (`score.py`), a soak on forge's preview |
 
 ## The plant service (`plant_service.py`)
@@ -202,11 +202,13 @@ On forge, `LIVE=1 bash ~/VISR_Overhaul/deploy/console-preview.sh` runs the whole
 
 | Part | Where |
 |---|---|
-| Plant service (`--floor`) | screen `visr-live-plant`, `~/visr-venv`, 172.17.0.1:9110, log `/var/tmp/visr-live-plant.log` |
-| Engine service | screen `visr-live-engine`, `~/visr-venv`, 172.17.0.1:9111, the newest `live-pack.pkl`, log `/var/tmp/visr-live-engine.log` |
+| Plant service (`--floor`) | container `visr-live-plant` (image `visr-overhaul/live:<tag>`), `visr-live-plant:9110` on `visr-preview`, published on 127.0.0.1:9110 of forge only (the operator's `POST /fault`), `data/weather/` mounted read-only, log `docker logs visr-live-plant` |
+| Engine service | container `visr-live-engine` (the same image), `visr-live-engine:9111`, published on 127.0.0.1:9111 of forge only, the newest `live-pack.pkl` with its campaign folder mounted read-only, log `docker logs visr-live-engine` |
 | Replay exporter (live) | container `visr-replay`, Grafana's datasource |
 | Grafana | container `visr-grafana` |
-| Console | container `visr-console-preview`, port 3121 on the Tailscale address; its nginx proxies `/api/live/*` with GET only |
+| Console | container `visr-console-preview`, port 3121 on the Tailscale address; its nginx proxies `/api/live/*` to the two service containers by name, GET only (any other method gets 403) |
+| All containers | no restart policy; the two service containers check `GET /healthz` every 10 s (`docker ps` shows the state) |
+| Fallback, `LIVE=1 LIVE_VENV=1` | the two services in the screens `visr-live-plant` and `visr-live-engine` from `~/visr-venv`, on 172.17.0.1:9110 and 172.17.0.1:9111, logs `/var/tmp/visr-live-*.log`; nginx turns to 172.17.0.1 when the container names do not resolve |
 
 The services listen on the docker0 address only, so only forge and its containers reach them. A
 fault comes from a shell on forge (`POST /fault` to 172.17.0.1:9110); the console's proxy refuses
