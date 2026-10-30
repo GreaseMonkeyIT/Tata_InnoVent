@@ -24,10 +24,8 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from eval import legacy as L                                     # noqa: E402
-from eval.metrics import VERDICT_PASSES, Pass, score_calm_run, score_fault_run, summarize   # noqa: E402
+from eval import legacy as L
+from eval.metrics import VERDICT_PASSES, Pass, score_calm_run, score_fault_run, summarize
 
 SEED_BASE = {"tuning": 10_000, "test": 900_000}
 

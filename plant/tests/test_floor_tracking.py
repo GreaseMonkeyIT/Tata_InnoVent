@@ -1,13 +1,8 @@
 """The line tracking system (floor/tracking.py): it changes nothing in the plant, and its buffers agree
 with the plant flow's own counts."""
-import os
-import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))
-
-from model.plant import UtilitiesPlant          # noqa: E402
-from floor.tracking import Tracker              # noqa: E402
+from plant.model.plant import UtilitiesPlant
+from plant.floor.tracking import Tracker
 
 
 def _plant():

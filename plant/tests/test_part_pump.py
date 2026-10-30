@@ -6,14 +6,10 @@
   4. A worn impeller gives less flow and less head on the same system; a throttled system gives
      less flow and more head; a pump never gives flow above its shut-off head.
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model.pump import Pump, PumpRating                         # noqa: E402
+from plant.model.pump import Pump, PumpRating
 
 R = PumpRating(q_m3h=60.0, h_m=32.0, eta=0.75, n_rpm=2900.0, h0_m=40.0, source="test")
 QN = R.q_m3h / 3600.0

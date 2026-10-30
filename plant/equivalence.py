@@ -8,7 +8,8 @@ compares every tag at every sample.
 
     python plant/equivalence.py --ref <folder with model/> --hours 6 --seeds 40000,40001 --faults ,F9,F6
 
-Each case runs in its own process (the two copies share the package name `model`). The default
+Each case runs in its own process, which loads `model/` of its folder as the package `model` (the two
+copies share that name; the working tree's copy is the package `plant.model`, the same files). The default
 tolerance is zero: every value equal, bit for bit (NaN equal to NaN). A change that is not exact
 (multi-rate stepping, a tolerance in a solver) gives --atol and --rtol, and the report states the
 largest differences per tag; such a change must also pass plant/verify_plant.py.
@@ -27,8 +28,11 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 RUNNER = r'''
-import json, math, random, sys, time
-sys.path.insert(0, sys.argv[1])
+import importlib.util, json, math, os, random, sys, time
+pkg = os.path.join(sys.argv[1], "model")
+spec = importlib.util.spec_from_file_location("model", os.path.join(pkg, "__init__.py"), submodule_search_locations=[pkg])
+sys.modules["model"] = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sys.modules["model"])
 from model.plant import UtilitiesPlant
 from model import faults as FR, fault_ranges as RANGES
 seed, hours, fid, out = int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], sys.argv[5]

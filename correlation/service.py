@@ -20,11 +20,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import numpy as np
 
-from engine.forecast import incipient_findings, stopped_pods
-from engine.gate import Witness
-from engine.merge import merge_graphs
-from engine.pipeline import run_pass
-from engine.state import GraphMemory, MemoryConfig, set_verbatim_names
+from .engine.forecast import incipient_findings, stopped_pods
+from .engine.gate import Witness
+from .engine.merge import merge_graphs
+from .engine.pipeline import run_pass
+from .engine.state import GraphMemory, MemoryConfig, set_verbatim_names
 
 WINDOW_URL = os.environ.get("WINDOW_URL", "http://aggregator.aiops.svc:9000/window")
 EVENTS_URL = os.environ.get("EVENTS_URL", "http://aggregator.aiops.svc:9000/events")

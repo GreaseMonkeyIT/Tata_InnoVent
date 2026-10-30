@@ -21,10 +21,9 @@ Run (one process per setting, as with ps2_lab.py):
     python correlation/tests/idle_lab.py                    # learn, then lock (the fix)
     IDLE_LAB_LOCK=0 python correlation/tests/idle_lab.py    # learning never stops (the bug)
 """
-import collections, os, sys
+import collections, os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ps2_lab as L                                   # noqa: E402  (sets the engine env first)
+from correlation.tests import ps2_lab as L            # sets the engine env first
 
 sim, S = L.sim, L.S
 WARM_S, FAULT_S, AFTER_S = 7200, 1050, 3600

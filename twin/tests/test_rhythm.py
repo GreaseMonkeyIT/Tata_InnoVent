@@ -5,17 +5,11 @@
   3. press-1's motor current alone (1 s samples, no state signal): the period equals the press's
      true mean cycle time (from its bend counter), and the cycle starts land at the bends.
 """
-import os
-import sys
 
 import numpy as np
 import pytest
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-
-from twin import rhythm                                              # noqa: E402
+from twin import rhythm
 
 
 def test_clean_period():
@@ -30,8 +24,8 @@ def test_noise_has_no_rhythm():
 
 
 def test_press_current_reveals_the_bend_cycle():
-    from model import catalog as C
-    from model.press_brake import PressBrake
+    from plant.model import catalog as C
+    from plant.model.press_brake import PressBrake
     p = PressBrake("press-1", C.PPEB_320_40, C.ABB_37KW)
     p.motor.w = p.w_n
     dt, cur = 0.05, []

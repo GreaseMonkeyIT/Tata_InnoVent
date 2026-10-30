@@ -1,7 +1,7 @@
 "use client";
 // Floor prototype (2026-10-18): the plant recording played back on the new 3D floor, in two looks.
 // Not part of the console yet. Open /floor-lab in the dev build; the recording comes from
-// plant/floor/replay.py (dashboard/public/floor/replay.json).
+// plant/floor/replay.py (console/public/floor/replay.json).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FloorScene } from "../floor/FloorScene";
 import { loadReplay } from "../floor/replay";

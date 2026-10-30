@@ -6,8 +6,8 @@ no cluster, no `run_pass` change, so the 13 kernel fixtures are untouched.
 """
 import numpy as np
 
-from engine import detectors
-from engine.forecast import incipient_findings
+from correlation.engine import detectors
+from correlation.engine.forecast import incipient_findings
 
 N = 180                         # 15-min window at 5s
 LIMIT = 512 * 1024 * 1024       # 512Mi, vision-qc's memory limit
@@ -83,7 +83,7 @@ def test_onset_anchored_eta_is_sharper_than_the_diluted_tail():
 
 
 # ------------------------------------------------ thermal trip cards (LOG-091) --
-from engine.forecast import first_order_eta, stopped_pods   # noqa: E402
+from correlation.engine.forecast import first_order_eta, stopped_pods  # noqa: E402
 
 TRIP = 78.0
 
@@ -127,7 +127,7 @@ def test_first_order_card_waits_for_the_bend():
                               model="first_order") == []
     fit = first_order_eta(x[-15:], TRIP)
     assert fit is None
-    import engine.forecast as fc
+    import correlation.engine.forecast as fc
     cap, fc.THERMAL_TAU_MAX_S = fc.THERMAL_TAU_MAX_S, 1e9  # without the cap: the flash the watch saw
     try:
         flash = incipient_findings({"press-1": x}, {"press-1": TRIP}, min_frac=0.5, cls="trip", model="first_order")

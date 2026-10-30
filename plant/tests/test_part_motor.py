@@ -13,15 +13,11 @@ no-load start (0.5 J w^2, a textbook result), the energy balance, the starting t
 Run:  python -m pytest plant/tests/test_part_motor.py -q      (from the repo root)
 """
 import math
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import motor as M                                   # noqa: E402
-from model.catalog import ABB_M3BP_180MLB4_22KW as R, ABB_M3BP_180MLB4_22KW_CHECKS as CHK  # noqa: E402
+from plant.model import motor as M
+from plant.model.catalog import ABB_M3BP_180MLB4_22KW as R, ABB_M3BP_180MLB4_22KW_CHECKS as CHK
 
 W_N = R.n_rpm * math.pi / 30.0
 T_N = R.t_n

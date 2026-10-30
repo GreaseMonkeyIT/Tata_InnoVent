@@ -186,12 +186,12 @@ states (a change list), the tracking table of the frames and engines, and the va
 the start of the lead (`FloorRecorder` in `plant/floor/replay.py`, which `record()` uses too; the
 recording that `replay.py` writes is byte for byte the same as before). `GET /floor?since=t` gives
 what came after plant time `t`, in the form of `replay.json`, so the console appends it to its player
-(`Replay.append` in `dashboard/app/floor/replay.js`). The tracking table only reads the plant, so the
+(`Replay.append` in `console/app/floor/replay.js`). The tracking table only reads the plant, so the
 readings of `/samples` do not change (test). The service keeps 4 h of value rows, and all states and
 tracking events.
 
 The console finds the live plant at `/api/live/plant` and the engine at `/api/live/engine`
-(`dashboard/README.md`, live mode). Its verdict is the engine's newest open incident with a named
+(`console/README.md`, live mode). Its verdict is the engine's newest open incident with a named
 root: the root, the candidates and victims as the affected stations, the engine's reason in one
 sentence (the counterfactual, or the graph rule), and a strength (the share of the root's
 counterfactual score in the two best scores). Grafana gets the live values from the replay exporter

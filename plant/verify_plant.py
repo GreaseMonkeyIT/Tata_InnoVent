@@ -34,9 +34,8 @@ import time
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
 
-from model.plant import UtilitiesPlant            # noqa: E402
+from plant.model.plant import UtilitiesPlant      # noqa: E402
 
 WARMUP_S = 1800.0
 V_LIMIT_PU = 0.10            # IEC 60038: LV supply within +-10 % of nominal

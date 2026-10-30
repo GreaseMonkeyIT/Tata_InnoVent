@@ -1,4 +1,4 @@
-from engine.merge import merge_graphs
+from correlation.engine.merge import merge_graphs
 
 
 def _io_graph():

@@ -53,9 +53,6 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
 
 import numpy as np  # noqa: E402
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, ROOT)
-
 from eval.nodes import (SAMPLE_S, Node, Run, Text, change_point, crossings, downstream,  # noqa: E402
                         first_alarm, load_view, score_fault, score_pair)
 from eval.metrics import wilson  # noqa: E402

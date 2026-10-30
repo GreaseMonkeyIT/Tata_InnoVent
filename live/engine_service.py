@@ -26,7 +26,6 @@ copy of the state, so they never wait for it.
 import argparse
 import json
 import math
-import os
 import sys
 import threading
 import time
@@ -34,10 +33,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, ROOT)
-
-from live import engine as E                              # noqa: E402
+from live import engine as E
 
 N = E.N
 PORT = 9111

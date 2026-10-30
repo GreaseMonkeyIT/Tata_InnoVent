@@ -13,17 +13,13 @@ chiller-1 and cool-1 together, with a placeholder for the machines' heat.
      waits its anti-recycle time, the loop warms meanwhile, and it recovers after the restart.
   5. The pump at its design point and the compressor at its rated water flow.
 """
-import os
-import sys
 import time
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model.compressor import P_ATM                               # noqa: E402
-from model.plant import UtilitiesPlant                           # noqa: E402
-from model import catalog as C                                   # noqa: E402
+from plant.model.compressor import P_ATM
+from plant.model.plant import UtilitiesPlant
+from plant.model import catalog as C
 
 DT = 0.1
 
@@ -92,7 +88,7 @@ def test_chiller_rides_through_class3_dips():
     old 2000 kVA unit left 340.5 V (a pass by 0.5 V). So the test checks the physics: the chiller
     stops exactly when the dipped bus is under 340 V for longer than 2 s, and after a stop it waits
     out its anti-recycle time and restarts, as in F11."""
-    from model.catalog import DIPS_CLASS3
+    from plant.model.catalog import DIPS_CLASS3
     p = UtilitiesPlant(cooling="chiller", with_fab=False)
     run(p, 900.0)
     for residual, cycles in DIPS_CLASS3:

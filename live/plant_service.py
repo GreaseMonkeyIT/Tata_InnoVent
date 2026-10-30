@@ -35,7 +35,6 @@ The JSON keeps Python's NaN token, so a value goes through unchanged (the client
 import argparse
 import json
 import math
-import os
 import sys
 import threading
 import time
@@ -43,16 +42,12 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-sys.path.insert(0, ROOT)
-
-from eval import nodes as N                               # noqa: E402  the run: plant, warm-up, lead, samples
-from model import fault_ranges as RANGES                  # noqa: E402
-from model import faults as FR                            # noqa: E402
-from model.instruments import Instruments                 # noqa: E402
-from model.wiring import instrument_ranges, wiring        # noqa: E402
-from floor.replay import SAMPLE_S as FLOOR_SAMPLE_S, STATE_RULES, FloorRecorder   # noqa: E402
+from eval import nodes as N                               # the run: plant, warm-up, lead, samples
+from plant.model import fault_ranges as RANGES
+from plant.model import faults as FR
+from plant.model.instruments import Instruments
+from plant.model.wiring import instrument_ranges, wiring
+from plant.floor.replay import SAMPLE_S as FLOOR_SAMPLE_S, STATE_RULES, FloorRecorder
 
 PORT = 9110
 DEFAULT_SEED = N.SEED_BASE["validation"]   # a validation day: the engine never trained on it

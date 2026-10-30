@@ -35,22 +35,25 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install
-        run: pip install -r correlation/requirements.txt pytest numba pymodbus==3.6.9
+        # the packages of pyproject.toml, with the pins of correlation/requirements.txt
+        run: pip install -e ".[numba,test]"
       - name: Plant, twin, score harness and live plant
         # without data/weather the plant uses its design-condition weather
         run: python -m pytest plant/tests twin/tests eval/tests live/tests -q
+      - name: The v1 correlation engine (a package since phase 3)
+        run: python -m pytest correlation/tests -q
 
   console:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: dashboard
+        working-directory: console
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: dashboard/package-lock.json
+          cache-dependency-path: console/package-lock.json
       - run: npm ci
       - run: npm run build

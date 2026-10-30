@@ -20,8 +20,8 @@ def service(tmp_path_factory):
     mp = pytest.MonkeyPatch()
     mp.setenv("MEMORY_DB", str(tmp_path_factory.mktemp("mem") / "l3-memory.db"))
     mp.setenv("DOMAIN_SOURCES", "http://sim/domains,http://scada/domains")
-    sys.modules.pop("service", None)
-    mod = importlib.import_module("service")
+    sys.modules.pop("correlation.service", None)
+    mod = importlib.import_module("correlation.service")
     yield mod
     mp.undo()
 

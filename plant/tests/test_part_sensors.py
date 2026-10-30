@@ -6,14 +6,10 @@
   3. Resolution and sample period: values are on the resolution grid and held between samples.
   4. Faults: a drift grows linearly; a stuck sensor freezes.
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import sensors as S                                  # noqa: E402
+from plant.model import sensors as S
 
 
 @pytest.mark.parametrize("make,true", [

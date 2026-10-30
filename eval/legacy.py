@@ -93,14 +93,13 @@ def run_trial(p):
     db = os.path.join(tempfile.mkdtemp(prefix="visr-eval-"), "m.db")
     os.environ.update(BOX_ENV)
     os.environ["MEMORY_DB"] = db
-    sys.path.insert(0, os.path.join(ROOT, "correlation"))
     spec = importlib.util.spec_from_file_location("plant_sim", os.path.join(ROOT, "plant", "sim", "main.py"))
     sim = importlib.util.module_from_spec(spec)
     sys.modules["plant_sim"] = sim
     spec.loader.exec_module(sim)
-    import service as S                                          # noqa: E402  (after the env)
-    from engine.merge import merge_graphs                        # noqa: E402
-    from engine.pipeline import run_pass                         # noqa: E402
+    from correlation import service as S                         # after the env
+    from correlation.engine.merge import merge_graphs
+    from correlation.engine.pipeline import run_pass
 
     cooled = ["press-1", "press-2", "cnc-1", "furnace-1"]
     random.seed(p["seed"])

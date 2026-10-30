@@ -24,7 +24,7 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 | `plant/` · `plc/` · `scada/` | Plant physics sim, OpenPLC trip program, SCADA tag server + historian writer |
 | `vplc/` | Virtual PLC runtime: Structured Text tasks, S7comm and Modbus TCP protocol profiles (2H) |
 | `aggregator/` · `correlation/` | L2 telemetry window, L3 deterministic causal engine |
-| `api/` · `dashboard/` | L4 API (operator gate + audit ledger), VISR operator console |
+| `api/` · `console/` | L4 API (operator gate + audit ledger), VISR operator console |
 | `twin/` · `eval/` | The overhaul engine: one small model per machine, the twin, the counterfactual root, and the score harness |
 | `live/` | The overhaul in real time: the plant service on the wall clock and the streaming engine with its incidents (the next steps are in `live/README.md`) |
 | `scripts/` | Repository tools: `check_commit.py`, the guard that keeps data and credentials out of git |
@@ -39,7 +39,7 @@ verdict. The simulated substrate is labeled as such everywhere. The inference on
 - **Box bring-up** (single-node K3s): follow `PIVOT_SETUP.md`.
 - **Tests**: `make test`, or `python -m pytest -q` inside `correlation/`, `plant/`, `api/`, `scada/`, or `vplc/`.
 - **The console** on this branch is one screen: the 3D floor, the verdict, attention, the vitals and
-  the drawers. It plays a plant recording. `dashboard/README.md` describes it. The steps below run
+  the drawers. It plays a plant recording. `console/README.md` describes it. The steps below run
   the proof-of-concept stack of branch `main` on K3s, with its own console.
 - **Fire a fault**: from the fault shell on the box, not the console:
   `ssh -t forge 'bash ~/Tata_InnoVent/deploy/faults.sh'`, then `f 1` (fire), `r all` (reset).

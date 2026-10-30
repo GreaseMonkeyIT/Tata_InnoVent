@@ -2,17 +2,11 @@
 
 Run:  python -m pytest twin/tests -q      (from the repo root; numpy needed)
 """
-import os
-import sys
 
 import numpy as np
 import pytest
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-
-from twin.node_model import FilterBank, NodeModel                    # noqa: E402
+from twin.node_model import FilterBank, NodeModel
 
 
 def test_filter_bank_step_response():
@@ -51,8 +45,8 @@ def test_filter_bank_run_equals_sample_loop(T, n):
 def test_filter_bank_run_equals_sample_loop_on_node_data():
     """The same on real plant tags: compressor-1's feeds and commands from a 20 min plant run, at
     the 0.1 s and 1 s sample times."""
-    from model.plant import UtilitiesPlant
-    from model.wiring import wiring
+    from plant.model.plant import UtilitiesPlant
+    from plant.model.wiring import wiring
     p = UtilitiesPlant(seed=3, weather="site")
     doc = wiring(p)["compressor-1"]
     tags = [t for t in doc["feeds"] + doc["measures"]]

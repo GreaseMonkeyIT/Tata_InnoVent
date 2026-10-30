@@ -21,16 +21,15 @@ import sys
 import numpy as np
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.insert(0, os.path.join(_ROOT, "correlation"))
 _SIM = os.path.join(_ROOT, "plant", "sim", "main.py")
 _spec = importlib.util.spec_from_file_location("plant_sim", _SIM)
 sim = importlib.util.module_from_spec(_spec)
 sys.modules["plant_sim"] = sim
 _spec.loader.exec_module(sim)
 
-from engine.common_mode import EVIDENCE            # noqa: E402
-from engine.gate import Witness                    # noqa: E402
-from engine.pipeline import run_pass               # noqa: E402
+from correlation.engine.common_mode import EVIDENCE  # noqa: E402
+from correlation.engine.gate import Witness        # noqa: E402
+from correlation.engine.pipeline import run_pass   # noqa: E402
 
 TICK_S, GRID_S, N = 1.0, 5.0, 180                  # the 15-minute ring at POLL_S=5
 INJECT_AT = 100                                    # grid sample where the fault lands

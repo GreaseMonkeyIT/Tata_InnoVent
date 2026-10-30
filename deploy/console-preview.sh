@@ -7,11 +7,11 @@
 #
 # Three containers on the Docker network visr-preview:
 #   visr-replay   the plant recording played on the wall clock (deploy/preview/replay-exporter.mjs,
-#                 on node:22-slim, with dashboard/app and the recording mounted read-only). It is
+#                 on node:22-slim, with console/app and the recording mounted read-only). It is
 #                 Grafana's datasource: it answers the Prometheus query API for each panel's window.
 #   visr-grafana  Grafana with the console panels (deploy/preview/grafana/), anonymous viewer,
 #                 embedding on, served from /grafana/
-#   visr-console-preview  the console (dashboard/Dockerfile.preview); its nginx proxies /grafana/
+#   visr-console-preview  the console (console/Dockerfile.preview); its nginx proxies /grafana/
 #                 and /api/clock on the same origin
 # Only the console publishes a port: 3121 on the Tailscale address of forge (not on the LAN). The
 # containers have no restart policy. The Grafana image comes from the paused k3s stack
@@ -51,7 +51,7 @@ fi
 
 ADDR="${ADDR:-$(tailscale ip -4 | head -n1)}"
 [ -n "$ADDR" ] || { echo "no Tailscale address: is tailscaled up?" >&2; exit 1; }
-REC="$HERE/dashboard/public/floor/replay.json"
+REC="$HERE/console/public/floor/replay.json"
 [ -f "$REC" ] || { echo "no plant recording: run plant/floor/replay.py first" >&2; exit 1; }
 for img in "$GRAFANA_IMAGE" "$NODE_IMAGE"; do
   docker image inspect "$img" >/dev/null 2>&1 || {
@@ -67,7 +67,7 @@ fi
 
 TAG="${TAG:-$(date +%Y%m%d-%H%M)}"
 IMAGE="visr-overhaul/console:${TAG}"
-docker build -f "$HERE/dashboard/Dockerfile.preview" -t "$IMAGE" "$HERE/dashboard"
+docker build -f "$HERE/console/Dockerfile.preview" -t "$IMAGE" "$HERE/console"
 
 docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
 docker rm -f $ALL >/dev/null 2>&1 || true
@@ -89,7 +89,7 @@ else
   REPLAY_ENV="-e VISR_ANCHOR=$ANCHOR -e VISR_SPEED=$SPEED -e VISR_MOCK=${VISR_MOCK:-1}"
 fi
 docker run -d --name visr-replay --network "$NET" $REPLAY_ENV \
-  -v "$HERE/dashboard/app:/app:ro" -v "$REC:/data/replay.json:ro" \
+  -v "$HERE/console/app:/app:ro" -v "$REC:/data/replay.json:ro" \
   -v "$HERE/deploy/preview/replay-exporter.mjs:/srv/replay-exporter.mjs:ro" \
   "$NODE_IMAGE" node --no-warnings /srv/replay-exporter.mjs >/dev/null
 # a random admin password that nobody keeps: the console needs only the anonymous viewer

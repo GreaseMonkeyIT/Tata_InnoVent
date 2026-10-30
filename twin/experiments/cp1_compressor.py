@@ -15,19 +15,13 @@ Machine: the screw compressor of plant/model/compressor.py on the verified 22 kW
 Run:  python twin/experiments/cp1_compressor.py      (from the repo root; numpy needed)
 """
 import math
-import os
-import sys
 import time
 
 import numpy as np
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-sys.path.insert(0, ROOT)
-
-from model.catalog import ABB_M3BP_180MLB4_22KW                     # noqa: E402
-from model.compressor import CompressorRating, ScrewCompressor, P_ATM  # noqa: E402
-from twin.node_model import NodeModel                                # noqa: E402
+from plant.model.catalog import ABB_M3BP_180MLB4_22KW
+from plant.model.compressor import CompressorRating, ScrewCompressor, P_ATM
+from twin.node_model import NodeModel
 
 DT = 0.1            # physics step, s
 SAMPLE = 1.0        # data rate for the model, s

@@ -1,7 +1,7 @@
 """Record a plant run for the 3D floor (2026-10-18): station states, a set of measured values and the
 line tracking events (tracking.py), as one JSON file that the floor prototype plays back.
 
-  python plant/floor/replay.py --seed 3 --hours 4 --warmup-h 3 --out dashboard/public/floor/replay.json
+  python plant/floor/replay.py --seed 3 --hours 4 --warmup-h 3 --out console/public/floor/replay.json
 
 The recording holds what a line's control system has, nothing more:
   - states: each station's own state or phase as its controller reports it (a change list)
@@ -15,14 +15,12 @@ import argparse
 import json
 import math
 import os
-import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))
 
-from model.plant import UtilitiesPlant                    # noqa: E402
-from floor.tracking import Tracker                        # noqa: E402
+from plant.model.plant import UtilitiesPlant              # noqa: E402
+from plant.floor.tracking import Tracker                  # noqa: E402
 
 DT = 0.1
 SAMPLE_S = 2.0
@@ -183,7 +181,7 @@ def main():
     ap.add_argument("--warmup-h", type=float, default=3.0)
     ap.add_argument("--t-day0-h", type=float, default=4.0)
     ap.add_argument("--day", type=int, default=None, help="day of the year for the site weather")
-    ap.add_argument("--out", default=os.path.join(HERE, "..", "..", "dashboard", "public", "floor", "replay.json"))
+    ap.add_argument("--out", default=os.path.join(HERE, "..", "..", "console", "public", "floor", "replay.json"))
     a = ap.parse_args()
     rec = record(a.seed, a.hours, a.warmup_h, a.t_day0_h, a.day)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)

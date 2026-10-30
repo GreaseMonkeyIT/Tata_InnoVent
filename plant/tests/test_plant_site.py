@@ -13,21 +13,17 @@ transformer sizes, no export, and the realism fixes found by the first full-plan
      press-2 brake stopping time, the material batches, the leak test and the cold test per part.
 """
 import math
-import os
 import statistics
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import building as B                                  # noqa: E402
-from model import catalog as C                                   # noqa: E402
-from model.assembly import ColdTest, LeakTester, PartsWasher      # noqa: E402
-from model.furnace import Furnace                                # noqa: E402
-from model.gas import GasSupply                                  # noqa: E402
-from model.mech_press import MechanicalPress                     # noqa: E402
-from model.plant import UtilitiesPlant                           # noqa: E402
+from plant.model import building as B
+from plant.model import catalog as C
+from plant.model.assembly import ColdTest, LeakTester, PartsWasher
+from plant.model.furnace import Furnace
+from plant.model.gas import GasSupply
+from plant.model.mech_press import MechanicalPress
+from plant.model.plant import UtilitiesPlant
 
 
 def test_building_services_follow_their_formulas():

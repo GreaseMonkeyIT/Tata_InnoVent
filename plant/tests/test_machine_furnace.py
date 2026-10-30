@@ -12,16 +12,12 @@ furnace on the plant gas header (gas.py), running an AWS D1.1 postweld heat trea
      zone thermocouple that reads 20 K high leaves a cold spot at its load on the hold (smaller
      than 20 K: the neighbouring zones of the same chamber heat it).
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import catalog as C                                    # noqa: E402
-from model.furnace import Furnace, available_heat, cp_steel        # noqa: E402
-from model.gas import GasSupply                                    # noqa: E402
+from plant.model import catalog as C
+from plant.model.furnace import Furnace, available_heat, cp_steel
+from plant.model.gas import GasSupply
 
 DT = 5.0
 

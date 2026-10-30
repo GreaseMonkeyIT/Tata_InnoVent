@@ -3,7 +3,7 @@
 // Grafana draws on wall-clock time, so the recording plays on the wall clock here: plant time
 //   t(w) = t0 + ((w - anchor) * speed) mod (t1 - t0)          (w: unix seconds; the recording loops)
 // The console reads the same anchor and speed from /clock and computes the same t, so the console
-// and Grafana show the same moment. The values come from the console's own modules (dashboard/app,
+// and Grafana show the same moment. The values come from the console's own modules (console/app,
 // mounted read-only): Replay.values for a row and applyOverlay for the mock verdict, so Grafana shows
 // exactly the values that the console shows.
 //

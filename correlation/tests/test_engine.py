@@ -5,10 +5,10 @@ Every test plants a known truth and asserts the engine rediscovers it blind.
 import numpy as np
 import pytest
 
-from engine import detectors
-from engine.gate import Witness, accept_edge
-from engine.lagcorr import best_directed, lag_profile
-from engine.pipeline import run_pass
+from correlation.engine import detectors
+from correlation.engine.gate import Witness, accept_edge
+from correlation.engine.lagcorr import best_directed, lag_profile
+from correlation.engine.pipeline import run_pass
 
 rng = np.random.default_rng(42)
 N = 180  # 15-minute window at 5s
@@ -237,7 +237,7 @@ def test_young_baseline_moderate_onset_stays_silent():
     an unambiguous storm (|zpeak| >= YOUNG_Z). A moderate onset — exactly the warm-up
     transient class that maturity gating exists to silence — stays out of the findings.
     The fixture self-checks its calibration so a detector change can't silently hollow it."""
-    from engine import pipeline
+    from correlation.engine import pipeline
     # private rng: the module-level `rng` is consumed sequentially by every noise() call, so
     # drawing from it here would shift the noise sequence under all later tests in the file.
     lr = np.random.default_rng(7)

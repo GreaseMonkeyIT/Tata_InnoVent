@@ -35,10 +35,6 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
 
 import numpy as np  # noqa: E402
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-sys.path.insert(0, ROOT)
-
 from eval import cf as CF                                 # noqa: E402
 from eval import nodes as N                               # noqa: E402
 

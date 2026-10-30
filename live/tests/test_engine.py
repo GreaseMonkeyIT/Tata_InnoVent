@@ -2,16 +2,11 @@
 whole run, with the same change points; the incidents open, take candidates and victims and close as
 documented; the kept samples give back the run. `python -m live.engine check` repeats the first check
 on the saved runs of a campaign."""
-import os
-import sys
 
 import numpy as np
 import pytest
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, ROOT)
-
-from live import engine as E                                         # noqa: E402
+from live import engine as E
 
 N = E.N
 

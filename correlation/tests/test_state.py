@@ -1,6 +1,6 @@
 import numpy as np
 
-from engine.state import GraphMemory, MemoryConfig
+from correlation.engine.state import GraphMemory, MemoryConfig
 
 
 def _graph():
@@ -196,7 +196,7 @@ def test_structural_floor_keeps_edge_from_decaying_to_zero(tmp_path):
 
 
 def test_disk_backbone_is_seeded_at_idle(tmp_path):
-    from engine.gate import Witness
+    from correlation.engine.gate import Witness
     mem = GraphMemory(str(tmp_path / "memory.db"), MemoryConfig(prior=0.2))
     pods = {"cooling-monitor-x-1": np.zeros(180), "timescaledb-y-1": np.zeros(180)}
     w = Witness(shared_relation={frozenset(("cooling-monitor-x-1", "timescaledb-y-1"))})
@@ -211,7 +211,7 @@ def test_disk_backbone_is_seeded_at_idle(tmp_path):
 
 
 def test_seeding_retrofits_floor_onto_decayed_edge(tmp_path):
-    from engine.gate import Witness
+    from correlation.engine.gate import Witness
     mem = GraphMemory(str(tmp_path / "memory.db"), MemoryConfig(prior=0.2, decay=0.5, floor_frac=0.0))
     pods = {"cooling-monitor-x-1": np.zeros(180), "timescaledb-y-1": np.zeros(180)}
     quiet = {"findings": [], "edges": [], "root_cause_ranking": [], "blast_radius": [],

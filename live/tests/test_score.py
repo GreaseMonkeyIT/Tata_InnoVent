@@ -1,13 +1,8 @@
 """Checks of live/score.py on hand-made incident rows: the first incident from the onset names the
 root or not, an incident before the onset is false, a control run with an incident is false, a pair
 passes when both roots are named, and the rates have their n."""
-import os
-import sys
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, ROOT)
-
-from live import score as SC                                         # noqa: E402
+from live import score as SC
 
 
 def _inc(t0, named, hit=None, victims=None):

@@ -2,8 +2,6 @@
 order, opens an incident on the fault and names its root, and serves its state, incidents and metrics.
 A plant whose documents differ from the models is refused."""
 import json
-import os
-import sys
 import threading
 import time
 import urllib.request
@@ -13,12 +11,9 @@ from urllib.parse import parse_qs, urlparse
 import numpy as np
 import pytest
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, ROOT)
-
-from live import engine as E                                         # noqa: E402
-from live import engine_service as S                                 # noqa: E402
-from live.tests.test_engine import DOC, _runs                         # noqa: E402
+from live import engine as E
+from live import engine_service as S
+from live.tests.test_engine import DOC, _runs
 
 N = E.N
 

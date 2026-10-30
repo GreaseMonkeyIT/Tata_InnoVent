@@ -1,15 +1,10 @@
 """Virtual instruments v0 (instruments.py): biases inside the accuracy class, the same devices on every
 day of one factory, noise of a fifth of the accuracy, digital readings left alone."""
-import os
 import statistics
-import sys
 
 import pytest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))
-
-from model.instruments import Instruments, _accuracy             # noqa: E402
+from plant.model.instruments import Instruments, _accuracy
 
 
 @pytest.mark.parametrize("tag,value,acc", [
@@ -73,7 +68,7 @@ def test_stream_equals_read_column(monkeypatch, noise):
     `read_column` bit for bit. The columns mix numbers, ints, gaps, nan, text and bools, one tag
     appears late, and the noise blocks run out several times."""
     import random
-    from model.instruments import Stream
+    from plant.model.instruments import Stream
     monkeypatch.setattr(Stream, "BLOCK", 7)
     tags = ["press-1.current_a", "press-1.oil_c", "ced-1.oven_c", "compressor-1.pressure_barg",
             "ced-1.tank_gas_m3h", "pierce-1.hits", "x.late_kw"]

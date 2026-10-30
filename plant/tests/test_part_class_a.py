@@ -1,14 +1,9 @@
 """The Class A analyzer at incomer-1 (2026-10-22, ideas.md 17.3): the lowest 11 kV voltage of the last
 second shows a dip of one cycle between two 1 s polls, which the present value misses, and reading it
 changes nothing in the plant."""
-import os
-import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))
-
-from model import faults as FR                   # noqa: E402
-from model.plant import UtilitiesPlant          # noqa: E402
+from plant.model import faults as FR
+from plant.model.plant import UtilitiesPlant
 
 
 def test_dip_between_polls_shows_in_the_lowest_voltage():

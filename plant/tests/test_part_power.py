@@ -16,16 +16,12 @@ Checks:
 Run:  python -m pytest plant/tests/test_part_power.py -q      (from the repo root)
 """
 import math
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import power as P                                    # noqa: E402
-from model import catalog as C                                  # noqa: E402
-from model.motor import InductionMotor                         # noqa: E402
+from plant.model import power as P
+from plant.model import catalog as C
+from plant.model.motor import InductionMotor
 
 SQ3 = math.sqrt(3.0)
 

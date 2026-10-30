@@ -7,7 +7,7 @@ REG ?= skn
 TAG ?= v0.1
 REGISTRY ?= localhost:5000
 # image-name:build-directory pairs. PIVOT_SETUP.md section 4 builds the same set.
-IMAGES = aggregator:aggregator correlation-engine:correlation api:api dashboard:dashboard \
+IMAGES = aggregator:aggregator correlation-engine:correlation api:api dashboard:console \
          plant-sim:plant openplc:plc tag-server:scada vplc:vplc
 # `make push ONLY="api dashboard"` builds and pushes only those images.
 ONLY ?=
@@ -19,6 +19,7 @@ help:
 	@echo "make import  - fallback without the registry: import into K3s containerd (sudo)"
 	@echo "make clean   - remove Python caches and the local aggregator binary"
 
+# the Python packages installed first (CONTRIBUTING.md): pip install -e ".[numba,test]"
 test:
 	cd correlation && python3 -m pytest -q
 	cd plant && python3 -m pytest -q

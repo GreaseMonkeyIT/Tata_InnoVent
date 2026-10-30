@@ -7,15 +7,11 @@
   4. Fill fouling (F9) and a stopped fan (natural draft only) give warmer cold water.
   5. The plate exchanger meets its design duty (250 kW, approach 1.4 K).
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import catalog as C                                          # noqa: E402
-from model.cooling_tower import CoolingTower, TowerSystem, h_sat        # noqa: E402
+from plant.model import catalog as C
+from plant.model.cooling_tower import CoolingTower, TowerSystem, h_sat
 
 R = C.EVAPCO_AT_14_99
 M = R.flow_m3h / 3600.0 * 997.0

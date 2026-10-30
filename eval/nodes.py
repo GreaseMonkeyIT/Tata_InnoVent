@@ -45,14 +45,12 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
 import numpy as np  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-sys.path.insert(0, ROOT)
 
-from model.plant import UtilitiesPlant                    # noqa: E402
-from model.wiring import instrument_ranges, wiring        # noqa: E402
-from model import faults as FR                            # noqa: E402
-from model import fault_ranges as RANGES                  # noqa: E402
-from model.instruments import Instruments                 # noqa: E402
+from plant.model.plant import UtilitiesPlant              # noqa: E402
+from plant.model.wiring import instrument_ranges, wiring  # noqa: E402
+from plant.model import faults as FR                      # noqa: E402
+from plant.model import fault_ranges as RANGES            # noqa: E402
+from plant.model.instruments import Instruments           # noqa: E402
 
 FACTORY_SEED = int(os.environ.get("VISR_FACTORY", "0"))   # the instruments' calibration (VISR_FACTORY: another factory)
 from twin.node_model import NodeModel                     # noqa: E402
@@ -197,7 +195,7 @@ def plant_version():
         return _VERSION[0]
     import hashlib
     import inspect
-    from model import weather as WX
+    from plant.model import weather as WX
     h = hashlib.sha256()
     mdir = os.path.join(ROOT, "plant", "model")
     for f in sorted(os.listdir(mdir)):

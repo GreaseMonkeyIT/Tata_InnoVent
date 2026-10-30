@@ -4,8 +4,6 @@ before its onset; the HTTP service serves those readings. Short runs (a 2-min wa
 eval/tests/test_nodes.py. `python -m live.plant_service --check 1` repeats the first check with the
 full warm-up."""
 import json
-import os
-import sys
 import threading
 import time
 import urllib.error
@@ -13,10 +11,7 @@ import urllib.request
 
 import pytest
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, ROOT)
-
-from live import plant_service as S                                  # noqa: E402
+from live import plant_service as S
 
 N = S.N
 

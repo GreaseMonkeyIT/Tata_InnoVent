@@ -8,16 +8,12 @@
   4. Users above the chiller capacity warm the loop at (excess heat) / (heat capacity of the water).
   5. A worn pump gives less flow.
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model.cooling import Branch, CoolingLoop                      # noqa: E402
-from model.heat import CP_WATER, RHO_WATER                          # noqa: E402
-from model.pump import Pump, PumpRating                             # noqa: E402
+from plant.model.cooling import Branch, CoolingLoop
+from plant.model.heat import CP_WATER, RHO_WATER
+from plant.model.pump import Pump, PumpRating
 
 PUMP = PumpRating(q_m3h=60.0, h_m=25.0, eta=0.72, n_rpm=2900.0, h0_m=32.0, source="test")
 

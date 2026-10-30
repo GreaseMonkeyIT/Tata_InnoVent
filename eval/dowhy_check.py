@@ -51,7 +51,6 @@ from dowhy.graph import get_ordered_predecessors  # noqa: E402
 from dowhy.gcm.shapley import ShapleyApproximationMethods, ShapleyConfig  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, ROOT)
 
 Z_ALARM = 3.0          # synthetic: a node alarms when its value is more than 3 spreads from its mean
 NDS = 500              # samples per Shapley evaluation (DoWhy default 3000; 500 for speed)

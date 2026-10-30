@@ -7,17 +7,24 @@ This file tells you how to set up, test and commit. `README.md` tells you what V
 Python 3.11 with [uv](https://docs.astral.sh/uv/):
 
     uv venv --python 3.11 .venv
-    uv pip install --python .venv -r correlation/requirements.txt pytest numba pymodbus==3.6.9
+    uv pip install --python .venv -e ".[numba,test]"
+
+The repository's Python code is installed as packages (`pyproject.toml`): `plant` (`plant.model`,
+`plant.floor`), `twin`, `eval`, `live` and `correlation`. A module imports another by its package
+name, for example `from plant.model.plant import UtilitiesPlant`, and never changes `sys.path`. The
+install is editable (`-e`), so a change to the code needs no new install. The pins are those of
+`correlation/requirements.txt`.
 
 The console needs Node.js 20 or later:
 
-    cd dashboard
+    cd console
     npm ci
     npm run dev
 
 ## Test
 
-    python -m pytest plant/tests twin/tests eval/tests -q
+    python -m pytest plant/tests twin/tests eval/tests live/tests -q
+    python -m pytest correlation/tests -q
 
 The plant reads the site weather from `data/weather/` when the file is there. Without it, the plant
 uses its design-condition weather, as CI does.

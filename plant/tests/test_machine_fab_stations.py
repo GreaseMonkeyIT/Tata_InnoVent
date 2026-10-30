@@ -9,16 +9,12 @@
   5. Scanner: a dip shorter than the 16 ms hold-up rides through (SEMI F47: 0 % for 1 cycle is
      only recommended); a longer deep dip resets it and it reboots.
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import catalog as C                                    # noqa: E402
-from model import fab_stations as F                               # noqa: E402
-from model.gas import GasSupply                                    # noqa: E402
+from plant.model import catalog as C
+from plant.model import fab_stations as F
+from plant.model.gas import GasSupply
 
 
 def test_plasma_power_air_and_wear():

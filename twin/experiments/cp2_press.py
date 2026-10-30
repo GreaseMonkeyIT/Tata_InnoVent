@@ -18,20 +18,14 @@ inside S355's 470 to 630 MPa (the material is not measured: real shops do not me
 Run:  python twin/experiments/cp2_press.py      (from the repo root)
 """
 import math
-import os
-import sys
 import time
 
 import numpy as np
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-sys.path.insert(0, ROOT)
-
-from model import catalog as C                                      # noqa: E402
-from model.press_brake import PressBrake                            # noqa: E402
-from twin.node_model import NodeModel                               # noqa: E402
-from twin.rhythm import OnlinePhase, segment_durations              # noqa: E402
+from plant.model import catalog as C
+from plant.model.press_brake import PressBrake
+from twin.node_model import NodeModel
+from twin.rhythm import OnlinePhase, segment_durations
 
 DT = 0.05
 SAMPLE = 0.5        # the small model's data rate

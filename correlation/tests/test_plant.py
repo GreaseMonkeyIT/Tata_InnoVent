@@ -8,9 +8,9 @@ Every test plants a known plant-physics truth and asserts the engine rediscovers
 """
 import numpy as np
 
-from engine.forecast import incipient_findings
-from engine.gate import Witness
-from engine.pipeline import run_pass
+from correlation.engine.forecast import incipient_findings
+from correlation.engine.gate import Witness
+from correlation.engine.pipeline import run_pass
 
 rng = np.random.default_rng(7)
 N = 180  # 15-minute window at 5s

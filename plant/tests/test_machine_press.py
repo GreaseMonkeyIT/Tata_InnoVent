@@ -15,15 +15,11 @@ brake on the 37 kW motor, bending S355 plate.
      bend and heats the oil; a harder plate (F15) raises the bend pressure in proportion to UTS with
      a healthy machine.
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import catalog as C                                  # noqa: E402
-from model.press_brake import PressBrake, nu_vg46                 # noqa: E402
+from plant.model import catalog as C
+from plant.model.press_brake import PressBrake, nu_vg46
 
 R = C.PPEB_320_40
 DT = 0.05

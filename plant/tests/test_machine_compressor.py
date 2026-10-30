@@ -20,15 +20,11 @@ Checks against the datasheet and published behaviour:
   9. Air mass balance and the physics checks hold through a long run.
 """
 import math
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import catalog as C                                   # noqa: E402
-from model.compressor import P_ATM, ScrewCompressor            # noqa: E402
+from plant.model import catalog as C
+from plant.model.compressor import P_ATM, ScrewCompressor
 
 R = C.GA37W_7_5
 MOTOR = C.ABB_37KW

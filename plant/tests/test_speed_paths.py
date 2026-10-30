@@ -7,15 +7,11 @@ Without numba the compiled paths are the Python functions, and the tests still p
 
 Run:  python -m pytest plant/tests/test_speed_paths.py -q
 """
-import os
 import random
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import cooling_tower as CT                                   # noqa: E402
-from model import motor as M                                            # noqa: E402
-from model import catalog as C                                          # noqa: E402
+from plant.model import cooling_tower as CT
+from plant.model import motor as M
+from plant.model import catalog as C
 
 
 def plain_bisection(t_hot, t_wb, lg, target):
@@ -78,7 +74,7 @@ def test_motor_kernel_equals_python():
 
 
 def test_net_torque_kernel_equals_python(monkeypatch):
-    from model.plant import UtilitiesPlant
+    from plant.model.plant import UtilitiesPlant
     p = UtilitiesPlant(seed=1, weather="site")
     rng = random.Random(4)
     for m in (p.comp.motor, p.press.motor, p.pierce.motor):
@@ -95,8 +91,8 @@ def test_net_torque_kernel_equals_python(monkeypatch):
 def test_network_sweep_kernel_equals_python(monkeypatch):
     """Two plants of the same seed, one with the compiled sweep and one with the Python sweep, give
     the same bus voltages, flows and tags for 20 min."""
-    from model import power as P
-    from model.plant import UtilitiesPlant
+    from plant.model import power as P
+    from plant.model.plant import UtilitiesPlant
     a = UtilitiesPlant(seed=40000, t_day0_h=3.0, weather="site")
     b = UtilitiesPlant(seed=40000, t_day0_h=3.0, weather="site")
     for k in range(12000):
@@ -112,7 +108,7 @@ def test_network_sweep_kernel_equals_python(monkeypatch):
 
 
 def test_chiller_table_kernel_equals_python(monkeypatch):
-    from model import chiller as CH
+    from plant.model import chiller as CH
     r = C.EWAD190AJYNN
     rng = random.Random(5)
     for _ in range(5000):

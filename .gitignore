@@ -7,7 +7,7 @@
 .stversions/
 *.sync-conflict-*
 
-# --- node / next.js (dashboard) — rebuilt from source, never committed ---
+# --- node / next.js (console) — rebuilt from source, never committed ---
 node_modules/
 .next/
 out/
@@ -19,6 +19,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 pytest-cache-files-*/
+*.egg-info/
+/build/
 .venv/
 venv/
 
@@ -62,11 +64,11 @@ industry_data/
 # --- college lab material, not ours to publish (LOG-064) ---
 mechatronics_lab_manual.pdf
 
-# NOTE — dashboard/app/fonts/IndustryTest-*.otf are Fontfabric TRIAL weights. They are
-# COMMITTED so a fresh clone can build the dashboard image (next/font/local needs the
+# NOTE — console/app/fonts/IndustryTest-*.otf are Fontfabric TRIAL weights. They are
+# COMMITTED so a fresh clone can build the console image (next/font/local needs the
 # files), on the assumption this repo stays PRIVATE to the team. If the repo ever goes
 # public, uncomment the line below and swap to licensed files first (LOG-014).
-# dashboard/app/fonts/*.otf
+# console/app/fonts/*.otf
 # vendor datasheets and standards notes: copyrighted, kept local (the model docs cite the URLs)
 /references/
 # concept-run outputs (plots, models): regenerate with twin/experiments/*.py
@@ -76,4 +78,4 @@ plant/verify_results/
 /eval/cache/
 
 # floor prototype replays: regenerate with plant/floor/replay.py
-/dashboard/public/floor/
+/console/public/floor/

@@ -9,15 +9,11 @@ a high-slip motor (Wannan YH2-160L-4).
   4. Flywheel bearing friction raises the idle current; belt slip lowers the flywheel speed.
   5. A thicker blank is a load: a deeper slowdown and more peak current, the same idle current.
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import catalog as C                                    # noqa: E402
-from model.mech_press import MechanicalPress                       # noqa: E402
+from plant.model import catalog as C
+from plant.model.mech_press import MechanicalPress
 
 DT = 0.005
 

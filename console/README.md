@@ -1,6 +1,6 @@
-# dashboard
+# console
 
-The VISR dashboard is a Next.js **static export** (no Node server at runtime) served by nginx.
+The VISR console is a Next.js **static export** (no Node server at runtime) served by nginx.
 nginx also proxies `/api/` to the in-cluster API gateway (`api.aiops.svc:8088`), so the browser uses
 one origin (no CORS, no second exposed port). The page fetches live data from `/api/*`.
 
@@ -141,7 +141,7 @@ The page `/floor-lab` plays a plant recording on the new 3D floor. It is a proto
 operator's pick of a look (ideas.md section 20). The console does not use it yet.
 
 1. Record a run: `python plant/floor/replay.py --seed 3 --hours 4 --warmup-h 3`. The script writes
-   `dashboard/public/floor/replay.json` (gitignored).
+   `console/public/floor/replay.json` (gitignored).
 2. Start the dev build and open `http://localhost:3000/floor-lab`.
 
 URL parameters: `theme=shop|console`, `t=<seconds after the warm-up>`, `speed=<n>`, `pause=1`,
@@ -153,7 +153,7 @@ A hidden browser tab pauses WebGL frames. For screenshots, use headless Edge wit
 ## Local development (laptop)
 
 ```bash
-cd dashboard
+cd console
 npm ci
 npm run dev      # http://localhost:3000, plays public/floor/replay.json
 npm run build    # writes the static export to out/

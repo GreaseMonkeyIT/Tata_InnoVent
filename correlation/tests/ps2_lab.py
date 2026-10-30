@@ -47,13 +47,12 @@ os.environ.update({
     "RESET_WINDOW": "24", "DEV_K": "3.5", "POLL_S": "5", "ENGINE_INTERVAL": "10",
     "COMMON_MODE": "1",
 })
-sys.path.insert(0, os.path.join(R, "correlation"))
 spec = importlib.util.spec_from_file_location("plant_sim", os.path.join(R, "plant", "sim", "main.py"))
 sim = importlib.util.module_from_spec(spec); sys.modules["plant_sim"] = sim; spec.loader.exec_module(sim)
-import service as S                                              # noqa: E402
-from engine.merge import merge_graphs                            # noqa: E402
-from engine.pipeline import run_pass                             # noqa: E402
-from engine.forecast import incipient_findings                   # noqa: E402
+from correlation import service as S                             # noqa: E402
+from correlation.engine.merge import merge_graphs                # noqa: E402
+from correlation.engine.pipeline import run_pass                 # noqa: E402
+from correlation.engine.forecast import incipient_findings       # noqa: E402
 
 TICK, GRID, RING = 1.0, 5.0, 180
 T0 = 1_760_000_000.0

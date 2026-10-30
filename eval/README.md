@@ -19,11 +19,11 @@ one against the truth that the simulator knows, and reports every rate with its 
 ## Run
 
 From the repository root, with the project venv `.venv` (laptop: Python 3.11.9 from pyenv-win, made
-with uv from `correlation/requirements.txt` plus pytest, numba and pymodbus 3.6.9; forge:
+with uv, the packages of `pyproject.toml` with the pins of `correlation/requirements.txt`; forge:
 `~/visr-venv`, Python 3.14). The venv is in `.gitignore` and `.stignore`, so each machine has its own:
 
     uv venv --python <pyenv 3.11.9 python.exe> .venv
-    uv pip install --python .venv/Scripts/python.exe -r correlation/requirements.txt pytest numba pymodbus==3.6.9
+    uv pip install --python .venv/Scripts/python.exe -e ".[numba,test]"
 
 ```
 python -m eval.harness --runs 30 --calm 10
@@ -90,7 +90,8 @@ The ranges are project choices: about 20 to 35 % around the scripted fault.
 ## Where the campaigns run
 
 On forge the campaigns run outside the cluster at low priority, from the synced worktree
-`~/VISR_Overhaul`, with a user venv `~/visr-venv` (numpy, pytest):
+`~/VISR_Overhaul`, with a user venv `~/visr-venv` that holds the packages (`uv pip install --python
+~/visr-venv/bin/python -e ~/VISR_Overhaul`, once):
 
     screen -dmS visr-eval bash -c "cd ~/VISR_Overhaul && nice -n 10 ~/visr-venv/bin/python -m eval.nodes --hours 6 --runs 8 --faults F1,F6 --fault-runs 10 > /var/tmp/visr-eval-nodes.log 2>&1"
 

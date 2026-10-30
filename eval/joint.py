@@ -28,9 +28,6 @@ for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
 
 import numpy as np  # noqa: E402
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, ROOT)
-
 from eval.nodes import SAMPLE_S, TAUS, Node, Run, RunsModel, Text, load_view  # noqa: E402
 from twin.twin import Twin  # noqa: E402
 

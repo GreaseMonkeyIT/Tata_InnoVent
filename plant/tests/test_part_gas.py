@@ -10,14 +10,10 @@ sourced plant values).
   5. Two users on one header see the same supply fault together (common mode, F10).
 """
 import math
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model.gas import Burner, BurnerRating, GasSupply, GasSupplyRating   # noqa: E402
+from plant.model.gas import Burner, BurnerRating, GasSupply, GasSupplyRating
 
 SUP = GasSupplyRating(p_supply_kpa=400.0, p_set_kpa=10.0, droop_kpa_per_m3h=0.002,
                       dp_min_kpa=50.0, k_open=0.001, lhv_mj_m3=36.0, source="test")

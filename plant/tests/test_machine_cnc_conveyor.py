@@ -12,16 +12,12 @@ conveyor-1:
   7. A seized roller (more drag) raises the power.
 """
 import math
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import catalog as C                                 # noqa: E402
-from model.cnc import BoringMill                                # noqa: E402
-from model.conveyor import Conveyor                             # noqa: E402
+from plant.model import catalog as C
+from plant.model.cnc import BoringMill
+from plant.model.conveyor import Conveyor
 
 DT = 0.5
 

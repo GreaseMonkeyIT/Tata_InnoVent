@@ -11,7 +11,7 @@ physics: it only names the parameter and the unit of the magnitude.
 `magnitude` is in the unit of the parameter. The range that a test draws from comes from one rule
 for every fault (fault_ranges.py, not here), so no fault gets a hand-picked range.
 
-    from model.faults import FAULTS, inject, clear
+    from plant.model.faults import FAULTS, inject, clear
     inject(plant, "F1", 0.04)
 """
 from dataclasses import dataclass

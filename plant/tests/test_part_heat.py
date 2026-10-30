@@ -9,14 +9,10 @@
   4. The thermal mass step is exact for a linear heat flow.
 """
 import math
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import heat as H                                     # noqa: E402
+from plant.model import heat as H
 
 
 def test_effectiveness_limits():

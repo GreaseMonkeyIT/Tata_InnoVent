@@ -17,10 +17,10 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
-from engine.forecast import incipient_findings
-from engine.gate import Witness
-from engine.pipeline import run_pass
-from engine.state import GraphMemory, MemoryConfig, set_verbatim_names, stable_workload
+from correlation.engine.forecast import incipient_findings
+from correlation.engine.gate import Witness
+from correlation.engine.pipeline import run_pass
+from correlation.engine.state import GraphMemory, MemoryConfig, set_verbatim_names, stable_workload
 
 rng = np.random.default_rng(1918)   # private stream: other suites keep their draws
 
@@ -34,11 +34,11 @@ def service(tmp_path_factory):
     mp.setenv("PLANT_DOMAINS", "rail:psu-a=press-1,press-2,cnc-1,qa-scanner-1,psu-a;"
                                "loop:cool-1=press-1,press-2,cnc-1,furnace-1,chiller-1,cool-1")
     mp.delenv("DOMAIN_SOURCES", raising=False)
-    sys.modules.pop("service", None)
-    mod = importlib.import_module("service")
+    sys.modules.pop("correlation.service", None)
+    mod = importlib.import_module("correlation.service")
     yield mod
     mp.undo()
-    sys.modules.pop("service", None)
+    sys.modules.pop("correlation.service", None)
 
 
 def _window(pods, signal, n_samples, value=1.0):

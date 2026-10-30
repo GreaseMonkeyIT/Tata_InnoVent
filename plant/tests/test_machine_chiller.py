@@ -12,17 +12,13 @@ chiller behind a tempering valve on the process loop cool-1.
   6. Condenser fouling (F9) acts as a hotter day: less capacity, more power at the same load.
   7. The COP stays physical (2 to 6 for this unit across the table).
 """
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import catalog as C                                    # noqa: E402
-from model.chiller import AirCooledChiller                        # noqa: E402
-from model.cooling import Branch, CoolingLoop                     # noqa: E402
-from model.pump import Pump, PumpRating                           # noqa: E402
+from plant.model import catalog as C
+from plant.model.chiller import AirCooledChiller
+from plant.model.cooling import Branch, CoolingLoop
+from plant.model.pump import Pump, PumpRating
 
 R = C.EWAD190AJYNN
 PUMP = PumpRating(q_m3h=60.0, h_m=25.0, eta=0.72, n_rpm=2900.0, h0_m=32.0, source="test")

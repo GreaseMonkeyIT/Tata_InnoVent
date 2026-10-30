@@ -1,16 +1,11 @@
 """Checks of eval/nodes.py: the simulated-day cache gives back exactly what the plant gave, a run
 read from the cache equals a fresh run, and the splits use separate days of the year."""
 import os
-import sys
 
 import numpy as np
 import pytest
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-
-from eval import nodes as N                                           # noqa: E402
+from eval import nodes as N
 
 
 def test_cache_round_trip_is_exact(tmp_path, monkeypatch):
@@ -112,7 +107,7 @@ def test_fit_and_calibration_days_each_cover_the_year():
 
 def test_plant_starts_on_the_day_of_its_split():
     """The plant of a run reads the weather of its split's day, not the seed's hashed day."""
-    from model import weather as WX
+    from plant.model import weather as WX
     if not os.path.exists(os.environ.get("VISR_WEATHER", WX.DEFAULT_FILE)):
         pytest.skip("no site weather file")
     sd = N.SEED_BASE["validation"] + 3
@@ -277,7 +272,7 @@ def test_view_keeps_the_lead(tmp_path, monkeypatch):
 def test_documents_list_the_loops_and_the_air_header():
     """Every tag of a PLC loop and of the air header is a plant tag, every loop output is a command
     of its asset's node, and every node knows its asset and that asset's loop outputs."""
-    from model.wiring import loops, wiring
+    from plant.model.wiring import loops, wiring
     p = N.new_plant(N.SEED_BASE["train"])
     p.step(0.1)
     tags = set(p.tags())

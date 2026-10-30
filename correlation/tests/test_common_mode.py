@@ -9,9 +9,9 @@ Every test plants a known electrical truth and asserts the engine rediscovers it
 """
 import numpy as np
 
-from engine.common_mode import EVIDENCE, domain_entity
-from engine.gate import Witness
-from engine.pipeline import run_pass
+from correlation.engine.common_mode import EVIDENCE, domain_entity
+from correlation.engine.gate import Witness
+from correlation.engine.pipeline import run_pass
 
 rng = np.random.default_rng(11)
 N = 180  # 15-minute window at 5 s

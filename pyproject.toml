@@ -1,0 +1,37 @@
+# The VISR Python code as installable packages (phase 3 of the restructuring, CONTRIBUTING.md): a
+# module imports another by its package name, never by a change of sys.path.
+#
+#   uv pip install --python .venv -e ".[numba,test]"
+#
+# The packages: plant (plant.model, the physics of the site; plant.floor, the console's floor
+# recording), twin (the node model and the twin), eval (the engine and the score harness), live (the
+# live plant and engine services) and correlation (the v1 engine of the proof-of-concept box). The
+# pins are those of correlation/requirements.txt, which the images install too.
+#
+# api/, scada/, vplc/, aggregator/ and plc/ stay services of their own: each image copies its folder
+# and runs it as it is (deploy/*.yaml), and no module of them imports another folder.
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "visr"
+version = "0.1.0"
+description = "VISR: the plant, the node models, the engine and the live services (Tata InnoVent)"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+# the compiled plant kernels (plant/model/_jit.py); the plant runs the same values without them
+numba = ["numba"]
+test = ["pytest", "pymodbus==3.6.9"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["correlation/requirements.txt"] }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["plant", "plant.*", "twin", "twin.*", "eval", "eval.*", "live", "live.*", "correlation", "correlation.*"]
+
+[tool.setuptools.package-data]
+"plant.model" = ["*.json"]

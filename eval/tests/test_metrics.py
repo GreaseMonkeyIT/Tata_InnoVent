@@ -1,12 +1,8 @@
 """Unit checks of the score metrics (eval/metrics.py) on hand-made timelines."""
-import os
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-
-from eval.metrics import Pass, score_calm_run, score_fault_run, summarize, verdicts, wilson  # noqa: E402
+from eval.metrics import Pass, score_calm_run, score_fault_run, summarize, verdicts, wilson
 
 
 def test_wilson_matches_known_values():

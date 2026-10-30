@@ -9,16 +9,12 @@
      0.7 pu resets the controller.
   4. Pallet conveyor: one engine per takt; a jam stops the transfers and keeps the drives loaded.
 """
-import os
 import statistics
-import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from model import assembly as A                                     # noqa: E402
-from model import catalog as C                                      # noqa: E402
+from plant.model import assembly as A
+from plant.model import catalog as C
 
 
 def test_leak_test_leak_thermal_and_air():

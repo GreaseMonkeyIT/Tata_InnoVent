@@ -4,7 +4,7 @@
 # console opened after the soak made the api the root by CPU, and a leak card fired, because the
 # soak had learned an api with no console attached. factory-up.sh starts this next to the PS0
 # watcher, so the baselines learn the api the way the demo runs it: with the console open.
-# The endpoints and cadence copy dashboard/app/lib/useConsoleData.js: 11 reads every 5 s, the audit
+# The endpoints and cadence copy console/app/lib/useConsoleData.js: 11 reads every 5 s, the audit
 # ledger every 10 s, the recommendations every 30 s. GET only: it never changes anything.
 #
 #   screen -dmS visr-console-load bash ~/Tata_InnoVent/deploy/console-load.sh

@@ -12,14 +12,10 @@ most 100 %.
 import argparse
 import concurrent.futures as cf
 import math
-import os
 import random
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-
-from model.plant import UtilitiesPlant          # noqa: E402
+from plant.model.plant import UtilitiesPlant
 
 PF_TARGET = 0.98
 IS1180 = (100, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500)

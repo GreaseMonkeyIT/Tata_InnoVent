@@ -13,24 +13,19 @@
      in the stations that people or arrivals drive.
 """
 import math
-import os
 import statistics
-import sys
 import random
 
 import pytest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, ".."))
-
-from model import catalog as C                                   # noqa: E402
-from model.motor import InductionMotor, solve                     # noqa: E402
-from model import frame_line as FL                                # noqa: E402
-from model.chiller import AirCooledChiller                        # noqa: E402
-from model.gas import GasSupply                                   # noqa: E402
-from model.press_brake import Plate, PressBrake                   # noqa: E402
-from model.weather import wet_bulb                                # noqa: E402
-from model.flow import HANDLING_CV, handling_s                    # noqa: E402
+from plant.model import catalog as C
+from plant.model.motor import InductionMotor, solve
+from plant.model import frame_line as FL
+from plant.model.chiller import AirCooledChiller
+from plant.model.gas import GasSupply
+from plant.model.press_brake import Plate, PressBrake
+from plant.model.weather import wet_bulb
+from plant.model.flow import HANDLING_CV, handling_s
 
 
 def test_160kw_motor_meets_its_catalogue_point():

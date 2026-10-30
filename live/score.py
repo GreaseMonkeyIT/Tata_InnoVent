@@ -27,12 +27,8 @@ import os
 import pickle
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(ROOT, "plant"))
-sys.path.insert(0, ROOT)
-
-from eval.metrics import wilson                           # noqa: E402
-from eval.nodes import SAMPLE_S                           # noqa: E402
+from eval.metrics import wilson
+from eval.nodes import SAMPLE_S
 
 
 def _rate(k, n):
