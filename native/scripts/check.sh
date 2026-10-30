@@ -9,6 +9,7 @@
 # programs and on every test binary.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+T="${CARGO_TARGET_DIR:-target}"
 
 echo "== builds (x86-64-v2, native/.cargo/config.toml)"
 cargo build --release -p visr-engine -p isa-scan
@@ -19,13 +20,13 @@ cargo test --release -p visr-engine -p isa-scan -- --nocapture 2>&1 | grep -E '^
 
 echo "== the switch: VISR_ISA=base"
 GOLD="${VISR_GOLDENS:-work/synthetic}"
-VISR_ISA=base VISR_PACK="$GOLD/pack" VISR_STATE_DIR="$(mktemp -d)" ./target/release/visr-engine check | grep 'isa base'
+VISR_ISA=base VISR_PACK="$GOLD/pack" VISR_STATE_DIR="$(mktemp -d)" "$T/release/visr-engine" check | grep 'isa base'
 
 echo "== disassembly scan of each build"
-BINS="target/release/visr-engine target/debug/visr-engine"
+BINS="$T/release/visr-engine $T/debug/visr-engine"
 for profile in "" "--release"; do
   BINS="$BINS $(cargo test -p visr-engine --no-run $profile --message-format=json 2>/dev/null \
     | grep -o '"executable":"[^"]*"' | cut -d'"' -f4 | tr '\n' ' ')"
 done
-./target/release/isa-scan $BINS
+"$T/release/isa-scan" $BINS
 echo "== all checks passed"
