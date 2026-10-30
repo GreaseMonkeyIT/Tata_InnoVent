@@ -1,0 +1,5 @@
+# build output, and the packs and goldens that the tools write (data: never in git, CONTRIBUTING.md)
+/target/
+/console/src-tauri/target/
+/console/src-tauri/gen/
+/work/

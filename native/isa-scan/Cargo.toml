@@ -1,0 +1,11 @@
+[package]
+name = "isa-scan"
+description = "Scans a build of visr-engine for AVX and AVX-512 instructions (native/README.md)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustc-demangle = "0.1.28"

@@ -1,0 +1,21 @@
+# The VISR console as a native program (native/README.md). Step N0: an empty Tauri window. Its own
+# workspace and lock file, apart from the engine's, so that the engine builds without the webview.
+[workspace]
+
+[package]
+name = "visr-console"
+description = "The VISR console (Tauri)."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "UNLICENSED"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+
+[profile.release]
+codegen-units = 1

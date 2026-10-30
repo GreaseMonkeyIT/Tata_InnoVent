@@ -1,0 +1,8 @@
+# The base build (native/README.md): x86-64-v2, SSE4.2 and POPCNT, no AVX. The engine selects its AVX2
+# and FMA kernels at run time (visr-engine/src/isa.rs); isa-scan checks every build for AVX and
+# AVX-512 instructions outside them.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v2"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-cpu=x86-64-v2"]

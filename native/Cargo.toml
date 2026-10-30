@@ -1,0 +1,21 @@
+# The native VISR programs (native/README.md). The plant stays in Python; the engine, the twin and the
+# console become native programs. The console (console/, Tauri) has its own workspace and lock file,
+# so that the engine builds without the webview libraries.
+[workspace]
+resolver = "2"
+members = ["visr-engine", "isa-scan"]
+exclude = ["console"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "UNLICENSED"
+publish = false
+
+[profile.release]
+codegen-units = 1
+debug = "line-tables-only"
+
+[profile.test]
+opt-level = 2

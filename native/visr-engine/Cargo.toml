@@ -1,0 +1,23 @@
+[package]
+name = "visr-engine"
+description = "The VISR engine: the node models, the incidents and the root of a fault, on the plant's readings."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ndarray = "0.17"
+serde = { version = "1.0.229", features = ["derive"] }
+# alloc only: serde_json's std feature turns on memchr's own run-time AVX2, outside the base switch (isa-scan)
+serde_json = { version = "1.0.154", default-features = false, features = ["alloc", "float_roundtrip"] }
+sha2 = "0.10.9"
+toml = "1.0.7"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "visr-engine"
+path = "src/main.rs"
